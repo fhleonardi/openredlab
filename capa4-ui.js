@@ -446,7 +446,7 @@ var UI = (function () {
 
   function icono(tipo) {
     if (tipo === "router-8") {
-      return "<rect x='-22' y='-11' width='44' height='22' rx='4' fill='#f6d186' stroke='#8a5a00' stroke-width='2'/>" +
+      return "<rect x='-26' y='-11' width='52' height='22' rx='4' fill='#f6d186' stroke='#8a5a00' stroke-width='2'/>" +
         "<path d='M-9 -5 L9 5 M-9 5 L9 -5' stroke='#8a5a00' stroke-width='2'/>" +
         "<circle cx='0' cy='0' r='2.5' fill='#8a5a00'/>";
     }
@@ -821,15 +821,26 @@ var UI = (function () {
     };
   }
 
-  function posicionPuerto(disp, indice, total) {
-    var w = 56, h = 52;
-    if (total === 1) { return { x: disp.x, y: disp.y - h / 2 }; }
-    var porLado = Math.ceil(total / 2);
-    if (indice < porLado) {
-      return { x: disp.x - w / 2 + (indice + 0.5) * (w / porLado), y: disp.y - h / 2 };
+  // Cómo se reparten los puertos en el perímetro: cuántos van arriba y el
+  // ancho de cada fila. El router de 8 puertos imita a un MikroTik: ether1
+  // (la WAN) arriba y el resto en una tira abajo, más ancha que el ícono.
+  function disposicionPuertos(disp, total) {
+    if (disp && disp.tipo === "router" && disp.modelo === "8-puertos" && total > 1) {
+      return { arriba: 1, anchoArriba: 12, anchoAbajo: 12 * (total - 1) };
     }
-    var j = indice - porLado;
-    return { x: disp.x - w / 2 + (j + 0.5) * (w / (total - porLado)), y: disp.y + h / 2 };
+    return { arriba: Math.ceil(total / 2), anchoArriba: 56, anchoAbajo: 56 };
+  }
+
+  function posicionPuerto(disp, indice, total) {
+    var h = 52;
+    if (total === 1) { return { x: disp.x, y: disp.y - h / 2 }; }
+    var dp = disposicionPuertos(disp, total);
+    if (indice < dp.arriba) {
+      return { x: disp.x - dp.anchoArriba / 2 + (indice + 0.5) * (dp.anchoArriba / dp.arriba), y: disp.y - h / 2 };
+    }
+    var j = indice - dp.arriba;
+    var abajo = total - dp.arriba;
+    return { x: disp.x - dp.anchoAbajo / 2 + (j + 0.5) * (dp.anchoAbajo / abajo), y: disp.y + h / 2 };
   }
 
   function colorEnlace(e) { return e.estado === "up" ? "#1a7f37" : "#b42318"; }
@@ -953,7 +964,7 @@ var UI = (function () {
       g.appendChild(cuerpo);
 
       (d.interfaces || []).forEach(function (iface, idx) {
-        var p = posicionPuerto({ x: 0, y: 0 }, idx, d.interfaces.length);
+        var p = posicionPuerto({ x: 0, y: 0, tipo: d.tipo, modelo: d.modelo }, idx, d.interfaces.length);
         var c = document.createElementNS(svgNS, "rect");
         c.setAttribute("x", p.x - 5); c.setAttribute("y", p.y - 5);
         c.setAttribute("width", 10); c.setAttribute("height", 10);
@@ -988,10 +999,10 @@ var UI = (function () {
         // de alto y lo que deje la separación con los vecinos, para no
         // pisarlos. Fuera del modo cable no existe: taparía el ícono.
         if (S.herramientaCable || S.cableOrigen) {
-          var enLado = idx < Math.ceil(d.interfaces.length / 2)
-            ? Math.ceil(d.interfaces.length / 2)
-            : d.interfaces.length - Math.ceil(d.interfaces.length / 2);
-          var anchoToque = Math.max(10, Math.min(28, 56 / Math.max(1, enLado)));
+          var dpT = disposicionPuertos(d, d.interfaces.length);
+          var arribaT = idx < dpT.arriba;
+          var enLado = arribaT ? dpT.arriba : d.interfaces.length - dpT.arriba;
+          var anchoToque = Math.max(10, Math.min(28, (arribaT ? dpT.anchoArriba : dpT.anchoAbajo) / Math.max(1, enLado)));
           var toque = document.createElementNS(svgNS, "rect");
           toque.setAttribute("x", p.x - anchoToque / 2); toque.setAttribute("y", p.y - 14);
           toque.setAttribute("width", anchoToque); toque.setAttribute("height", 28);
