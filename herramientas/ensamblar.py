@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Ensambla simulador.html a partir de los cinco archivos de capa.
+"""Ensambla el archivo final (index.html) a partir de los cinco archivos de capa.
 
 Uso:
-    python3 herramientas/ensamblar.py              reescribe simulador.html
+    python3 herramientas/ensamblar.py              reescribe el archivo final
     python3 herramientas/ensamblar.py --verificar  sólo compara; sale con 1 si difiere
 
-simulador.html es un derivado: cada bloque <script> contiene exactamente el
+El archivo final es un derivado: cada bloque <script> contiene exactamente el
 código de una capa. Los .js de capa son la fuente; nunca se edita el HTML a
 mano. La herramienta usa sólo la biblioteca estándar de Python y no forma
 parte del producto, que sigue siendo un único archivo sin dependencias.
@@ -14,7 +14,12 @@ import os
 import sys
 
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-HTML = os.path.join(RAIZ, "simulador.html")
+# El archivo final se llama index.html (para publicarlo como sitio); si no
+# existe, se usa el nombre anterior, simulador.html.
+HTML = os.path.join(RAIZ, "index.html")
+if not os.path.exists(HTML):
+    HTML = os.path.join(RAIZ, "simulador.html")
+NOMBRE = os.path.basename(HTML)
 CAPAS = ["capa1-red.js", "capa2-motor.js", "capa3-escenarios.js", "capa4-ui.js", "capa5-autotest.js"]
 
 
@@ -32,7 +37,7 @@ def ensamblar(html):
         marca = "<script>\n" + primera
         inicio = html.find(marca)
         if inicio < 0:
-            raise SystemExit("No se encontró el bloque de " + capa + " en simulador.html "
+            raise SystemExit("No se encontró el bloque de " + capa + " en " + NOMBRE + " "
                              "(se busca por su primera línea: " + primera[:60] + ").")
         inicio += len("<script>\n")
         fin = html.index("</script>", inicio)
@@ -46,16 +51,16 @@ def main():
     nuevo = ensamblar(actual)
     if verificar:
         if nuevo != actual:
-            print("simulador.html NO coincide con los archivos de capa. Corré: python3 herramientas/ensamblar.py")
+            print(NOMBRE + " NO coincide con los archivos de capa. Corré: python3 herramientas/ensamblar.py")
             return 1
-        print("simulador.html coincide con las cinco capas.")
+        print(NOMBRE + " coincide con las cinco capas.")
         return 0
     if nuevo == actual:
-        print("simulador.html ya estaba al día.")
+        print(NOMBRE + " ya estaba al día.")
         return 0
     with open(HTML, "w", encoding="utf-8", newline="") as f:
         f.write(nuevo)
-    print("simulador.html reensamblado a partir de las cinco capas.")
+    print(NOMBRE + " reensamblado a partir de las cinco capas.")
     return 0
 
 

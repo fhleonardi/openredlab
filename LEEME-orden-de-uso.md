@@ -40,10 +40,10 @@ La capa 1 es además el mejor termómetro posible: si un modelo no clava `cantid
 
 ## Reensamblar el archivo final
 
-`simulador.html` es un derivado: cada bloque `<script>` lleva exactamente el código de una capa. **Nunca se edita el HTML a mano**: se corrige el `.js` de la capa y se reensambla.
+El archivo final, `index.html` (antes `simulador.html`), es un derivado: cada bloque `<script>` lleva exactamente el código de una capa. **Nunca se edita el HTML a mano**: se corrige el `.js` de la capa y se reensambla.
 
 ```
-python3 herramientas/ensamblar.py              # reescribe simulador.html
+python3 herramientas/ensamblar.py              # reescribe index.html
 python3 herramientas/ensamblar.py --verificar  # sólo compara; sale con 1 si difiere
 ```
 
