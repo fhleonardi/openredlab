@@ -5916,6 +5916,27 @@ var UI = (function () {
         c.addEventListener("keydown", function (ev) {
           if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); clicPuerto(d, iface); }
         });
+        // Con la herramienta de cable activa, cada puerto suma un área de
+        // toque invisible más grande (10 px es poco para un dedo). Mide 28 px
+        // de alto y lo que deje la separación con los vecinos, para no
+        // pisarlos. Fuera del modo cable no existe: taparía el ícono.
+        if (S.herramientaCable || S.cableOrigen) {
+          var enLado = idx < Math.ceil(d.interfaces.length / 2)
+            ? Math.ceil(d.interfaces.length / 2)
+            : d.interfaces.length - Math.ceil(d.interfaces.length / 2);
+          var anchoToque = Math.max(10, Math.min(28, 56 / Math.max(1, enLado)));
+          var toque = document.createElementNS(svgNS, "rect");
+          toque.setAttribute("x", p.x - anchoToque / 2); toque.setAttribute("y", p.y - 14);
+          toque.setAttribute("width", anchoToque); toque.setAttribute("height", 28);
+          toque.setAttribute("fill", "transparent");
+          toque.setAttribute("class", "toque");
+          toque.setAttribute("aria-hidden", "true");
+          toque.addEventListener("click", function (ev) {
+            ev.stopPropagation();
+            clicPuerto(d, iface);
+          });
+          g.appendChild(toque);
+        }
         g.appendChild(c);
       });
 
