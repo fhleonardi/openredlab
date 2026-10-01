@@ -63,6 +63,7 @@ Todas las capas operan sobre este objeto. El JSON exportado es exactamente este 
     {
       "id": "pc1",
       "tipo": "pc",                    // pc | switch-l2 | router | camara | iot | ap
+      // "modelo": "8-puertos",        // sólo router; si falta es el router estándar
       "nombre": "PC-Admin",
       "x": 160, "y": 240,
       "encendido": true,
@@ -126,6 +127,9 @@ Reglas:
 | `camara` | 1 ethernet + 1 wireless | `eth0`, `wlan0` |
 | `iot` | 1 wireless | `wlan0` |
 | `ap` | 1 wireless (modo `ap`) + 1 ethernet | `wlan0`, `eth0` |
+| `router`, `"modelo": "8-puertos"` | 8 ethernet + 1 fibra + 1 wireless (modo `ap`, deshabilitada) | `ether1` … `ether8`, `sfp1`, `wlan1` |
+
+El router de 8 puertos replica un equipo de oficina (por ejemplo, un MikroTik): **cada puerto es una interfaz ruteada** que puede tener su propia subred, como cuando en RouterOS se saca un puerto del bridge y se le asigna una dirección. No se simula el bridge entre puertos.
 
 **Modo de radio inicial** de la `wlan0` al agregar el equipo: `ap` en `ap` y `router`; `cliente` en `pc`, `camara` e `iot`. El modo `bridge` no es el valor inicial de nadie: se elige a mano. El punto de acceso es un dispositivo de capa 2, como el switch: hace puente entre `wlan0` y `eth0` y no tiene tabla de rutas.
 

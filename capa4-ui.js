@@ -70,6 +70,7 @@ var UI = (function () {
   var TIPOS = [
     { tipo: "pc", etiqueta: "PC" },
     { tipo: "router", etiqueta: "Router" },
+    { tipo: "router-8", etiqueta: "Router 8 puertos" },
     { tipo: "switch-l2", etiqueta: "Switch" },
     { tipo: "camara", etiqueta: "Cámara" },
     { tipo: "iot", etiqueta: "IoT" },
@@ -164,7 +165,17 @@ var UI = (function () {
     return lineas;
   }
 
-  var NOMBRES_TIPO = { pc: "PC", router: "router", "switch-l2": "switch", camara: "cámara", iot: "IoT", ap: "punto de acceso" };
+  var NOMBRES_TIPO = { pc: "PC", router: "router", "router-8": "router de 8 puertos", "switch-l2": "switch", camara: "cámara", iot: "IoT", ap: "punto de acceso" };
+
+  // Clave de paleta e ícono: el tipo, salvo el router de 8 puertos, que es
+  // tipo "router" con modelo "8-puertos".
+  function claveDe(d) {
+    return d && d.tipo === "router" && d.modelo === "8-puertos" ? "router-8" : (d ? d.tipo : "");
+  }
+
+  function equipoDeClave(clave) {
+    return clave === "router-8" ? { tipo: "router", modelo: "8-puertos" } : { tipo: clave, modelo: null };
+  }
   function nombreTipo(tipo) { return NOMBRES_TIPO[tipo] || tipo; }
 
   function momentoRel() {
@@ -216,6 +227,17 @@ var UI = (function () {
     if (tipo === "router") {
       return [iface("g0/0", "ethernet", true), iface("g0/1", "ethernet", true),
         iface("fib0", "fibra", true), iface("wlan0", "wireless", false)];
+    }
+    if (tipo === "router-8") {
+      // Como un equipo de oficina tipo MikroTik: cada puerto es ruteado y
+      // puede tener su propia subred.
+      var puertos = [];
+      for (var k = 1; k <= 8; k++) { puertos.push(iface("ether" + k, "ethernet", true)); }
+      puertos.push(iface("sfp1", "fibra", true));
+      var radio = iface("wlan1", "wireless", false);
+      radio.modoRadio = "ap";
+      puertos.push(radio);
+      return puertos;
     }
     var lista = [];
     for (var i = 1; i <= 8; i++) { lista.push(iface("fa0/" + i, "ethernet", true)); }
@@ -423,6 +445,11 @@ var UI = (function () {
   /* ---------------- Iconos SVG dibujados a mano ---------------- */
 
   function icono(tipo) {
+    if (tipo === "router-8") {
+      return "<rect x='-22' y='-11' width='44' height='22' rx='4' fill='#f6d186' stroke='#8a5a00' stroke-width='2'/>" +
+        "<path d='M-9 -5 L9 5 M-9 5 L9 -5' stroke='#8a5a00' stroke-width='2'/>" +
+        "<circle cx='0' cy='0' r='2.5' fill='#8a5a00'/>";
+    }
     if (tipo === "pc") {
       return "<rect x='-16' y='-12' width='32' height='22' rx='2' fill='#9fc5e8' stroke='#0b5fa5' stroke-width='2'/>" +
         "<rect x='-12' y='-8' width='24' height='12' fill='#e8f2fa'/>" +
@@ -905,7 +932,7 @@ var UI = (function () {
       g.setAttribute("tabindex", "0");
       g.setAttribute("role", "button");
       g.setAttribute("data-id", d.id);
-      g.setAttribute("aria-label", (d.nombre || d.id) + ", " + nombreTipo(d.tipo) + ", " + lineasResumen(d).join(", ") +
+      g.setAttribute("aria-label", (d.nombre || d.id) + ", " + nombreTipo(claveDe(d)) + ", " + lineasResumen(d).join(", ") +
         (d.encendido ? "" : ", apagado") + ". Flechas: mover.");
       g.setAttribute("transform", "translate(" + d.x + " " + d.y + ")");
       var halo = null;
@@ -921,7 +948,7 @@ var UI = (function () {
         g.appendChild(halo);
       }
       var cuerpo = document.createElementNS(svgNS, "g");
-      cuerpo.innerHTML = icono(d.tipo);
+      cuerpo.innerHTML = icono(claveDe(d));
       if (!d.encendido) { cuerpo.setAttribute("opacity", "0.4"); }
       g.appendChild(cuerpo);
 
@@ -1475,8 +1502,10 @@ var UI = (function () {
     return id;
   }
 
-  function agregarDispositivo(tipo, x, y) {
+  function agregarDispositivo(clave, x, y) {
     empujarHistorial();
+    var equipo = equipoDeClave(clave);
+    var tipo = equipo.tipo;
     var nombre = nombreAutomatico(tipo);
     var id = idUnico(nombre.toLowerCase().replace(/[^a-z0-9]+/g, "") || "eq");
     var gx = Math.round(x / 10) * 10, gy = Math.round(y / 10) * 10;
@@ -1491,11 +1520,13 @@ var UI = (function () {
       }
       intentos += 1;
     }
-    lista.push({
+    var nuevo = {
       id: id, tipo: tipo, nombre: nombre, x: gx, y: gy,
-      encendido: true, interfaces: interfacesPorDefecto(tipo),
-      gateway: null, dns: null, rutas: tipo === "router" ? [] : [], dhcp: null
-    });
+      encendido: true, interfaces: interfacesPorDefecto(clave),
+      gateway: null, dns: null, rutas: [], dhcp: null
+    };
+    if (equipo.modelo) { nuevo.modelo = equipo.modelo; }
+    lista.push(nuevo);
     reconstruirEstado(); renderTodo();
     seleccionar(id);
     registrar("topologia", "Se agregó " + nombre + " (" + tipo + ").");
@@ -1651,7 +1682,7 @@ var UI = (function () {
       tabs.appendChild(b);
     });
     c.appendChild(tabs);
-    c.appendChild(el("h2", "", escapar(d.nombre || d.id) + " <small>" + escapar(nombreTipo(d.tipo)) + "</small>"));
+    c.appendChild(el("h2", "", escapar(d.nombre || d.id) + " <small>" + escapar(nombreTipo(claveDe(d))) + "</small>"));
 
     if (S.pestañaProps === "config") { panelConfig(c, d); }
     else if (S.pestañaProps === "ifs") { panelInterfaces(c, d); }
