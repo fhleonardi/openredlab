@@ -5683,6 +5683,7 @@ var UI = (function () {
     selCable.id = idCampo("tipo-cable");
     selCable.innerHTML = "<option value='ethernet'>ethernet (cobre)</option><option value='fibra'>fibra</option><option value='wireless'>wireless</option>";
     selCable.addEventListener("change", function () { S.cableTipo = selCable.value; S.herramientaCable = true; renderLienzo(); });
+    S.selectCable = selCable;
     pal.appendChild(etiqueta("Tipo de cable", selCable));
     pal.appendChild(selCable);
     var bCable = boton("Cable: clic en dos puertos (Esc cancela)", "herramienta");
@@ -6665,18 +6666,33 @@ var UI = (function () {
     });
   }
 
+  // Los mensajes de la herramienta de cable van al registro y también a un
+  // aviso en pantalla: la consola no siempre está a la vista.
+  function avisoCable(codigo, texto) {
+    registrar(codigo, texto);
+    avisar(texto);
+  }
+
   function clicPuerto(d, iface) {
     if (S.moviendoExtremo) { moverExtremo(d, iface); return; }
     if (!S.herramientaCable && !S.cableOrigen) { return; }
     if (!iface.habilitada) {
-      registrar("D01", "La interfaz " + d.id + ":" + iface.id + " está deshabilitada.");
+      avisoCable("D01", "La interfaz " + d.id + ":" + iface.id + " está deshabilitada: habilitala en la pestaña Interfaces.");
       S.cableOrigen = null;
       renderLienzo();
       return;
     }
     if (!S.cableOrigen) {
+      // El tipo de cable se ajusta al primer puerto: si es una wlan, el cable
+      // es wireless. Si la otra punta es de otro medio, sigue el D03.
+      var ajustado = iface.medio !== S.cableTipo;
+      if (ajustado) {
+        S.cableTipo = iface.medio;
+        if (S.selectCable) { S.selectCable.value = iface.medio; }
+      }
       S.cableOrigen = { dispositivo: d.id, interfaz: iface.id };
-      registrar("cable", "Origen " + d.id + ":" + iface.id + ". Elegí el puerto destino.");
+      avisoCable("cable", "Cable " + S.cableTipo + " desde " + d.id + ":" + iface.id +
+        (ajustado ? " (el tipo se ajustó al puerto)" : "") + ". Elegí el puerto destino.");
       renderLienzo();
       return;
     }
@@ -6687,27 +6703,38 @@ var UI = (function () {
     if (!oi) { S.cableOrigen = null; renderLienzo(); return; }
     var origenComparte = puertoAdmiteMultiplesEnlaces(od, oi);
     var destinoComparte = puertoAdmiteMultiplesEnlaces(d, iface);
-    if ((enlaceEnPuerto(o.dispositivo, o.interfaz) && !origenComparte) ||
-      (enlaceEnPuerto(d.id, iface.id) && !destinoComparte)) {
-      registrar("D02", "Ese puerto ya tiene cable. Elegí un puerto libre.");
+    if (enlaceEnPuerto(d.id, iface.id) && !destinoComparte) {
+      avisoCable("D02", "El puerto " + d.id + ":" + iface.id + " ya tiene cable. Elegí un puerto libre.");
+      S.cableOrigen = null; renderLienzo(); return;
+    }
+    if (enlaceEnPuerto(o.dispositivo, o.interfaz) && !origenComparte) {
+      avisoCable("D02", "El puerto " + o.dispositivo + ":" + o.interfaz + " ya tiene cable. Elegí un puerto libre.");
       S.cableOrigen = null; renderLienzo(); return;
     }
     if (oi.medio !== S.cableTipo || iface.medio !== S.cableTipo) {
-      registrar("D03", "Medios incompatibles: el enlace es " + S.cableTipo +
-        " pero une " + oi.medio + " con " + iface.medio + ".");
+      avisoCable("D03", "Medios incompatibles: el cable es " + S.cableTipo + " y une " + oi.medio + " con " + iface.medio + ".");
       S.cableOrigen = null; renderLienzo(); return;
     }
     empujarHistorial();
     var n = (S.topologia.enlaces || []).length + 1;
-    S.topologia.enlaces.push({
+    var nuevo = {
       id: idUnicoEnlace("l" + n),
       a: { dispositivo: o.dispositivo, interfaz: o.interfaz },
       b: { dispositivo: d.id, interfaz: iface.id },
-      tipo: S.cableTipo, estado: "up", velocidadMbps: S.cableTipo === "fibra" ? 1000 : 100, retardoMs: 1
-    });
+      tipo: S.cableTipo, estado: "up",
+      velocidadMbps: S.cableTipo === "fibra" ? 1000 : (S.cableTipo === "wireless" ? 54 : 100),
+      retardoMs: S.cableTipo === "wireless" ? 3 : 1
+    };
+    S.topologia.enlaces.push(nuevo);
     S.cableOrigen = null;
     reconstruirEstado(); renderLienzo(); renderPropiedades();
-    registrar("cable", "Enlace creado entre " + o.dispositivo + ":" + o.interfaz + " y " + d.id + ":" + iface.id + ".");
+    var extra = "";
+    if (nuevo.tipo === "wireless") {
+      var dist = Math.round(Math.sqrt(Math.pow(od.x - d.x, 2) + Math.pow(od.y - d.y, 2)));
+      var umbral = (S.estado && S.estado.umbralWireless) || 250;
+      if (dist > umbral) { extra = " Ojo: están a " + dist + " de distancia y el alcance es " + umbral + "; el ping va a fallar con D17."; }
+    }
+    avisoCable("cable", "Enlace " + nuevo.id + " creado entre " + o.dispositivo + ":" + o.interfaz + " y " + d.id + ":" + iface.id + "." + extra);
   }
 
   function idUnicoEnlace(base) {
