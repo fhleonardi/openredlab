@@ -113,7 +113,7 @@ var Motor = (function () {
         ctx = ctx || {};
         return "El gateway " + (ctx.gateway || "?") + " no pertenece a " +
           (ctx.red || "?") + "/" + (ctx.prefijo !== undefined ? ctx.prefijo : "?") +
-          ". Con esa máscara, tu equipo no puede alcanzarlo.";
+          ". Con esa máscara, " + (ctx.equipo || "tu equipo") + " no puede alcanzarlo.";
       },
       sugerencia: "Revisá la máscara del equipo o la dirección del gateway: uno de los dos está mal."
     },
@@ -1450,7 +1450,8 @@ var Motor = (function () {
             pasos: pasos,
             saltos: saltos,
             diagnostico: diagnosticoDe("D09", {
-              gateway: gw, red: redA, prefijo: actualIface.prefijo
+              gateway: gw, red: redA, prefijo: actualIface.prefijo,
+              equipo: dispActual.nombre || dispActual.id
             }),
             respuestas: []
           };
@@ -1767,7 +1768,7 @@ var Motor = (function () {
           }
         }
         if (!gwEnAlguna) {
-          agregar("D09", { gateway: dev.gateway, red: red, prefijo: iface.prefijo });
+          agregar("D09", { gateway: dev.gateway, red: red, prefijo: iface.prefijo, equipo: dev.nombre || dev.id });
         }
       }
       // D14 y D15 contra los pares del segmento.
@@ -2693,6 +2694,15 @@ var Motor = (function () {
       comparar("D23 TTL agotado por bucle", res.diagnostico.codigo, "D23");
       comparar("D23 nombra los dos routers",
         res.diagnostico.explicacion.indexOf("r1 → r2 → r1") >= 0, true);
+    })();
+
+    // 37. D09 nombra al equipo que no alcanza su gateway.
+    (function () {
+      var pc = fabPc("pc1", "192.168.1.10", 24, "192.168.2.1");
+      pc.nombre = "PC-Aula";
+      var topo = fabTopo([pc, fabSwitch("sw1")], [fabEnlace("l1", "pc1", "eth0", "sw1", "fa0/1")]);
+      var res = ping(crearEstado(topo), "pc1", "10.9.9.9");
+      comparar("D09 nombra al equipo", res.diagnostico && res.diagnostico.explicacion.indexOf("PC-Aula no puede alcanzarlo") >= 0, true);
     })();
 
     // 36. Un destino mal escrito no es un diagnóstico de red.

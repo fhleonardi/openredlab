@@ -1,0 +1,5 @@
+# Respaldos locales que se generan al reensamblar index.html
+*.bak-*
+# Copias de respaldo y entregas anteriores: quedan en disco, fuera del repo
+escenarios-bak-*/
+Claude outputs/

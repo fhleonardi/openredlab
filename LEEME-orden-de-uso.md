@@ -14,7 +14,7 @@ El BASE trae el contexto, el modelo de datos y —lo importante— la **API púb
 | 2 | BASE + `02-capa2-motor.md` | `capa2-motor.js` |
 | 3 | BASE + `03-capa3-escenarios.md` | `capa3-escenarios.js` |
 | 4 | BASE + `04-capa4-ui.md` | `capa4-ui.js` |
-| 5 | BASE + `05-capa5-ensamblado.md` | `simulador.html` |
+| 5 | BASE + `05-capa5-ensamblado.md` | `index.html` |
 
 Cada capa termina con su propia función de autopruebas. **Antes de pasar al turno siguiente, corré la del turno actual.** Es un archivo `.js` suelto: abrilo en la consola del navegador (o con `node`) y llamá a `Red.autopruebas()`. Si hay fallos, corregilos antes de seguir; si arrastrás un error de la capa 1 hasta la 4, encontrarlo después cuesta mucho más.
 
@@ -37,3 +37,14 @@ No le pidas al modelo que "arregle y devuelva todo de nuevo". Pedile **sólo la 
 Los modelos gratuitos de OpenCode figuran como promoción por tiempo limitado, así que no armes el flujo alrededor de uno en particular. Antes de comprometerte con uno, hacé una prueba canario: dale la capa 1 a dos o tres candidatos con el mismo texto y compará las salidas contra la tabla de casos obligatorios del documento. Veinte minutos, y tenés datos en vez de un ranking.
 
 La capa 1 es además el mejor termómetro posible: si un modelo no clava `cantidadHosts(8) === 16777214` ni `estaAlineada("10.45.7.132", 28) === false`, no le confíes el motor de simulación.
+
+## Reensamblar el archivo final
+
+El archivo final, `index.html`, es un derivado: cada bloque `<script>` lleva exactamente el código de una capa. **Nunca se edita el HTML a mano**: se corrige el `.js` de la capa y se reensambla.
+
+```
+python3 herramientas/ensamblar.py              # reescribe index.html
+python3 herramientas/ensamblar.py --verificar  # sólo compara; sale con 1 si difiere
+```
+
+Corré `--verificar` antes de entregar el archivo o de commitear. Si una capa cambió y el HTML no, el Autotest del navegador sigue probando la versión vieja y el error pasa desapercibido: ya ocurrió una vez con la capa 4. La herramienta usa sólo la biblioteca estándar de Python y no forma parte del producto.

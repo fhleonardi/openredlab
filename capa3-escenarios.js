@@ -73,6 +73,31 @@ var Escenarios = (function () {
     ]
   };
 
+  // Modelos de router. El estándar es el de la tabla del §4; el de 8
+  // puertos replica un equipo de oficina (por ejemplo, un MikroTik): cada
+  // puerto es una interfaz ruteada que puede tener su propia subred.
+  var MODELOS_ROUTER = {
+    "8-puertos": [
+      { id: "ether1", medio: "ethernet" },
+      { id: "ether2", medio: "ethernet" },
+      { id: "ether3", medio: "ethernet" },
+      { id: "ether4", medio: "ethernet" },
+      { id: "ether5", medio: "ethernet" },
+      { id: "ether6", medio: "ethernet" },
+      { id: "ether7", medio: "ethernet" },
+      { id: "ether8", medio: "ethernet" },
+      { id: "sfp1", medio: "fibra" },
+      { id: "wlan1", medio: "wireless" }
+    ]
+  };
+
+  function interfacesEsperadas(dispositivo) {
+    if (dispositivo.tipo === "router" && dispositivo.modelo && MODELOS_ROUTER[dispositivo.modelo]) {
+      return MODELOS_ROUTER[dispositivo.modelo];
+    }
+    return INTERFACES_ESPERADAS[dispositivo.tipo] || [];
+  }
+
   // Modo de radio efectivo de una interfaz wireless. Si no está declarado se
   // usa el valor inicial por tipo (ap en puntos de acceso y routers, cliente
   // en el resto), igual que hace el Motor.
@@ -256,7 +281,14 @@ var Escenarios = (function () {
       }
 
       // Juego de interfaces coherente con la tabla del §4 del BASE.
-      var esperadas = INTERFACES_ESPERADAS[d.tipo] || [];
+      if (d.modelo !== undefined && d.modelo !== null) {
+        if (d.tipo !== "router") {
+          anotar(etiqueta + ".modelo", "Sólo los routers tienen modelo (\"" + d.id + "\" es " + d.tipo + ").");
+        } else if (!MODELOS_ROUTER[d.modelo]) {
+          anotar(etiqueta + ".modelo", "Modelo de router desconocido en \"" + d.id + "\": tiene que ser \"8-puertos\" o no indicarse.");
+        }
+      }
+      var esperadas = interfacesEsperadas(d);
       var nombresEsperados = esperadas.map(function (e) { return e.id; }).join(", ");
       if (d.interfaces.length !== esperadas.length) {
         anotar(etiqueta + ".interfaces", "El dispositivo \"" + d.id + "\" de tipo \"" + d.tipo + "\" debería tener interfaces " + nombresEsperados + ".");
@@ -1302,6 +1334,44 @@ var Escenarios = (function () {
     return base;
   }
 
+  function topologiaRouter8() {
+    var ifs = ["ether1", "ether2", "ether3", "ether4", "ether5", "ether6", "ether7", "ether8"].map(function (id) {
+      return interfaz(id, "ethernet", null, 24, true);
+    });
+    ifs.push(interfaz("sfp1", "fibra", null, 24, true));
+    var wlan = interfaz("wlan1", "wireless", null, 24, false);
+    wlan.modoRadio = "ap";
+    ifs.push(wlan);
+    ifs[1].ip = "192.168.10.1";
+    ifs[2].ip = "192.168.20.1";
+    ifs[3].ip = "192.168.30.1";
+    var router = {
+      id: "r1", tipo: "router", modelo: "8-puertos", nombre: "R-Oficina",
+      x: 400, y: 120, encendido: true, interfaces: ifs,
+      gateway: null, dns: null, rutas: [], dhcp: null
+    };
+    return {
+      version: 1,
+      nombre: "Router de 8 puertos",
+      dispositivos: [
+        router,
+        armarPc("pc-adm", "PC-Administración", 130, 330, "192.168.10.10", 24, "192.168.10.1"),
+        armarPc("pc-ven", "PC-Ventas", 330, 330, "192.168.20.10", 24, "192.168.20.1"),
+        armarSwitch("sw-aula", "SW-Aula", 590, 330),
+        armarPc("pc-a1", "PC-Aula1", 500, 510, "192.168.30.11", 24, "192.168.30.1"),
+        armarPc("pc-a2", "PC-Aula2", 700, 510, "192.168.30.12", 24, "192.168.30.1")
+      ],
+      enlaces: [
+        armarEnlace("l-adm", "r1", "ether2", "pc-adm", "eth0", "ethernet"),
+        armarEnlace("l-ven", "r1", "ether3", "pc-ven", "eth0", "ethernet"),
+        armarEnlace("l-aula", "r1", "ether4", "sw-aula", "fa0/1", "ethernet"),
+        armarEnlace("l-a1", "pc-a1", "eth0", "sw-aula", "fa0/2", "ethernet"),
+        armarEnlace("l-a2", "pc-a2", "eth0", "sw-aula", "fa0/3", "ethernet")
+      ],
+      escenario: null
+    };
+  }
+
   var EJEMPLOS = [
     {
       id: "basica",
@@ -1332,6 +1402,12 @@ var Escenarios = (function () {
       nombre: "Desafío VLSM (complejo)",
       descripcion: "El complejo sin direccionar: diseñá el VLSM sobre 10.45.7.0/24 y verificalo en modo Desafío.",
       topologia: topologiaDesafioComplejo()
+    },
+    {
+      id: "router-8",
+      nombre: "Router de 8 puertos",
+      descripcion: "Tres subredes colgadas de un mismo router, cada puerto con su propia red (como un MikroTik con los puertos fuera del bridge).",
+      topologia: topologiaRouter8()
     }
   ];
 
@@ -1606,6 +1682,24 @@ var Escenarios = (function () {
       var inf = verificarDesafio(topo, soloWifi);
       comparar("desafío /24 para 60 hosts no es error", inf.resumen.errores, 0);
       comparar("desafío /24 para 60 hosts advierte", inf.resumen.advertencias, 1);
+    })();
+
+    // Router de 8 puertos: valida, enruta entre puertos y rechaza modelos raros.
+    (function () {
+      var r8 = topologiaRouter8();
+      comparar("router 8 puertos valida", validarTopologia(r8).ok, true);
+      var est8 = Motor.crearEstado(r8);
+      comparar("router 8 puertos enruta entre ether2 y ether4", Motor.ping(est8, "pc-adm", "192.168.30.12").exito, true);
+      comparar("router 8 puertos enruta entre ether3 y ether2", Motor.ping(est8, "pc-ven", "192.168.10.10").exito, true);
+      var raro = clonar(r8);
+      buscarDispositivo(raro, "r1").modelo = "48-puertos";
+      comparar("modelo de router desconocido no valida", validarTopologia(raro).ok, false);
+      var pcModelo = clonar(r8);
+      buscarDispositivo(pcModelo, "pc-adm").modelo = "8-puertos";
+      comparar("modelo en una PC no valida", validarTopologia(pcModelo).ok, false);
+      var faltante = clonar(r8);
+      buscarDispositivo(faltante, "r1").interfaces.pop();
+      comparar("router 8 puertos sin wlan1 no valida", validarTopologia(faltante).ok, false);
     })();
 
     // Modos de radio: la validación rechaza pares inválidos.

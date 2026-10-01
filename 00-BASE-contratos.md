@@ -31,7 +31,7 @@ El producto final es **un único archivo `.html` autocontenido**, pero no se gen
 | 2 | `capa2-motor.js` | `Motor` | `Red` |
 | 3 | `capa3-escenarios.js` | `Escenarios` | `Red`, `Motor` |
 | 4 | `capa4-ui.js` | `UI` | las tres anteriores |
-| 5 | `simulador.html` | ensamblado + `Autotest` | todas |
+| 5 | `index.html` | ensamblado + `Autotest` | todas |
 
 **Cada capa se genera en su propio turno y nunca reescribe el código de otra.** Por eso los contratos de §4 son obligatorios: una capa llama a la anterior sin haber visto su implementación. Si te falta una función que creés que debería existir, **no la inventes en tu capa**: usá las del contrato y señalá el faltante al final de tu respuesta.
 
@@ -62,7 +62,8 @@ Todas las capas operan sobre este objeto. El JSON exportado es exactamente este 
   "dispositivos": [
     {
       "id": "pc1",
-      "tipo": "pc",                    // pc | switch-l2 | router | camara | iot
+      "tipo": "pc",                    // pc | switch-l2 | router | camara | iot | ap
+      // "modelo": "8-puertos",        // sólo router; si falta es el router estándar
       "nombre": "PC-Admin",
       "x": 160, "y": 240,
       "encendido": true,
@@ -71,6 +72,7 @@ Todas las capas operan sobre este objeto. El JSON exportado es exactamente este 
           "id": "eth0",
           "nombre": "eth0",
           "medio": "ethernet",         // ethernet | fibra | wireless
+          // "modoRadio": "cliente",   // ap | cliente | bridge — sólo en medio wireless
           "habilitada": true,
           "modo": "estatico",          // estatico | dhcp
           "ip": "10.45.7.66",
@@ -78,7 +80,7 @@ Todas las capas operan sobre este objeto. El JSON exportado es exactamente este 
           "mac": "02:00:00:00:01:01"
         }
       ],
-      "gateway": "10.45.7.65",
+      "gateway": "10.45.7.65",         // en un router: ruta por defecto de último recurso
       "dns": "8.8.8.8",
       "rutas": [],                     // sólo router: [{destino, prefijo, siguienteSalto}]
       "dhcp": null                     // sólo router: {habilitado, desde, hasta, prefijo, gateway}
@@ -104,7 +106,16 @@ Reglas:
 - **El prefijo CIDR es la fuente de verdad.** La máscara decimal siempre se deriva de él.
 - Los `id` de dispositivos son únicos en toda la topología; los `id` de interfaces, únicos dentro de su dispositivo.
 - Las MAC se generan de forma **determinística** a partir del id del dispositivo y del índice de la interfaz, para que un mismo JSON produzca siempre las mismas MAC: la pantalla del docente y la del alumno tienen que coincidir.
-- Un enlace sólo existe entre dos interfaces libres y de medios compatibles.
+- Un enlace sólo existe entre interfaces de medios compatibles. Las de cobre y fibra admiten **un solo enlace**. Las inalámbricas dependen de su `modoRadio`:
+
+| `modoRadio` | Qué hace | Enlaces que admite |
+|---|---|---|
+| `ap` | Sostiene la celda. Es un puente entre el aire y el cable: **no enruta**. | varios, uno por cliente asociado |
+| `cliente` | Se asocia a un AP. | exactamente uno, contra un `ap` |
+| `bridge` | Enlace punto a punto que une dos segmentos a distancia. | exactamente uno, contra otro `bridge` |
+
+  Un router con su `wlan0` en modo `ap` es un router inalámbrico: la celda es una red más del router. El alcance inalámbrico (D17) se evalúa por enlace.
+- **Gateway de un router.** Cada router reenvía por su propia tabla de rutas (prefijo más largo). Si ninguna entrada coincide y el campo `gateway` tiene una dirección que cae en alguna de sus redes conectadas, se usa como ruta por defecto. Una ruta `0.0.0.0/0` explícita le gana.
 
 **Interfaces por defecto según el tipo de dispositivo**, creadas automáticamente al agregarlo:
 
@@ -115,6 +126,12 @@ Reglas:
 | `switch-l2` | 8 ethernet + 1 fibra | `fa0/1` … `fa0/8`, `fib0` |
 | `camara` | 1 ethernet + 1 wireless | `eth0`, `wlan0` |
 | `iot` | 1 wireless | `wlan0` |
+| `ap` | 1 wireless (modo `ap`) + 1 ethernet | `wlan0`, `eth0` |
+| `router`, `"modelo": "8-puertos"` | 8 ethernet + 1 fibra + 1 wireless (modo `ap`, deshabilitada) | `ether1` … `ether8`, `sfp1`, `wlan1` |
+
+El router de 8 puertos replica un equipo de oficina (por ejemplo, un MikroTik): **cada puerto es una interfaz ruteada** que puede tener su propia subred, como cuando en RouterOS se saca un puerto del bridge y se le asigna una dirección. No se simula el bridge entre puertos.
+
+**Modo de radio inicial** de la `wlan0` al agregar el equipo: `ap` en `ap` y `router`; `cliente` en `pc`, `camara` e `iot`. El modo `bridge` no es el valor inicial de nadie: se elige a mano. El punto de acceso es un dispositivo de capa 2, como el switch: hace puente entre `wlan0` y `eth0` y no tiene tabla de rutas.
 
 El usuario habilita y deshabilita interfaces, pero no las agrega ni las quita: el hardware es fijo, como en un equipo real.
 
@@ -147,7 +164,9 @@ Red.esBroadcast(ip, prefijo)       // -> boolean
 Red.esAsignable(ip, prefijo)       // -> boolean (ni red ni broadcast)
 Red.estaAlineada(red, prefijo)     // ¿arranca en múltiplo de su bloque?
 Red.solapan(redA, prefA, redB, prefB)          // -> boolean
-Red.clasificar(ip)                 // -> "privada" | "publica" | "loopback" | "apipa" | "invalida"
+Red.clasificar(ip)                 // -> "broadcast-limitado" | "esta-red" | "loopback" | "apipa" | "privada"
+                                   //    | "cgnat" | "multicast" | "reservada" | "publica" | "invalida"
+                                   //    evaluados en ese orden (255.255.255.255 cae dentro de 240.0.0.0/4)
 Red.and(ip, prefijo)               // -> { resultado, binarioIp, binarioMascara, binarioResultado }
 Red.desglose(ip, prefijo, gateway) // -> objeto completo para el panel de cálculo (ver capa 1)
 Red.autopruebas()                  // -> { total, pasadas, fallos: [{ nombre, esperado, obtenido }] }
@@ -173,7 +192,9 @@ Motor.dhcpSolicitar(estado, idDispositivo, idInterfaz)
 Motor.rutaElegida(estado, idRouter, destinoIp)   // -> ruta ganadora por prefijo más largo | null
 Motor.tablaArp(estado, idDispositivo)            // -> [{ ip, mac, vence }]
 Motor.tablaMac(estado, idSwitch)                 // -> [{ mac, puerto, vence }]
-Motor.CATALOGO                                   // { D01: {titulo, explicacion, sugerencia}, … D17 }
+Motor.CATALOGO                                   // { D01: {titulo, explicacion, sugerencia}, … D23 }
+// Un destino que no es una IPv4 válida no es un diagnóstico de red: Motor.ping devuelve
+// exito: false, pasos: [] y diagnostico { codigo: "ENTRADA", titulo, explicacion, sugerencia }.
 Motor.autopruebas()                              // mismo formato que Red.autopruebas()
 ```
 
@@ -214,7 +235,7 @@ Autotest.correr()   // -> { total, pasadas, resultados: [{ n, criterio, pasa, de
 
 ---
 
-## 6. Catálogo de diagnósticos D01–D19
+## 6. Catálogo de diagnósticos D01–D23
 
 Lo implementa la capa 2 en `Motor.CATALOGO` y lo usan todas las demás. Cada entrada tiene **título corto, explicación de una o dos líneas en lenguaje de aula, y sugerencia concreta de qué revisar**.
 
@@ -232,13 +253,17 @@ Lo implementa la capa 2 en `Motor.CATALOGO` y lo usan todas las demás. Cada ent
 | D10 | La puerta de enlace no responde ARP |
 | D11 | El router no tiene ruta hacia la red destino ni ruta por defecto |
 | D12 | Falta la ruta de retorno: el eco llega pero la respuesta no vuelve |
-| D13 | Destino apagado o con la interfaz caída |
+| D13 | Destino apagado o con la interfaz deshabilitada (sólo cuando existe un equipo con esa IP) |
 | D14 | Máscaras distintas en el mismo segmento |
 | D15 | Mismo switch, subredes distintas: un switch no enruta |
 | D16 | DHCP sin servidor o sin direcciones libres |
 | D17 | Fuera del alcance del enlace inalámbrico |
 | D18 | Modos inalámbricos incompatibles (por ejemplo, cliente contra cliente) |
 | D19 | Punto de acceso apagado o con la interfaz inalámbrica caída |
+| D20 | Entrega directa y nadie responde el ARP (no hay equipo con esa IP, o está desconectado) |
+| D21 | El destino es la dirección de broadcast de la subred del origen |
+| D22 | Hay ruta, pero el siguiente salto no es alcanzable |
+| D23 | Se agotó el TTL: bucle de enrutamiento (la explicación incluye el recorrido real) |
 
 `D06`, `D07`, `D09`, `D14` y `D15` se detectan **también al momento de configurar**, vía `Motor.advertenciasDe`, sin necesidad de hacer ping.
 
@@ -259,6 +284,25 @@ La usan la capa 3 (como ejemplo cargable) y la capa 5 (como sujeto del autotest)
 | Enlace R1 ↔ R2 | fibra | `10.45.7.128` | /30 | — |
 
 Convención: el gateway es siempre la **primera dirección asignable** de cada subred. Al menos un router con dos interfaces, un switch L2, y los tres tipos de enlace en uso.
+
+### 7.2 Escenario de desafío VLSM
+
+El modo desafío verifica **lo que el alumno configuró en los equipos**, no lo que declara el enunciado:
+
+```jsonc
+"escenario": {
+  "modo": "desafio",
+  "bloqueBase": "10.45.7.0/24",
+  "requerimientos": [
+    { "sector": "Wi-Fi de huéspedes", "hosts": 60, "dispositivos": ["pc-wifi", "iot1", "r1:wlan0"] },
+    { "sector": "Enlace R1 — R2",     "hosts": 2,  "dispositivos": ["r1:fib0", "r2:fib0"] }
+  ]
+}
+```
+
+- Cada entrada de `dispositivos` es un equipo (`"pc-wifi"`, que aporta su primera interfaz habilitada con IP) o una interfaz (`"r1:wlan0"`). La segunda forma es necesaria para los routers, que pertenecen a varios sectores, y para los enlaces punto a punto.
+- La subred del sector es IP AND máscara de la primera entrada con dirección. Como esa cuenta siempre da una red alineada, la alineación se evalúa sobre la subred que el alumno pensó: la interfaz del router del sector es, por convención, la primera dirección asignable.
+- El informe dice qué está mal y por qué, nunca cuál sería la dirección correcta.
 
 ---
 

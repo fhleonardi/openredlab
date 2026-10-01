@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#13355e">
 <title>Simulador de Redes</title>
 <style>html,body{margin:0;padding:0;width:100%;height:100%;overflow-x:hidden;}#app{width:100%;height:100vh;}</style>
 </head>
@@ -176,40 +177,26 @@ var Red = (function () {
   }
 
   function primerHost(ip, prefijo) {
+    // En /31 y /32 no hay direcciones de host utilizables.
     if (!esPrefijoValido(prefijo) || prefijo >= 31) {
-      if (!esPrefijoValido(prefijo)) {
-        return null;
-      }
-      // En /31 y /32 no hay direcciones de host utilizables.
-      if (aNumero(ip) === null) {
-        return null;
-      }
       return null;
     }
     var redTexto = direccionDeRed(ip, prefijo);
     if (redTexto === null) {
       return null;
     }
-    var redNum = aNumero(redTexto);
-    return aTexto(redNum + 1);
+    return aTexto(aNumero(redTexto) + 1);
   }
 
   function ultimoHost(ip, prefijo) {
     if (!esPrefijoValido(prefijo) || prefijo >= 31) {
-      if (!esPrefijoValido(prefijo)) {
-        return null;
-      }
-      if (aNumero(ip) === null) {
-        return null;
-      }
       return null;
     }
     var broadcastTexto = broadcast(ip, prefijo);
     if (broadcastTexto === null) {
       return null;
     }
-    var broadcastNum = aNumero(broadcastTexto);
-    return aTexto(broadcastNum - 1);
+    return aTexto(aNumero(broadcastTexto) - 1);
   }
 
   function cantidadHosts(prefijo) {
@@ -290,6 +277,7 @@ var Red = (function () {
     return inicioA <= finB && inicioB <= finA;
   }
 
+  // El orden importa: 255.255.255.255 también cae dentro de 240.0.0.0/4.
   function clasificar(ip) {
     var n = aNumero(ip);
     if (n === null) {
@@ -298,20 +286,29 @@ var Red = (function () {
     var num = n >>> 0;
     var o1 = (num >>> 24) & 255;
     var o2 = (num >>> 16) & 255;
+    if (num === 0xFFFFFFFF) {
+      return "broadcast-limitado";
+    }
+    if (o1 === 0) {
+      return "esta-red";
+    }
     if (o1 === 127) {
       return "loopback";
     }
     if (o1 === 169 && o2 === 254) {
       return "apipa";
     }
-    if (o1 === 10) {
+    if (o1 === 10 || (o1 === 172 && o2 >= 16 && o2 <= 31) || (o1 === 192 && o2 === 168)) {
       return "privada";
     }
-    if (o1 === 172 && o2 >= 16 && o2 <= 31) {
-      return "privada";
+    if (o1 === 100 && o2 >= 64 && o2 <= 127) {
+      return "cgnat";
     }
-    if (o1 === 192 && o2 === 168) {
-      return "privada";
+    if (o1 >= 224 && o1 <= 239) {
+      return "multicast";
+    }
+    if (o1 >= 240) {
+      return "reservada";
     }
     return "publica";
   }
@@ -478,6 +475,18 @@ var Red = (function () {
     var detalleRed = desglose("10.45.7.64", 27, null);
     comparar("desglose advierte direccion de red", detalleRed.advertencia, "Esta IP es la dirección de red de su subred");
 
+    // Rangos especiales: nada que no se reconozca se llama "pública" por descarte.
+    comparar("clasifica broadcast limitado", clasificar("255.255.255.255"), "broadcast-limitado");
+    comparar("clasifica esta red", clasificar("0.0.0.0"), "esta-red");
+    comparar("clasifica multicast bajo", clasificar("224.0.0.1"), "multicast");
+    comparar("clasifica multicast alto", clasificar("239.255.255.250"), "multicast");
+    comparar("clasifica reservada", clasificar("240.0.0.1"), "reservada");
+    comparar("clasifica cgnat", clasificar("100.64.0.1"), "cgnat");
+    comparar("clasifica justo antes de cgnat", clasificar("100.63.255.255"), "publica");
+    comparar("clasifica 172.32 pública", clasificar("172.32.0.1"), "publica");
+    comparar("clasifica pública", clasificar("8.8.8.8"), "publica");
+    comparar("ultimo host /32", ultimoHost("10.0.0.0", 32), null);
+
     return { total: total, pasadas: pasadas, fallos: fallos };
   }
 
@@ -626,7 +635,7 @@ var Motor = (function () {
         ctx = ctx || {};
         return "El gateway " + (ctx.gateway || "?") + " no pertenece a " +
           (ctx.red || "?") + "/" + (ctx.prefijo !== undefined ? ctx.prefijo : "?") +
-          ". Con esa máscara, tu equipo no puede alcanzarlo.";
+          ". Con esa máscara, " + (ctx.equipo || "tu equipo") + " no puede alcanzarlo.";
       },
       sugerencia: "Revisá la máscara del equipo o la dirección del gateway: uno de los dos está mal."
     },
@@ -742,6 +751,47 @@ var Motor = (function () {
           ". El AP está apagado, con la interfaz deshabilitada o fuera de alcance.";
       },
       sugerencia: "Revisá que haya un punto de acceso encendido en ese segmento, dentro del alcance, y que el enlace sea cliente contra ap."
+    },
+    D20: {
+      titulo: "Nadie respondió al ARP del destino",
+      explicacion: function (ctx) {
+        ctx = ctx || {};
+        return "Nadie respondió al ARP de " + (ctx.destino || "esa IP") + " en tu segmento. " +
+          "O no hay ningún equipo con esa dirección, o el que la tiene está apagado o desconectado.";
+      },
+      sugerencia: "Confirmá que la IP de destino esté bien escrita y que algún equipo del segmento la tenga configurada, encendido y conectado."
+    },
+    D21: {
+      titulo: "El destino es la dirección de broadcast",
+      explicacion: function (ctx) {
+        ctx = ctx || {};
+        return (ctx.destino || "Esa IP") + " es la dirección de broadcast de " +
+          (ctx.red || "?") + "/" + (ctx.prefijo || "?") + ", no la de un equipo. " +
+          "Este simulador no simula el ping a broadcast.";
+      },
+      sugerencia: "Pingueá la IP de un equipo concreto de la subred."
+    },
+    D22: {
+      titulo: "El siguiente salto no es alcanzable",
+      explicacion: function (ctx) {
+        ctx = ctx || {};
+        var inicio = (ctx.router || "El router") + " tiene una ruta hacia " + (ctx.red || "esa red") +
+          " por " + (ctx.siguienteSalto || "?") + ", pero ";
+        if (ctx.motivo === "sin-respuesta") {
+          return inicio + "ningún router responde en esa dirección dentro de su segmento.";
+        }
+        return inicio + "esa dirección no pertenece a ninguna de sus redes conectadas.";
+      },
+      sugerencia: "Revisá el siguiente salto de esa ruta: tiene que ser la IP de un router vecino, en una red que este router tenga conectada."
+    },
+    D23: {
+      titulo: "Se agotó el TTL: bucle de enrutamiento",
+      explicacion: function (ctx) {
+        ctx = ctx || {};
+        return "El paquete dio " + (ctx.saltos || "?") + " saltos sin llegar. Recorrido: " +
+          (ctx.recorrido || "?") + "… Probablemente haya un bucle de enrutamiento entre esos routers.";
+      },
+      sugerencia: "Seguí la ruta hacia el destino en la tabla de cada router del recorrido: alguno devuelve el paquete hacia atrás."
     }
   };
 
@@ -1214,19 +1264,18 @@ var Motor = (function () {
       return null;
     }
     var router = buscarDispositivo(estado, idRouter);
-    if (!router || !esRouter(router)) {
+    if (!router || !esRouter(router) || !router.encendido) {
       return null;
     }
     var candidatas = [];
+    var conectadas = [];
     var i;
     for (i = 0; i < router.interfaces.length; i++) {
       var iface = router.interfaces[i];
       if (!iface.habilitada || !iface.ip || !Red.esIpValida(iface.ip) || !prefijoValido(iface.prefijo)) {
         continue;
       }
-      if (!router.encendido) {
-        continue;
-      }
+      conectadas.push(iface);
       var red = Red.direccionDeRed(iface.ip, iface.prefijo);
       if (red === null) {
         continue;
@@ -1265,6 +1314,17 @@ var Motor = (function () {
       }
       if (mejor === null || c.prefijo > mejor.prefijo) {
         mejor = c;
+      }
+    }
+    // El campo gateway del router es el último recurso: sólo se usa si
+    // ninguna entrada de la tabla coincide (una 0.0.0.0/0 explícita le gana)
+    // y si el gateway cae en alguna de sus redes conectadas.
+    if (!mejor && router.gateway && Red.esIpValida(router.gateway)) {
+      for (i = 0; i < conectadas.length; i++) {
+        if (Red.mismaRed(conectadas[i].ip, router.gateway, conectadas[i].prefijo)) {
+          mejor = { destino: "0.0.0.0", prefijo: 0, siguienteSalto: router.gateway, directa: false, porGateway: true };
+          break;
+        }
       }
     }
     if (!mejor) {
@@ -1357,13 +1417,19 @@ var Motor = (function () {
       };
     }
 
+    // Un destino mal escrito es un error de tipeo, no un problema de la red:
+    // no se recorre ningún paso ni se usa un código D.
     if (!Red.esIpValida(destinoIp)) {
-      agregarPaso("Verificar la dirección de destino", "El texto no es una dirección IPv4 válida.", false);
       return {
         exito: false,
-        pasos: pasos,
-        saltos: saltos,
-        diagnostico: diagnosticoDe("D04", { origen: "el destino", interfaz: "destino" }),
+        pasos: [],
+        saltos: [],
+        diagnostico: {
+          codigo: "ENTRADA",
+          titulo: "La dirección de destino no es válida",
+          explicacion: "\"" + String(destinoIp) + "\" no es una dirección IPv4: son cuatro números de 0 a 255 separados por puntos.",
+          sugerencia: "Revisá lo que escribiste en el campo de destino."
+        },
         respuestas: []
       };
     }
@@ -1583,6 +1649,19 @@ var Motor = (function () {
       };
     }
 
+    // D21: el broadcast de la propia subred no es un equipo.
+    if (Red.esBroadcast(destinoIp, srcIface.prefijo) && Red.mismaRed(ipOrigen, destinoIp, srcIface.prefijo)) {
+      agregarPaso("Verificar la dirección de destino",
+        destinoIp + " es la dirección de broadcast de " + redOrigen + "/" + srcIface.prefijo + ".", false);
+      return {
+        exito: false,
+        pasos: pasos,
+        saltos: saltos,
+        diagnostico: diagnosticoDe("D21", { destino: destinoIp, red: redOrigen, prefijo: srcIface.prefijo }),
+        respuestas: []
+      };
+    }
+
     // Chequeo preventivo de máscaras y subredes cuando el destino existe en
     // el mismo segmento: distingue D14 (máscaras distintas) de D15 (el switch
     // no enruta). Va antes del gateway para que el diagnóstico sea el útil.
@@ -1650,13 +1729,14 @@ var Motor = (function () {
     var actualIp = ipOrigen;
     var ttl = TTL_INICIAL;
     var msTotal = 0;
-    var visitadosSalto = [origen.id];
+    var recorrido = [];
 
     while (true) {
       if (ttl <= 0) {
-        return fallar("D11", { router: actualId, destino: destinoIp },
+        var textoRecorrido = recorrido.join(" → ");
+        return fallar("D23", { saltos: recorrido.length, recorrido: textoRecorrido },
           "Controlar el TTL",
-          "Se agotaron los saltos sin llegar a destino: posible bucle de rutas.");
+          "El TTL llegó a 0 después de " + recorrido.length + " saltos: " + textoRecorrido + ".");
       }
       var dispActual = buscarDispositivo(estado, actualId);
       if (esRouter(dispActual) && actualId !== origen.id) {
@@ -1737,16 +1817,40 @@ var Motor = (function () {
               respuestas: []
             };
           }
-          var pista = todosDuenos.length === 0
-            ? "Ningún equipo tiene configurada esa IP."
-            : "El equipo que la tiene está apagado, con la interfaz caída o fuera de alcance.";
+          // D13 sólo cuando el simulador lo sabe: hay un equipo con esa IP y
+          // está apagado o con la interfaz deshabilitada. Lo demás es D20.
+          var apagado = null;
+          for (var ai = 0; ai < todosDuenos.length; ai++) {
+            var dAp = todosDuenos[ai];
+            if (dAp.dispositivo.id === actualId && dAp.interfaz.id === actualIface.id) {
+              continue;
+            }
+            if (!dAp.dispositivo.encendido || !dAp.interfaz.habilitada) {
+              apagado = dAp;
+              break;
+            }
+          }
+          if (apagado) {
+            agregarPaso("Resolver el destino por ARP",
+              "Se preguntó por " + destinoIp + " y nadie respondió: " + apagado.dispositivo.id +
+              (apagado.dispositivo.encendido
+                ? " tiene la interfaz " + apagado.interfaz.id + " deshabilitada."
+                : " está apagado."), false);
+            return {
+              exito: false,
+              pasos: pasos,
+              saltos: saltos,
+              diagnostico: diagnosticoDe("D13", { destino: destinoIp }),
+              respuestas: []
+            };
+          }
           agregarPaso("Resolver el destino por ARP",
-            "Se preguntó por " + destinoIp + " en el segmento y nadie respondió. " + pista, false);
+            "Se preguntó por " + destinoIp + " en el segmento y nadie respondió.", false);
           return {
             exito: false,
             pasos: pasos,
             saltos: saltos,
-            diagnostico: diagnosticoDe("D13", { destino: destinoIp }),
+            diagnostico: diagnosticoDe("D20", { destino: destinoIp }),
             respuestas: []
           };
         }
@@ -1830,92 +1934,100 @@ var Motor = (function () {
         return { exito: true, pasos: pasos, saltos: saltos, diagnostico: null, respuestas: respuestas };
       }
 
-      // Distinta red: pasos 6 a 9.
-      var gw = dispActual.gateway;
-      if (!gw || !Red.esIpValida(gw)) {
-        agregarPaso("Verificar puerta de enlace configurada",
-          actualId + " quiere llegar a " + redD + " pero no tiene puerta de enlace.", false);
-        return {
-          exito: false,
-          pasos: pasos,
-          saltos: saltos,
-          diagnostico: diagnosticoDe("D08", {
-            origen: actualId, destino: destinoIp, red: redA, redDestino: redD
-          }),
-          respuestas: []
-        };
-      }
-      agregarPaso("Verificar puerta de enlace configurada",
-        actualId + " usa el gateway " + gw + " para salir de " + redA + ".", true);
-
-      // Paso 7: el gateway tiene que pertenecer a la red del que envía.
-      var redGw = Red.direccionDeRed(gw, actualIface.prefijo);
-      var andGw = Red.and(gw, actualIface.prefijo);
-      var detalleGw = "Gateway: " + gw + " AND máscara de origen = " + redGw + "\n" +
-        "Red de origen: " + redA + "\n" +
-        (andGw ? "Gateway binario:  " + andGw.binarioIp + "\nMáscara binaria:  " +
-          andGw.binarioMascara + "\nResultado:      " + andGw.binarioResultado : "");
-      if (redGw !== redA) {
-        agregarPaso("Verificar que el gateway pertenezca a la subred", detalleGw, false);
-        return {
-          exito: false,
-          pasos: pasos,
-          saltos: saltos,
-          diagnostico: diagnosticoDe("D09", {
-            gateway: gw, red: redA, prefijo: actualIface.prefijo
-          }),
-          respuestas: []
-        };
-      }
-      agregarPaso("Verificar que el gateway pertenezca a la subred", detalleGw, true);
-
-      // Paso 8: ARP al gateway.
-      var respGw = respondedoresArp(estado, actualId, actualIface.id, gw);
-      if (respGw.length > 1) {
-        agregarPaso("Resolver el gateway por ARP",
-          "El ARP por " + gw + " recibió varias respuestas.", false);
-        return {
-          exito: false,
-          pasos: pasos,
-          saltos: saltos,
-          diagnostico: diagnosticoDe("D07", { ip: gw, origen: actualId, otro: respGw[1].dispositivo.id }),
-          respuestas: []
-        };
-      }
-      if (respGw.length === 0) {
-        agregarPaso("Resolver el gateway por ARP",
-          "Se preguntó por " + gw + " y nadie respondió.", false);
-        return {
-          exito: false,
-          pasos: pasos,
-          saltos: saltos,
-          diagnostico: diagnosticoDe("D10", { gateway: gw }),
-          respuestas: []
-        };
-      }
-      agregarArp(estado, actualId, gw, respGw[0].interfaz.mac, registrar);
-      agregarPaso("Resolver el gateway por ARP",
-        "El gateway " + gw + " respondió con su MAC.", true);
-      var enlacesUsados = enlacesDe(estado, actualId, actualIface.id);
-      if (enlacesUsados.length > 0) {
-        msTotal += (enlacesUsados[0].retardoMs || 0) + 1;
+      // Distinta red: pasos 6 a 9. Un router consulta su propia tabla de
+      // rutas (que incluye su campo gateway como último recurso); un host le
+      // pasa el paquete a su puerta de enlace.
+      var router;
+      if (esRouter(dispActual)) {
+        router = dispActual;
       } else {
-        msTotal += 1;
-      }
+        var gw = dispActual.gateway;
+        if (!gw || !Red.esIpValida(gw)) {
+          agregarPaso("Verificar puerta de enlace configurada",
+            actualId + " quiere llegar a " + redD + " pero no tiene puerta de enlace.", false);
+          return {
+            exito: false,
+            pasos: pasos,
+            saltos: saltos,
+            diagnostico: diagnosticoDe("D08", {
+              origen: actualId, destino: destinoIp, red: redA, redDestino: redD
+            }),
+            respuestas: []
+          };
+        }
+        agregarPaso("Verificar puerta de enlace configurada",
+          actualId + " usa el gateway " + gw + " para salir de " + redA + ".", true);
 
-      // El gateway tiene que ser un router (o al menos el equipo que responde).
-      var router = respGw[0].dispositivo;
-      if (!esRouter(router)) {
-        agregarPaso("Llegar al gateway",
-          "El equipo " + router.id + " respondió el ARP del gateway pero no es un router: " +
-          "no sabe reenviar a otra red.", false);
-        return {
-          exito: false,
-          pasos: pasos,
-          saltos: saltos,
-          diagnostico: diagnosticoDe("D11", { router: router.id, destino: destinoIp }),
-          respuestas: []
-        };
+        // Paso 7: el gateway tiene que pertenecer a la red del que envía.
+        var redGw = Red.direccionDeRed(gw, actualIface.prefijo);
+        var andGw = Red.and(gw, actualIface.prefijo);
+        var detalleGw = "Gateway: " + gw + " AND máscara de origen = " + redGw + "\n" +
+          "Red de origen: " + redA + "\n" +
+          (andGw ? "Gateway binario:  " + andGw.binarioIp + "\nMáscara binaria:  " +
+            andGw.binarioMascara + "\nResultado:      " + andGw.binarioResultado : "");
+        if (redGw !== redA) {
+          agregarPaso("Verificar que el gateway pertenezca a la subred", detalleGw, false);
+          return {
+            exito: false,
+            pasos: pasos,
+            saltos: saltos,
+            diagnostico: diagnosticoDe("D09", {
+              gateway: gw, red: redA, prefijo: actualIface.prefijo,
+              equipo: dispActual.nombre || dispActual.id
+            }),
+            respuestas: []
+          };
+        }
+        agregarPaso("Verificar que el gateway pertenezca a la subred", detalleGw, true);
+
+        // Paso 8: ARP al gateway.
+        var respGw = respondedoresArp(estado, actualId, actualIface.id, gw);
+        if (respGw.length > 1) {
+          agregarPaso("Resolver el gateway por ARP",
+            "El ARP por " + gw + " recibió varias respuestas.", false);
+          return {
+            exito: false,
+            pasos: pasos,
+            saltos: saltos,
+            diagnostico: diagnosticoDe("D07", { ip: gw, origen: actualId, otro: respGw[1].dispositivo.id }),
+            respuestas: []
+          };
+        }
+        if (respGw.length === 0) {
+          agregarPaso("Resolver el gateway por ARP",
+            "Se preguntó por " + gw + " y nadie respondió.", false);
+          return {
+            exito: false,
+            pasos: pasos,
+            saltos: saltos,
+            diagnostico: diagnosticoDe("D10", { gateway: gw }),
+            respuestas: []
+          };
+        }
+        agregarArp(estado, actualId, gw, respGw[0].interfaz.mac, registrar);
+        agregarPaso("Resolver el gateway por ARP",
+          "El gateway " + gw + " respondió con su MAC.", true);
+        var enlacesUsados = enlacesDe(estado, actualId, actualIface.id);
+        if (enlacesUsados.length > 0) {
+          msTotal += (enlacesUsados[0].retardoMs || 0) + 1;
+        } else {
+          msTotal += 1;
+        }
+
+        // El gateway tiene que ser un router (o al menos el equipo que responde).
+        router = respGw[0].dispositivo;
+        if (!esRouter(router)) {
+          agregarPaso("Llegar al gateway",
+            "El equipo " + router.id + " respondió el ARP del gateway pero no es un router: " +
+            "no sabe reenviar a otra red.", false);
+          return {
+            exito: false,
+            pasos: pasos,
+            saltos: saltos,
+            diagnostico: diagnosticoDe("D11", { router: router.id, destino: destinoIp }),
+            respuestas: []
+          };
+        }
       }
 
       // Paso 9: ruta más específica en el router.
@@ -1960,7 +2072,11 @@ var Motor = (function () {
             exito: false,
             pasos: pasos,
             saltos: saltos,
-            diagnostico: diagnosticoDe("D11", { router: router.id, destino: destinoIp }),
+            diagnostico: diagnosticoDe("D22", {
+              router: router.nombre || router.id,
+              red: ruta.destino + "/" + ruta.prefijo,
+              siguienteSalto: ruta.siguienteSalto
+            }),
             respuestas: []
           };
         }
@@ -2068,7 +2184,12 @@ var Motor = (function () {
             exito: false,
             pasos: pasos,
             saltos: saltos,
-            diagnostico: diagnosticoDe("D11", { router: router.id, destino: destinoIp }),
+            diagnostico: diagnosticoDe("D22", {
+              router: router.nombre || router.id,
+              red: ruta.destino + "/" + ruta.prefijo,
+              siguienteSalto: ruta.siguienteSalto,
+              motivo: "sin-respuesta"
+            }),
             respuestas: []
           };
         }
@@ -2078,18 +2199,7 @@ var Motor = (function () {
         agregarArp(estado, router.id, ruta.siguienteSalto, vecinos[0].interfaz.mac, registrar);
         agregarArp(estado, vecinos[0].dispositivo.id, egreso.ip, egreso.mac, registrar);
       }
-      if (visitadosSalto.indexOf(router.id) >= 0 && router.id !== origen.id) {
-        agregarPaso("Avanzar al siguiente salto",
-          "Se volvió a pasar por " + router.id + ": hay un bucle de rutas.", false);
-        return {
-          exito: false,
-          pasos: pasos,
-          saltos: saltos,
-          diagnostico: diagnosticoDe("D11", { router: router.id, destino: destinoIp }),
-          respuestas: []
-        };
-      }
-      visitadosSalto.push(router.id);
+      recorrido.push(router.nombre || router.id);
       saltos.push({ dispositivo: router.id, interfaz: egreso.id });
       if (siguienteDispositivo.id !== router.id) {
         saltos.push({ dispositivo: siguienteDispositivo.id, interfaz: siguienteInterfaz.id });
@@ -2180,7 +2290,7 @@ var Motor = (function () {
           }
         }
         if (!gwEnAlguna) {
-          agregar("D09", { gateway: dev.gateway, red: red, prefijo: iface.prefijo });
+          agregar("D09", { gateway: dev.gateway, red: red, prefijo: iface.prefijo, equipo: dev.nombre || dev.id });
         }
       }
       // D14 y D15 contra los pares del segmento.
@@ -3009,6 +3119,122 @@ var Motor = (function () {
         res.diagnostico && res.diagnostico.titulo.indexOf("el AP no enruta") >= 0, true);
     })();
 
+    // Dos routers unidos punto a punto: pc1 — sw1 — r1 === r2 — sw2 — pc2.
+    function dosRouters(rutasR1, rutasR2) {
+      return fabTopo(
+        [fabPc("pc1", "192.168.1.10", 24, "192.168.1.1"),
+         fabPc("pc2", "192.168.2.10", 24, "192.168.2.1"),
+         fabRouter("r1", [
+           { id: "g0/0", ip: "192.168.1.1", prefijo: 24 },
+           { id: "g0/1", ip: "10.0.0.1", prefijo: 30 }
+         ], rutasR1),
+         fabRouter("r2", [
+           { id: "g0/0", ip: "10.0.0.2", prefijo: 30 },
+           { id: "g0/1", ip: "192.168.2.1", prefijo: 24 }
+         ], rutasR2),
+         fabSwitch("sw1"), fabSwitch("sw2")],
+        [fabEnlace("l1", "pc1", "eth0", "sw1", "fa0/1"),
+         fabEnlace("l2", "r1", "g0/0", "sw1", "fa0/2"),
+         fabEnlace("l3", "r1", "g0/1", "r2", "g0/0"),
+         fabEnlace("l4", "r2", "g0/1", "sw2", "fa0/1"),
+         fabEnlace("l5", "pc2", "eth0", "sw2", "fa0/2")]);
+    }
+    function routerDe(topo, id) {
+      for (var k = 0; k < topo.dispositivos.length; k++) {
+        if (topo.dispositivos[k].id === id) { return topo.dispositivos[k]; }
+      }
+      return null;
+    }
+
+    // 29. El campo gateway del router funciona como ruta por defecto.
+    (function () {
+      var topo = dosRouters([], []);
+      routerDe(topo, "r1").gateway = "10.0.0.2";
+      routerDe(topo, "r2").gateway = "10.0.0.1";
+      comparar("gateway de router como ruta por defecto",
+        ping(crearEstado(topo), "pc1", "192.168.2.10").exito, true);
+    })();
+
+    // 30. Un gateway fuera de toda red conectada no sirve: D11.
+    (function () {
+      var topo = dosRouters([], []);
+      routerDe(topo, "r1").gateway = "172.16.0.1";
+      routerDe(topo, "r2").gateway = "10.0.0.1";
+      comparar("gateway de router inalcanzable da D11",
+        ping(crearEstado(topo), "pc1", "192.168.2.10").diagnostico.codigo, "D11");
+    })();
+
+    // 31. Una 0.0.0.0/0 explícita le gana al campo gateway.
+    (function () {
+      var topo = dosRouters([{ destino: "0.0.0.0", prefijo: 0, siguienteSalto: "10.0.0.2" }],
+        [{ destino: "192.168.1.0", prefijo: 24, siguienteSalto: "10.0.0.1" }]);
+      routerDe(topo, "r1").gateway = "192.168.1.99";
+      var est = crearEstado(topo);
+      var r = rutaElegida(est, "r1", "192.168.2.10");
+      comparar("ruta por defecto explícita le gana al gateway", r && r.siguienteSalto, "10.0.0.2");
+      comparar("ruta por defecto explícita llega", ping(est, "pc1", "192.168.2.10").exito, true);
+    })();
+
+    // 32. D21: ping al broadcast de la propia subred.
+    (function () {
+      var topo = fabTopo(
+        [fabPc("pc1", "10.45.7.66", 27, "10.45.7.65"), fabSwitch("sw1")],
+        [fabEnlace("l1", "pc1", "eth0", "sw1", "fa0/1")]);
+      comparar("D21 ping a broadcast",
+        ping(crearEstado(topo), "pc1", "10.45.7.95").diagnostico.codigo, "D21");
+    })();
+
+    // 33. D20: IP libre de la propia subred. D13 sólo si el equipo existe.
+    (function () {
+      var topo = fabTopo(
+        [fabPc("pc1", "192.168.1.10", 24, null),
+         fabPc("pc2", "192.168.1.20", 24, null),
+         fabSwitch("sw1")],
+        [fabEnlace("l1", "pc1", "eth0", "sw1", "fa0/1"),
+         fabEnlace("l2", "pc2", "eth0", "sw1", "fa0/2")]);
+      comparar("D20 IP libre, no D13",
+        ping(crearEstado(topo), "pc1", "192.168.1.77").diagnostico.codigo, "D20");
+      routerDe(topo, "pc2").interfaces[0].habilitada = false;
+      comparar("D13 interfaz del destino deshabilitada",
+        ping(crearEstado(topo), "pc1", "192.168.1.20").diagnostico.codigo, "D13");
+    })();
+
+    // 34. D22: la ruta existe pero el siguiente salto no es alcanzable.
+    (function () {
+      var topo = dosRouters([{ destino: "192.168.2.0", prefijo: 24, siguienteSalto: "10.99.99.99" }], []);
+      var res = ping(crearEstado(topo), "pc1", "192.168.2.10");
+      comparar("D22 siguiente salto fuera de las redes conectadas", res.diagnostico.codigo, "D22");
+      comparar("D22 menciona el siguiente salto",
+        res.diagnostico.explicacion.indexOf("10.99.99.99") >= 0, true);
+    })();
+
+    // 35. D23: bucle de enrutamiento entre r1 y r2.
+    (function () {
+      var topo = dosRouters([{ destino: "192.168.9.0", prefijo: 24, siguienteSalto: "10.0.0.2" }],
+        [{ destino: "192.168.9.0", prefijo: 24, siguienteSalto: "10.0.0.1" }]);
+      var res = ping(crearEstado(topo), "pc1", "192.168.9.5");
+      comparar("D23 TTL agotado por bucle", res.diagnostico.codigo, "D23");
+      comparar("D23 nombra los dos routers",
+        res.diagnostico.explicacion.indexOf("r1 → r2 → r1") >= 0, true);
+    })();
+
+    // 37. D09 nombra al equipo que no alcanza su gateway.
+    (function () {
+      var pc = fabPc("pc1", "192.168.1.10", 24, "192.168.2.1");
+      pc.nombre = "PC-Aula";
+      var topo = fabTopo([pc, fabSwitch("sw1")], [fabEnlace("l1", "pc1", "eth0", "sw1", "fa0/1")]);
+      var res = ping(crearEstado(topo), "pc1", "10.9.9.9");
+      comparar("D09 nombra al equipo", res.diagnostico && res.diagnostico.explicacion.indexOf("PC-Aula no puede alcanzarlo") >= 0, true);
+    })();
+
+    // 36. Un destino mal escrito no es un diagnóstico de red.
+    (function () {
+      var topo = fabTopo([fabPc("pc-admin", "10.45.7.66", 27, "10.45.7.65")], []);
+      var res = ping(crearEstado(topo), "pc-admin", "10.45.7.1000");
+      comparar("destino inválido da ENTRADA", res.diagnostico.codigo, "ENTRADA");
+      comparar("destino inválido sin pasos", res.pasos.length, 0);
+    })();
+
     return { total: total, pasadas: pasadas, fallos: fallos };
   }
 
@@ -3048,9 +3274,10 @@ var Motor = (function () {
  * - `exportarParaAlumno` aplica las fallas y elimina la clave `fallas`, de
  *   modo que el archivo del alumno es una red que simplemente viene mal
  *   configurada, sin nada que espiar.
- * - `verificarDesafio` acepta varios nombres de campo equivalentes para el
- *   bloque base y los sectores, para no atarse a una sola forma de escribir
- *   el escenario en la capa 4.
+ * - `verificarDesafio` lee los `requerimientos` del escenario (también
+ *   acepta `sectores`) y deriva la subred de cada sector de las IP y
+ *   máscaras que el alumno configuró en los equipos: verifica la respuesta
+ *   del alumno, no lo que declara el enunciado.
  */
 
 var Escenarios = (function () {
@@ -3103,6 +3330,31 @@ var Escenarios = (function () {
       { id: "eth0", medio: "ethernet" }
     ]
   };
+
+  // Modelos de router. El estándar es el de la tabla del §4; el de 8
+  // puertos replica un equipo de oficina (por ejemplo, un MikroTik): cada
+  // puerto es una interfaz ruteada que puede tener su propia subred.
+  var MODELOS_ROUTER = {
+    "8-puertos": [
+      { id: "ether1", medio: "ethernet" },
+      { id: "ether2", medio: "ethernet" },
+      { id: "ether3", medio: "ethernet" },
+      { id: "ether4", medio: "ethernet" },
+      { id: "ether5", medio: "ethernet" },
+      { id: "ether6", medio: "ethernet" },
+      { id: "ether7", medio: "ethernet" },
+      { id: "ether8", medio: "ethernet" },
+      { id: "sfp1", medio: "fibra" },
+      { id: "wlan1", medio: "wireless" }
+    ]
+  };
+
+  function interfacesEsperadas(dispositivo) {
+    if (dispositivo.tipo === "router" && dispositivo.modelo && MODELOS_ROUTER[dispositivo.modelo]) {
+      return MODELOS_ROUTER[dispositivo.modelo];
+    }
+    return INTERFACES_ESPERADAS[dispositivo.tipo] || [];
+  }
 
   // Modo de radio efectivo de una interfaz wireless. Si no está declarado se
   // usa el valor inicial por tipo (ap en puntos de acceso y routers, cliente
@@ -3287,7 +3539,14 @@ var Escenarios = (function () {
       }
 
       // Juego de interfaces coherente con la tabla del §4 del BASE.
-      var esperadas = INTERFACES_ESPERADAS[d.tipo] || [];
+      if (d.modelo !== undefined && d.modelo !== null) {
+        if (d.tipo !== "router") {
+          anotar(etiqueta + ".modelo", "Sólo los routers tienen modelo (\"" + d.id + "\" es " + d.tipo + ").");
+        } else if (!MODELOS_ROUTER[d.modelo]) {
+          anotar(etiqueta + ".modelo", "Modelo de router desconocido en \"" + d.id + "\": tiene que ser \"8-puertos\" o no indicarse.");
+        }
+      }
+      var esperadas = interfacesEsperadas(d);
       var nombresEsperados = esperadas.map(function (e) { return e.id; }).join(", ");
       if (d.interfaces.length !== esperadas.length) {
         anotar(etiqueta + ".interfaces", "El dispositivo \"" + d.id + "\" de tipo \"" + d.tipo + "\" debería tener interfaces " + nombresEsperados + ".");
@@ -3712,6 +3971,9 @@ var Escenarios = (function () {
     if (Array.isArray(escenario)) {
       return escenario;
     }
+    if (escenario && Array.isArray(escenario.requerimientos)) {
+      return escenario.requerimientos;
+    }
     if (escenario && Array.isArray(escenario.sectores)) {
       return escenario.sectores;
     }
@@ -3723,16 +3985,6 @@ var Escenarios = (function () {
 
   function nombreSector(sector, indice) {
     return sector.nombre || sector.sector || ("Sector " + (indice + 1));
-  }
-
-  function redSector(sector) {
-    var cruda = sector.red || sector.subred || sector.direccion || sector.network || sector.cidr || sector.bloque;
-    if (typeof cruda === "string" && cruda.indexOf("/") >= 0) {
-      var partes = cruda.split("/");
-      var pref = parseInt(partes[1], 10);
-      return { red: partes[0].trim(), prefijo: pref };
-    }
-    return { red: typeof cruda === "string" ? cruda.trim() : cruda, prefijo: sector.prefijo };
   }
 
   function hostsPedidos(sector) {
@@ -3756,10 +4008,47 @@ var Escenarios = (function () {
   }
 
   function equiposSector(sector) {
-    var v = sector.equipos || sector.dispositivos || sector.ids || sector.equiposIds || sector.hostsLista;
+    var v = sector.dispositivos || sector.equipos || sector.ids || sector.equiposIds || sector.hostsLista;
     return Array.isArray(v) ? v : [];
   }
 
+  /* Resuelve una entrada del sector: "pc-admin" (la primera interfaz
+   * habilitada con IP) o "r1:g0/0" (esa interfaz). Devuelve la IP y el
+   * prefijo que el alumno configuró, o null en ip si no hay dirección. */
+  function resolverEntrada(topologia, entrada) {
+    var texto = String(entrada);
+    var corte = texto.indexOf(":");
+    var idDisp = corte >= 0 ? texto.slice(0, corte) : texto;
+    var idIf = corte >= 0 ? texto.slice(corte + 1) : null;
+    var disp = buscarDispositivo(topologia, idDisp);
+    if (!disp) {
+      return { etiqueta: texto, error: "El equipo \"" + idDisp + "\" no existe en la topología." };
+    }
+    var iface = null;
+    if (idIf !== null) {
+      iface = buscarInterfaz(disp, idIf);
+      if (!iface) {
+        return { etiqueta: texto, error: "La interfaz \"" + texto + "\" no existe en la topología." };
+      }
+    } else {
+      var prim = primeraIpDe(disp);
+      iface = prim ? prim.interfaz : null;
+    }
+    var conIp = !!iface && iface.habilitada !== false && textoNoVacio(iface.ip) &&
+      Red.esIpValida(iface.ip.trim()) && esEnteroPrefijo(iface.prefijo);
+    return {
+      etiqueta: texto,
+      dispositivo: disp,
+      esInterfazDeclarada: idIf !== null,
+      ip: conIp ? iface.ip.trim() : null,
+      prefijo: conIp ? iface.prefijo : null
+    };
+  }
+
+  /* El modo desafío verifica lo que el alumno configuró en los equipos, no
+   * lo que declara el escenario: la subred de cada sector se deriva de las
+   * IP y máscaras de sus interfaces. El informe dice qué está mal y por qué,
+   * nunca cuál sería la dirección correcta. */
   function verificarDesafio(topologia, escenario) {
     var baseCruda = escenario ? (escenario.bloqueBase || escenario.bloque || escenario.base || escenario.redBase || escenario.cidr) : null;
     var base = parsearBloque(baseCruda);
@@ -3770,23 +4059,50 @@ var Escenarios = (function () {
     var lista = normalizarSectores(escenario);
     var infos = [];
     var i;
-    for (i = 0; i < lista.length; i++) {
-      var s = lista[i] || {};
-      var rp = redSector(s);
-      infos.push({
-        indice: i,
-        nombre: nombreSector(s, i),
-        red: rp.red,
-        prefijo: rp.prefijo,
-        hosts: hostsPedidos(s),
-        gateway: s.gateway,
-        equipos: equiposSector(s),
-        hallazgos: []
-      });
-    }
 
     function hallazgo(info, nivel, mensaje) {
       info.hallazgos.push({ nivel: nivel, mensaje: mensaje });
+    }
+
+    for (i = 0; i < lista.length; i++) {
+      var s = lista[i] || {};
+      var info = {
+        nombre: nombreSector(s, i),
+        hosts: hostsPedidos(s),
+        miembros: [],
+        red: null,
+        prefijo: null,
+        hallazgos: []
+      };
+      var entradas = equiposSector(s);
+      for (var e = 0; e < entradas.length; e++) {
+        var m = resolverEntrada(topologia, entradas[e]);
+        if (m.error) {
+          hallazgo(info, "error", m.error);
+          continue;
+        }
+        info.miembros.push(m);
+      }
+      var direccionados = info.miembros.filter(function (x) { return x.ip !== null; });
+      if (direccionados.length === 0) {
+        hallazgo(info, "error", "El sector no está direccionado.");
+      } else {
+        info.red = Red.direccionDeRed(direccionados[0].ip, direccionados[0].prefijo);
+        info.prefijo = direccionados[0].prefijo;
+        // 1. Todos los equipos del sector en la misma subred.
+        for (var k = 1; k < direccionados.length; k++) {
+          var otro = direccionados[k];
+          var redOtro = Red.direccionDeRed(otro.ip, otro.prefijo);
+          if (redOtro !== info.red || otro.prefijo !== info.prefijo) {
+            hallazgo(info, "error", "Los equipos del sector no están todos en la misma subred: " +
+              direccionados[0].etiqueta + " está en " + info.red + "/" + info.prefijo + " y " +
+              otro.etiqueta + " en " + redOtro + "/" + otro.prefijo + ".");
+            break;
+          }
+        }
+      }
+      info.direccionados = direccionados;
+      infos.push(info);
     }
 
     var inicioBase = null;
@@ -3797,141 +4113,135 @@ var Escenarios = (function () {
       finBase = bcastBase === null ? null : Red.aNumero(bcastBase);
     }
 
-    // 1. Cada subred cae dentro del bloque base.
     for (i = 0; i < infos.length; i++) {
-      var info = infos[i];
-      if (!base) {
-        hallazgo(info, "error", "No hay bloque base declarado para verificar el sector \"" + info.nombre + "\".");
+      var cur = infos[i];
+      if (cur.red === null) {
         continue;
       }
-      if (!textoNoVacio(info.red) || !Red.esIpValida(info.red) || !esEnteroPrefijo(info.prefijo)) {
-        hallazgo(info, "error", "El sector \"" + info.nombre + "\" no declara una subred válida.");
-        continue;
+      var etiquetaRed = cur.red + "/" + cur.prefijo;
+
+      // 2. La subred cae dentro del bloque base.
+      if (!base || inicioBase === null || finBase === null) {
+        hallazgo(cur, "error", "No hay bloque base declarado para verificar el sector.");
+      } else {
+        var ini = Red.aNumero(cur.red);
+        var fin = Red.aNumero(Red.broadcast(cur.red, cur.prefijo));
+        if (ini < inicioBase || fin > finBase) {
+          hallazgo(cur, "error", "La subred " + etiquetaRed + " no entra en el bloque base " + base.red + "/" + base.prefijo + ".");
+        }
       }
-      var redNorm = Red.direccionDeRed(info.red, info.prefijo);
-      var bcast = Red.broadcast(info.red, info.prefijo);
-      if (redNorm === null || bcast === null || inicioBase === null || finBase === null) {
-        hallazgo(info, "error", "El sector \"" + info.nombre + "\" no declara una subred válida.");
-        continue;
+
+      // 3. Alineación. IP AND máscara siempre da una red alineada; lo que
+      // revela el error es dónde el alumno hizo arrancar la subred. Por la
+      // convención de la cátedra, el gateway (la interfaz del router del
+      // sector) es la primera dirección asignable: la subred que el alumno
+      // pensó arranca una dirección antes.
+      var referencia = null;
+      for (var r = 0; r < cur.direccionados.length; r++) {
+        var cand = cur.direccionados[r];
+        if (cand.esInterfazDeclarada && cand.dispositivo.tipo === "router") {
+          referencia = cand;
+          break;
+        }
       }
-      var ini = Red.aNumero(redNorm);
-      var fin = Red.aNumero(bcast);
-      if (ini < inicioBase || fin > finBase) {
-        hallazgo(info, "error", "La subred " + info.red + "/" + info.prefijo + " no entra en el bloque base " + base.red + "/" + base.prefijo + ".");
+      if (referencia && cur.prefijo < 31) {
+        var bloque = Red.tamanoBloque(cur.prefijo);
+        var inicioPensado = Red.aNumero(referencia.ip) - 1;
+        if (inicioPensado % bloque !== 0) {
+          hallazgo(cur, "error", "La subred no arranca en un múltiplo de " + bloque + ": si " +
+            referencia.ip + " (" + referencia.etiqueta + ") es la primera dirección asignable, la subred " +
+            "arrancaría en " + Red.aTexto(inicioPensado) + ", y con /" + cur.prefijo + " eso no está alineado.");
+        }
+      }
+
+      // 4. El prefijo alcanza para los hosts pedidos.
+      var disponibles = Red.cantidadHosts(cur.prefijo);
+      if (cur.prefijo === 31) {
+        disponibles = 2;
+      }
+      if (cur.hosts > 0 && disponibles < cur.hosts) {
+        hallazgo(cur, "error", "El prefijo /" + cur.prefijo + " sólo permite " + disponibles +
+          " hosts y el sector pide " + cur.hosts + ".");
+      }
+
+      // 5. Ninguna IP configurada es la de red ni la de broadcast.
+      for (var d = 0; d < cur.direccionados.length; d++) {
+        var md = cur.direccionados[d];
+        if (md.prefijo < 31 && !Red.esAsignable(md.ip, md.prefijo)) {
+          var rol = Red.esDireccionDeRed(md.ip, md.prefijo) ? "la dirección de red" : "la dirección de broadcast";
+          hallazgo(cur, "error", "La IP " + md.ip + " de " + md.etiqueta + " es " + rol +
+            " de su subred: no se puede asignar a un equipo.");
+        }
       }
     }
 
-    // 2. Ninguna subred se solapa con otra.
+    // 6. Ninguna subred se solapa con la de otro sector.
     for (i = 0; i < infos.length; i++) {
       for (var j = i + 1; j < infos.length; j++) {
         var a = infos[i];
         var b = infos[j];
-        if (!textoNoVacio(a.red) || !textoNoVacio(b.red)) {
+        if (a.red === null || b.red === null) {
           continue;
         }
-        if (!Red.esIpValida(a.red) || !Red.esIpValida(b.red)) {
-          continue;
-        }
-        if (!esEnteroPrefijo(a.prefijo) || !esEnteroPrefijo(b.prefijo)) {
-          continue;
-        }
-        var solapan = false;
-        try {
-          solapan = Red.solapan(a.red, a.prefijo, b.red, b.prefijo);
-        } catch (err) {
-          solapan = false;
-        }
-        if (solapan) {
+        if (Red.solapan(a.red, a.prefijo, b.red, b.prefijo)) {
           hallazgo(a, "error", "Se solapa con la subred de " + b.nombre + " (" + b.red + "/" + b.prefijo + ").");
           hallazgo(b, "error", "Se solapa con la subred de " + a.nombre + " (" + a.red + "/" + a.prefijo + ").");
         }
       }
     }
 
-    // 3 a 7, en orden, sector por sector.
     for (i = 0; i < infos.length; i++) {
-      var cur = infos[i];
-      if (!textoNoVacio(cur.red) || !Red.esIpValida(cur.red) || !esEnteroPrefijo(cur.prefijo)) {
+      var sec = infos[i];
+      if (sec.red === null) {
         continue;
       }
-
-      // 3. Alineación: arranca en múltiplo de su bloque.
-      var alineada = false;
-      try {
-        alineada = Red.estaAlineada(cur.red, cur.prefijo);
-      } catch (err) {
-        alineada = false;
-      }
-      if (!alineada) {
-        var bloque = Red.tamanoBloque(cur.prefijo);
-        hallazgo(cur, "error", "La subred " + cur.red + "/" + cur.prefijo + " no está alineada: no arranca en un múltiplo de " + bloque + ".");
-      }
-
-      // 4. El prefijo alcanza para los hosts pedidos.
-      var disponibles = Red.cantidadHosts(cur.prefijo);
-      if (cur.hosts > 0 && disponibles !== null && disponibles < cur.hosts) {
-        hallazgo(cur, "error", "El prefijo /" + cur.prefijo + " sólo permite " + disponibles + " hosts y el sector \"" + cur.nombre + "\" pide " + cur.hosts + ".");
-      }
-
-      // 5. Cada equipo del sector tiene IP asignable dentro de su subred.
-      var redNormCur = Red.direccionDeRed(cur.red, cur.prefijo);
-      for (var e = 0; e < cur.equipos.length; e++) {
-        var idEquipo = cur.equipos[e];
-        var disp = buscarDispositivo(topologia, idEquipo);
-        if (!disp) {
-          hallazgo(cur, "error", "El equipo \"" + idEquipo + "\" no existe en la topología.");
+      // 7. El gateway de cada equipo pertenece a su subred y, si el sector
+      // declaró la interfaz de un router, coincide con su IP.
+      var ipsRouter = sec.direccionados.filter(function (x) {
+        return x.esInterfazDeclarada && x.dispositivo.tipo === "router";
+      }).map(function (x) { return x.ip; });
+      for (var q = 0; q < sec.direccionados.length; q++) {
+        var eq = sec.direccionados[q];
+        var tipo = eq.dispositivo.tipo;
+        if (tipo === "router" || tipo === "switch-l2" || tipo === "ap") {
           continue;
         }
-        var prim = primeraIpDe(disp);
-        if (!prim) {
-          hallazgo(cur, "error", "El equipo \"" + idEquipo + "\" no tiene dirección IP configurada.");
-          continue;
-        }
-        if (!esEnteroPrefijo(prim.prefijo)) {
-          hallazgo(cur, "error", "El equipo \"" + idEquipo + "\" tiene un prefijo inválido.");
-          continue;
-        }
-        var redEquipo = Red.direccionDeRed(prim.ip, cur.prefijo);
-        if (redEquipo === null || redEquipo !== redNormCur) {
-          hallazgo(cur, "error", "La IP " + prim.ip + " de \"" + idEquipo + "\" no pertenece a la subred " + cur.red + "/" + cur.prefijo + ".");
-          continue;
-        }
-        if (!Red.esAsignable(prim.ip, cur.prefijo)) {
-          hallazgo(cur, "error", "La IP " + prim.ip + " de \"" + idEquipo + "\" es la dirección de red o de broadcast de " + cur.red + "/" + cur.prefijo + ".");
-        }
-      }
-
-      // 6. El gateway del sector está dentro de esa subred.
-      if (cur.gateway !== undefined && cur.gateway !== null && String(cur.gateway).trim() !== "") {
-        var gw = String(cur.gateway).trim();
-        if (!Red.esIpValida(gw)) {
-          hallazgo(cur, "error", "El gateway \"" + gw + "\" del sector \"" + cur.nombre + "\" no es una IP válida.");
-        } else {
-          var redGw = Red.direccionDeRed(gw, cur.prefijo);
-          if (redGw === null || redGw !== redNormCur) {
-            hallazgo(cur, "error", "El gateway " + gw + " no está dentro de la subred " + cur.red + "/" + cur.prefijo + ".");
+        var gw = eq.dispositivo.gateway;
+        if (!textoNoVacio(gw)) {
+          if (ipsRouter.length > 0) {
+            hallazgo(sec, "error", eq.etiqueta + " no tiene puerta de enlace configurada.");
           }
+          continue;
+        }
+        gw = gw.trim();
+        if (!Red.esIpValida(gw) || !Red.mismaRed(eq.ip, gw, eq.prefijo)) {
+          hallazgo(sec, "error", "El gateway " + gw + " de " + eq.etiqueta + " no pertenece a su subred.");
+        } else if (ipsRouter.length > 0 && ipsRouter.indexOf(gw) < 0) {
+          hallazgo(sec, "error", "El gateway " + gw + " de " + eq.etiqueta +
+            " no coincide con la interfaz del router del sector.");
         }
       }
 
-      // 7. Advertencia si el desperdicio supera el 60 %.
-      if (cur.hosts > 0 && disponibles !== null && disponibles >= cur.hosts && disponibles > 0) {
-        var desperdicio = (disponibles - cur.hosts) / disponibles;
+      // 8. Advertencia, no error, si el bloque desperdicia más del 60 %.
+      var ofrecidos = sec.prefijo >= 31 ? 2 : Red.cantidadHosts(sec.prefijo);
+      if (sec.hosts > 0 && ofrecidos >= sec.hosts && ofrecidos > 0) {
+        var desperdicio = (ofrecidos - sec.hosts) / ofrecidos;
         if (desperdicio > 0.6) {
-          var pct = Math.round(desperdicio * 100);
-          hallazgo(cur, "advertencia", "El bloque está sobredimensionado: se piden " + cur.hosts + " hosts pero /" + cur.prefijo + " ofrece " + disponibles + " (desperdicio " + pct + " %).");
+          hallazgo(sec, "advertencia", "El bloque está sobredimensionado: se piden " + sec.hosts +
+            " hosts pero /" + sec.prefijo + " ofrece " + ofrecidos + " (desperdicio " +
+            Math.round(desperdicio * 100) + " %).");
         }
       }
     }
 
     var errores = 0;
     var advertencias = 0;
-    var porSector = infos.map(function (info) {
-      var cantErrores = info.hallazgos.filter(function (h) { return h.nivel === "error"; }).length;
-      var cantAvisos = info.hallazgos.filter(function (h) { return h.nivel !== "error"; }).length;
+    var porSector = infos.map(function (inf) {
+      var cantErrores = inf.hallazgos.filter(function (h) { return h.nivel === "error"; }).length;
+      var cantAvisos = inf.hallazgos.filter(function (h) { return h.nivel !== "error"; }).length;
       errores += cantErrores;
       advertencias += cantAvisos;
-      return { sector: info.nombre, ok: cantErrores === 0, hallazgos: info.hallazgos };
+      return { sector: inf.nombre, ok: cantErrores === 0, hallazgos: inf.hallazgos };
     });
 
     return { resumen: { errores: errores, advertencias: advertencias }, porSector: porSector };
@@ -4154,7 +4464,7 @@ var Escenarios = (function () {
     // Administración y cámaras en el medio (y 430), AP y servidor abajo
     // (y 610). En una misma franja nadie queda a menos de 180 px.
     // Router inalámbrico: r1 sostiene la celda Wi-Fi de huéspedes (10.45.7.0/26).
-    var r1 = armarRouter("r1", "R1", 290, 250, "10.45.7.65", 27, "10.45.7.97", 28, "10.45.7.129", 30, "10.45.7.130",
+    var r1 = armarRouter("r1", "R1", 290, 250, "10.45.7.65", 27, "10.45.7.97", 28, "10.45.7.129", 30, null,
       [{ destino: "10.45.7.120", prefijo: 29, siguienteSalto: "10.45.7.130" }]);
     r1.interfaces[3].modoRadio = "ap";
     r1.interfaces[3].habilitada = true;
@@ -4185,7 +4495,7 @@ var Escenarios = (function () {
       rutas: [],
       dhcp: null
     };
-    var r2 = armarRouter("r2", "R2", 800, 250, "10.45.7.121", 29, null, 24, "10.45.7.130", 30, "10.45.7.129",
+    var r2 = armarRouter("r2", "R2", 800, 250, "10.45.7.121", 29, null, 24, "10.45.7.130", 30, null,
       [
         { destino: "10.45.7.0", prefijo: 26, siguienteSalto: "10.45.7.129" },
         { destino: "10.45.7.64", prefijo: 27, siguienteSalto: "10.45.7.129" },
@@ -4205,8 +4515,8 @@ var Escenarios = (function () {
         iot1,
         armarPc("pc-admin", "PC-Admin", 50, 430, "10.45.7.66", 27, "10.45.7.65"),
         armarSwitch("sw-admin", "SW-Admin", 230, 430),
-        // El gateway del router apunta al otro router por la fibra: así el
-        // reenvío de dos saltos encuentra el siguiente salto en Motor.
+        // Los routers no llevan gateway: cada uno reenvía por su propia tabla
+        // de rutas, y así una ruta faltante se nota (D11 o D12).
         r1,
         armarCamara("cam1", "CAM-Entrada", 620, 430, "10.45.7.100", 28, "10.45.7.97"),
         armarSwitch("sw-cam", "SW-Cámaras", 430, 430),
@@ -4254,6 +4564,72 @@ var Escenarios = (function () {
     return base;
   }
 
+  // El complejo sin direccionar: el alumno configura IP, máscaras, gateways
+  // y rutas, y el modo desafío verifica su diseño VLSM.
+  function topologiaDesafioComplejo() {
+    var base = topologiaComplejo();
+    base.nombre = "Desafío VLSM — Complejo turístico";
+    base.dispositivos.forEach(function (d) {
+      d.gateway = null;
+      d.rutas = [];
+      d.dhcp = null;
+      d.interfaces.forEach(function (f) {
+        f.ip = null;
+        f.prefijo = 24;
+      });
+    });
+    base.escenario = {
+      modo: "desafio",
+      bloqueBase: "10.45.7.0/24",
+      requerimientos: [
+        { sector: "Wi-Fi de huéspedes", hosts: 60, dispositivos: ["pc-wifi", "iot1", "r1:wlan0"] },
+        { sector: "Administración", hosts: 25, dispositivos: ["pc-admin", "r1:g0/0"] },
+        { sector: "Cámaras (CCTV)", hosts: 12, dispositivos: ["cam1", "r1:g0/1"] },
+        { sector: "Servidores", hosts: 3, dispositivos: ["srv1", "r2:g0/0"] },
+        { sector: "Enlace R1 — R2", hosts: 2, dispositivos: ["r1:fib0", "r2:fib0"] }
+      ]
+    };
+    return base;
+  }
+
+  function topologiaRouter8() {
+    var ifs = ["ether1", "ether2", "ether3", "ether4", "ether5", "ether6", "ether7", "ether8"].map(function (id) {
+      return interfaz(id, "ethernet", null, 24, true);
+    });
+    ifs.push(interfaz("sfp1", "fibra", null, 24, true));
+    var wlan = interfaz("wlan1", "wireless", null, 24, false);
+    wlan.modoRadio = "ap";
+    ifs.push(wlan);
+    ifs[1].ip = "192.168.10.1";
+    ifs[2].ip = "192.168.20.1";
+    ifs[3].ip = "192.168.30.1";
+    var router = {
+      id: "r1", tipo: "router", modelo: "8-puertos", nombre: "R-Oficina",
+      x: 400, y: 120, encendido: true, interfaces: ifs,
+      gateway: null, dns: null, rutas: [], dhcp: null
+    };
+    return {
+      version: 1,
+      nombre: "Router de 8 puertos",
+      dispositivos: [
+        router,
+        armarPc("pc-adm", "PC-Administración", 130, 330, "192.168.10.10", 24, "192.168.10.1"),
+        armarPc("pc-ven", "PC-Ventas", 330, 330, "192.168.20.10", 24, "192.168.20.1"),
+        armarSwitch("sw-aula", "SW-Aula", 590, 330),
+        armarPc("pc-a1", "PC-Aula1", 500, 510, "192.168.30.11", 24, "192.168.30.1"),
+        armarPc("pc-a2", "PC-Aula2", 700, 510, "192.168.30.12", 24, "192.168.30.1")
+      ],
+      enlaces: [
+        armarEnlace("l-adm", "r1", "ether2", "pc-adm", "eth0", "ethernet"),
+        armarEnlace("l-ven", "r1", "ether3", "pc-ven", "eth0", "ethernet"),
+        armarEnlace("l-aula", "r1", "ether4", "sw-aula", "fa0/1", "ethernet"),
+        armarEnlace("l-a1", "pc-a1", "eth0", "sw-aula", "fa0/2", "ethernet"),
+        armarEnlace("l-a2", "pc-a2", "eth0", "sw-aula", "fa0/3", "ethernet")
+      ],
+      escenario: null
+    };
+  }
+
   var EJEMPLOS = [
     {
       id: "basica",
@@ -4278,6 +4654,18 @@ var Escenarios = (function () {
       nombre: "Complejo roto (docente)",
       descripcion: "El complejo con tres fallas y dos objetivos. Plantilla para armar laboratorios de diagnóstico.",
       topologia: topologiaComplejoRoto()
+    },
+    {
+      id: "desafio-complejo",
+      nombre: "Desafío VLSM (complejo)",
+      descripcion: "El complejo sin direccionar: diseñá el VLSM sobre 10.45.7.0/24 y verificalo en modo Desafío.",
+      topologia: topologiaDesafioComplejo()
+    },
+    {
+      id: "router-8",
+      nombre: "Router de 8 puertos",
+      descripcion: "Tres subredes colgadas de un mismo router, cada puerto con su propia red (como un MikroTik con los puertos fuera del bridge).",
+      topologia: topologiaRouter8()
     }
   ];
 
@@ -4426,61 +4814,150 @@ var Escenarios = (function () {
       comparar("objetivos sano todos cumplidos", todos, true);
     })();
 
-    // verificarDesafio con subred desalineada.
+    // Modo desafío: todas las pruebas trabajan sobre el complejo con los
+    // equipos realmente direccionados. Una prueba sin equipos con IP no
+    // prueba el modo desafío (así sobrevivió el defecto de la clave
+    // requerimientos).
+    function poner(topo, entrada, ip, prefijo, gateway) {
+      var partes = entrada.split(":");
+      var disp = buscarDispositivo(topo, partes[0]);
+      var iface = partes[1] ? buscarInterfaz(disp, partes[1]) : disp.interfaces[0];
+      iface.ip = ip;
+      iface.prefijo = prefijo;
+      iface.habilitada = ip !== null;
+      if (gateway !== undefined) {
+        disp.gateway = gateway;
+      }
+    }
+    function disenoCorrecto() {
+      var topo = topologiaDesafioComplejo();
+      poner(topo, "r1:wlan0", "10.45.7.1", 26);
+      poner(topo, "pc-wifi:wlan0", "10.45.7.10", 26, "10.45.7.1");
+      poner(topo, "iot1:wlan0", "10.45.7.20", 26, "10.45.7.1");
+      poner(topo, "r1:g0/0", "10.45.7.65", 27);
+      poner(topo, "pc-admin:eth0", "10.45.7.66", 27, "10.45.7.65");
+      poner(topo, "r1:g0/1", "10.45.7.97", 28);
+      poner(topo, "cam1:eth0", "10.45.7.100", 28, "10.45.7.97");
+      poner(topo, "r2:g0/0", "10.45.7.121", 29);
+      poner(topo, "srv1:eth0", "10.45.7.122", 29, "10.45.7.121");
+      poner(topo, "r1:fib0", "10.45.7.129", 30);
+      poner(topo, "r2:fib0", "10.45.7.130", 30);
+      return topo;
+    }
+    function informeDe(topo) {
+      return verificarDesafio(topo, topo.escenario);
+    }
+    function sectorDe(informe, nombre) {
+      for (var k = 0; k < informe.porSector.length; k++) {
+        if (informe.porSector[k].sector === nombre) { return informe.porSector[k]; }
+      }
+      return null;
+    }
+    function dice(sector, texto) {
+      return !!sector && JSON.stringify(sector.hallazgos).indexOf(texto) >= 0;
+    }
+
+    comparar("desafío ejemplo valida", validarTopologia(topologiaDesafioComplejo()).ok, true);
+
     (function () {
-      var topoVacia = { version: 1, nombre: "vacia", dispositivos: [], enlaces: [], escenario: null };
-      var escenario = {
-        bloqueBase: "10.45.7.0/24",
-        sectores: [
-          { nombre: "Administración", red: "10.45.7.50", prefijo: 27, hosts: 20, gateway: "10.45.7.33", equipos: [] }
-        ]
-      };
-      var informe = verificarDesafio(topoVacia, escenario);
-      comparar("desalineada hay errores", informe.resumen.errores > 0, true);
-      var mensajes = JSON.stringify(informe.porSector[0].hallazgos);
-      comparar("desalineada menciona alineacion", mensajes.indexOf("alineada") >= 0, true);
-      comparar("desalineada menciona multiplo", mensajes.indexOf("ltiplo") >= 0, true);
+      var inf = informeDe(topologiaDesafioComplejo());
+      comparar("desafío con requerimientos: un informe por sector", inf.porSector.length, 5);
+      comparar("desafío sin direccionar: todos con error",
+        inf.porSector.every(function (x) { return dice(x, "no está direccionado"); }), true);
     })();
 
-    // verificarDesafio con dos subredes solapadas: error en ambos sectores.
     (function () {
-      var topoVacia = { version: 1, nombre: "vacia", dispositivos: [], enlaces: [], escenario: null };
-      var escenario = {
-        bloqueBase: "10.45.7.0/24",
-        sectores: [
-          { nombre: "Huéspedes", red: "10.45.7.0", prefijo: 26, hosts: 40, gateway: "10.45.7.1", equipos: [] },
-          { nombre: "Administración", red: "10.45.7.32", prefijo: 27, hosts: 20, gateway: "10.45.7.33", equipos: [] }
-        ]
-      };
-      var informe = verificarDesafio(topoVacia, escenario);
-      comparar("solape sector 0 con error", informe.porSector[0].ok, false);
-      comparar("solape sector 1 con error", informe.porSector[1].ok, false);
-      comparar("solape sector 0 menciona solape", JSON.stringify(informe.porSector[0].hallazgos).indexOf("solapa") >= 0, true);
-      comparar("solape sector 1 menciona solape", JSON.stringify(informe.porSector[1].hallazgos).indexOf("solapa") >= 0, true);
+      var inf = informeDe(disenoCorrecto());
+      comparar("desafío diseño correcto sin errores", inf.resumen.errores, 0);
+      comparar("desafío diseño correcto sin advertencias", inf.resumen.advertencias, 0);
     })();
 
-    // verificarDesafio con diseño correcto: cero errores.
     (function () {
-      var topo = {
-        version: 1,
-        nombre: "diseno",
-        dispositivos: [
-          armarPc("pc1", "PC-1", 100, 100, "10.45.7.66", 27, "10.45.7.65"),
-          armarPc("srv1", "Servidor", 300, 100, "10.45.7.122", 29, "10.45.7.121")
-        ],
-        enlaces: [],
-        escenario: null
-      };
-      var escenario = {
-        bloqueBase: "10.45.7.0/24",
-        sectores: [
-          { nombre: "Administración", red: "10.45.7.64", prefijo: 27, hosts: 20, gateway: "10.45.7.65", equipos: ["pc1"] },
-          { nombre: "Servidores", red: "10.45.7.120", prefijo: 29, hosts: 5, gateway: "10.45.7.121", equipos: ["srv1"] }
-        ]
-      };
-      var informe = verificarDesafio(topo, escenario);
-      comparar("diseno correcto sin errores", informe.resumen.errores, 0);
-      comparar("diseno correcto sectores ok", informe.porSector.every(function (s) { return s.ok; }), true);
+      // El router de Cámaras en .41/28: la subred pensada arranca en .40.
+      var topo = disenoCorrecto();
+      poner(topo, "r1:g0/1", "10.45.7.41", 28);
+      poner(topo, "cam1:eth0", "10.45.7.42", 28, "10.45.7.41");
+      var cam = sectorDe(informeDe(topo), "Cámaras (CCTV)");
+      comparar("desafío desalineada da error", cam.ok, false);
+      comparar("desafío desalineada menciona el múltiplo", dice(cam, "no arranca en un múltiplo de 16"), true);
+      comparar("desafío desalineada no da la respuesta", dice(cam, "10.45.7.32/28"), false);
+    })();
+
+    (function () {
+      // Servidores en .104/29, adentro de Cámaras .96/28.
+      var topo = disenoCorrecto();
+      poner(topo, "r2:g0/0", "10.45.7.105", 29);
+      poner(topo, "srv1:eth0", "10.45.7.106", 29, "10.45.7.105");
+      var inf = informeDe(topo);
+      comparar("desafío solape en Cámaras", dice(sectorDe(inf, "Cámaras (CCTV)"), "Se solapa"), true);
+      comparar("desafío solape en Servidores", dice(sectorDe(inf, "Servidores"), "Se solapa"), true);
+    })();
+
+    (function () {
+      var topo = disenoCorrecto();
+      poner(topo, "r1:g0/0", "10.45.7.65", 28);
+      poner(topo, "pc-admin:eth0", "10.45.7.66", 28, "10.45.7.65");
+      comparar("desafío prefijo insuficiente",
+        dice(sectorDe(informeDe(topo), "Administración"), "sólo permite 14 hosts"), true);
+    })();
+
+    (function () {
+      var topo = disenoCorrecto();
+      poner(topo, "pc-admin:eth0", "10.45.7.64", 27, "10.45.7.65");
+      comparar("desafío IP no asignable",
+        dice(sectorDe(informeDe(topo), "Administración"), "es la dirección de red"), true);
+    })();
+
+    (function () {
+      var topo = disenoCorrecto();
+      buscarDispositivo(topo, "pc-admin").gateway = "10.45.7.97";
+      comparar("desafío gateway fuera de su subred",
+        dice(sectorDe(informeDe(topo), "Administración"), "no pertenece a su subred"), true);
+    })();
+
+    (function () {
+      var topo = disenoCorrecto();
+      poner(topo, "iot1:wlan0", "10.45.7.70", 26, "10.45.7.1");
+      comparar("desafío sector inconsistente",
+        dice(sectorDe(informeDe(topo), "Wi-Fi de huéspedes"), "no están todos en la misma subred"), true);
+    })();
+
+    (function () {
+      var topo = disenoCorrecto();
+      poner(topo, "srv1:eth0", null, 24, null);
+      poner(topo, "r2:g0/0", null, 24);
+      comparar("desafío sector sin direccionar",
+        dice(sectorDe(informeDe(topo), "Servidores"), "no está direccionado"), true);
+    })();
+
+    (function () {
+      // Sólo el sector Wi-Fi, con un /24 entero para 60 hosts.
+      var topo = disenoCorrecto();
+      poner(topo, "r1:wlan0", "10.45.7.1", 24);
+      poner(topo, "pc-wifi:wlan0", "10.45.7.10", 24, "10.45.7.1");
+      poner(topo, "iot1:wlan0", "10.45.7.20", 24, "10.45.7.1");
+      var soloWifi = { bloqueBase: "10.45.7.0/24", requerimientos: [topo.escenario.requerimientos[0]] };
+      var inf = verificarDesafio(topo, soloWifi);
+      comparar("desafío /24 para 60 hosts no es error", inf.resumen.errores, 0);
+      comparar("desafío /24 para 60 hosts advierte", inf.resumen.advertencias, 1);
+    })();
+
+    // Router de 8 puertos: valida, enruta entre puertos y rechaza modelos raros.
+    (function () {
+      var r8 = topologiaRouter8();
+      comparar("router 8 puertos valida", validarTopologia(r8).ok, true);
+      var est8 = Motor.crearEstado(r8);
+      comparar("router 8 puertos enruta entre ether2 y ether4", Motor.ping(est8, "pc-adm", "192.168.30.12").exito, true);
+      comparar("router 8 puertos enruta entre ether3 y ether2", Motor.ping(est8, "pc-ven", "192.168.10.10").exito, true);
+      var raro = clonar(r8);
+      buscarDispositivo(raro, "r1").modelo = "48-puertos";
+      comparar("modelo de router desconocido no valida", validarTopologia(raro).ok, false);
+      var pcModelo = clonar(r8);
+      buscarDispositivo(pcModelo, "pc-adm").modelo = "8-puertos";
+      comparar("modelo en una PC no valida", validarTopologia(pcModelo).ok, false);
+      var faltante = clonar(r8);
+      buscarDispositivo(faltante, "r1").interfaces.pop();
+      comparar("router 8 puertos sin wlan1 no valida", validarTopologia(faltante).ok, false);
     })();
 
     // Modos de radio: la validación rechaza pares inválidos.
@@ -4597,6 +5074,10 @@ var UI = (function () {
 
   /* ---------------- Estado interno ---------------- */
 
+  // La barra de zoom ocupa la franja superior del lienzo: la vista arranca
+  // corrida hacia abajo para que no tape los equipos de arriba.
+  var MARGEN_VISTA = 48;
+
   var S = {
     raiz: null,
     svg: null,
@@ -4614,7 +5095,7 @@ var UI = (function () {
     cableTipo: "ethernet",
     cableOrigen: null,
     colocando: null,
-    vista: { x: 0, y: 0, k: 1 },
+    vista: { x: 0, y: MARGEN_VISTA, k: 1 },
     deshacer: [],
     rehacer: [],
     presentacion: false,
@@ -4626,12 +5107,24 @@ var UI = (function () {
     avisoGuardado: false,
     interfazEditada: {},
     contadores: { pc: 0, router: 0, "switch-l2": 0, camara: 0, iot: 0 },
-    abajo: null
+    abajo: null,
+    ultimo: null,
+    ultimaVerif: null,
+    ultimoAutotest: null,
+    panelRes: "ping",
+    verTodos: false,
+    consolaAbierta: false,
+    lineasConsola: [],
+    presExpandida: false,
+    origenElegido: null,
+    anuncio: null,
+    hoja: null
   };
 
   var TIPOS = [
     { tipo: "pc", etiqueta: "PC" },
     { tipo: "router", etiqueta: "Router" },
+    { tipo: "router-8", etiqueta: "Router 8 puertos" },
     { tipo: "switch-l2", etiqueta: "Switch" },
     { tipo: "camara", etiqueta: "Cámara" },
     { tipo: "iot", etiqueta: "IoT" },
@@ -4711,12 +5204,33 @@ var UI = (function () {
   /* Rótulo bajo el ícono, en líneas cortas para que no se pisen entre
    * vecinos: la IP en una y el gateway en otra. Sin IP, no hay tercera. */
   function lineasResumen(disp) {
+    // Un router tiene una IP en cada red que conecta: se muestran todas,
+    // con el nombre de su interfaz.
+    if (disp && disp.tipo === "router") {
+      var todas = (disp.interfaces || []).filter(function (f) {
+        return f.ip && Red.esIpValida(String(f.ip));
+      }).map(function (f) { return f.id + " " + f.ip + "/" + f.prefijo; });
+      return todas.length ? todas : ["sin IP"];
+    }
     var prim = primeraIp(disp);
     if (!prim) { return ["sin IP"]; }
     var lineas = [prim.ip + "/" + prim.prefijo];
     if (disp.gateway) { lineas.push("gw " + disp.gateway); }
     return lineas;
   }
+
+  var NOMBRES_TIPO = { pc: "PC", router: "router", "router-8": "router de 8 puertos", "switch-l2": "switch", camara: "cámara", iot: "IoT", ap: "punto de acceso" };
+
+  // Clave de paleta e ícono: el tipo, salvo el router de 8 puertos, que es
+  // tipo "router" con modelo "8-puertos".
+  function claveDe(d) {
+    return d && d.tipo === "router" && d.modelo === "8-puertos" ? "router-8" : (d ? d.tipo : "");
+  }
+
+  function equipoDeClave(clave) {
+    return clave === "router-8" ? { tipo: "router", modelo: "8-puertos" } : { tipo: clave, modelo: null };
+  }
+  function nombreTipo(tipo) { return NOMBRES_TIPO[tipo] || tipo; }
 
   function momentoRel() {
     var ms = Date.now() - S.inicioMs;
@@ -4728,8 +5242,14 @@ var UI = (function () {
     return "+" + hh + ":" + mm + ":" + ss + "." + dec;
   }
 
+  var FORMATO_HORA = null;
+  try {
+    FORMATO_HORA = new Intl.DateTimeFormat("es-AR", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+  } catch (e) { FORMATO_HORA = null; }
+
   function momentoAbs() {
     var d = new Date();
+    if (FORMATO_HORA) { return FORMATO_HORA.format(d); }
     return String(d.getHours()).padStart(2, "0") + ":" +
       String(d.getMinutes()).padStart(2, "0") + ":" +
       String(d.getSeconds()).padStart(2, "0");
@@ -4762,6 +5282,17 @@ var UI = (function () {
       return [iface("g0/0", "ethernet", true), iface("g0/1", "ethernet", true),
         iface("fib0", "fibra", true), iface("wlan0", "wireless", false)];
     }
+    if (tipo === "router-8") {
+      // Como un equipo de oficina tipo MikroTik: cada puerto es ruteado y
+      // puede tener su propia subred.
+      var puertos = [];
+      for (var k = 1; k <= 8; k++) { puertos.push(iface("ether" + k, "ethernet", true)); }
+      puertos.push(iface("sfp1", "fibra", true));
+      var radio = iface("wlan1", "wireless", false);
+      radio.modoRadio = "ap";
+      puertos.push(radio);
+      return puertos;
+    }
     var lista = [];
     for (var i = 1; i <= 8; i++) { lista.push(iface("fa0/" + i, "ethernet", true)); }
     lista.push(iface("fib0", "fibra", true));
@@ -4791,60 +5322,169 @@ var UI = (function () {
   /* ---------------- CSS inyectado ---------------- */
 
   var CSS = [
-    ".simraiz{font-family:system-ui,'Segoe UI',Roboto,Arial,sans-serif;display:flex;flex-direction:column;width:100%;max-width:100vw;height:100%;min-height:520px;overflow:hidden;background:var(--sim-fondo);color:var(--sim-texto);--sim-fondo:#f4f6f8;--sim-texto:#182430;--sim-panel:#ffffff;--sim-borde:#c9d3dc;--sim-acento:#0b5fa5;--sim-ok:#1a7f37;--sim-mal:#b42318;--sim-aviso:#8a5a00;}",
-    ".simraiz.oscuro{--sim-fondo:#141a21;--sim-texto:#e8eef4;--sim-panel:#1e2833;--sim-borde:#3a4a5a;--sim-acento:#5aa9e6;--sim-ok:#4cc38a;--sim-mal:#f0726a;--sim-aviso:#e0a63c;}",
-    ".simbarra{display:flex;gap:8px;align-items:center;padding:6px 10px;background:var(--sim-panel);border-bottom:1px solid var(--sim-borde);flex-wrap:wrap;}",
+    ".simraiz{font-family:system-ui,'Segoe UI',Roboto,Arial,sans-serif;display:flex;flex-direction:column;width:100%;max-width:100vw;height:100%;min-height:520px;overflow:hidden;background:var(--sim-fondo);color:var(--sim-texto);color-scheme:light;--sim-fondo:#f7f9fb;--sim-texto:#14181f;--sim-tenue:#5a6472;--sim-panel:#ffffff;--sim-borde:#c9d1dc;--sim-acento:#1a5fb4;--sim-ok:#1e7a34;--sim-okfondo:#e7f4ea;--sim-mal:#b3261e;--sim-malfondo:#fbeae8;--sim-aviso:#8a5a00;--sim-cabecera:#13355e;}",
+    ".simraiz.oscuro{color-scheme:dark;--sim-fondo:#12171e;--sim-texto:#e8eef4;--sim-tenue:#9aa5b4;--sim-panel:#1b232d;--sim-borde:#3a4a5a;--sim-acento:#5aa9e6;--sim-ok:#4cc38a;--sim-okfondo:#15301f;--sim-mal:#f0726a;--sim-malfondo:#3a1a1a;--sim-aviso:#e0a63c;--sim-cabecera:#0e1a2b;}",
+    ".simraiz button,.simraiz select,.simraiz input{font:inherit;font-size:13px;color:var(--sim-texto);background:var(--sim-panel);border:1px solid var(--sim-borde);border-radius:6px;touch-action:manipulation;}",
+    ".simraiz button{padding:4px 10px;cursor:pointer;}",
+    ".simraiz button:hover:not(:disabled),.simraiz select:hover{border-color:var(--sim-acento);}",
+    ".simraiz button:disabled{opacity:.45;cursor:not-allowed;}",
+    ".simraiz button:focus-visible,.simraiz select:focus-visible,.simraiz input:focus-visible,svg .nodo:focus-visible,svg .puerto:focus-visible,svg .enlace:focus-visible,svg.lienzo:focus-visible{outline:3px solid var(--sim-acento);outline-offset:2px;}",
+    ".simraiz button.primario{background:var(--sim-acento);border-color:var(--sim-acento);color:#fff;font-weight:600;padding:6px 22px;}",
+    ".simraiz button.activo{background:var(--sim-acento);color:#fff;border-color:var(--sim-acento);}",
+    ".oculto-visual{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0;}",
+    ".simbarra{display:flex;gap:8px;align-items:center;padding:6px 12px;background:var(--sim-cabecera);color:#fff;flex-wrap:wrap;}",
+    ".simbarra h1{font-size:16px;margin:0 8px 0 0;font-weight:700;color:#fff;}",
     ".simbarra .modos{display:flex;gap:4px;}",
-    ".simbarra button,.simprop button,.siminf button,.simtools button{font:inherit;font-size:13px;padding:4px 10px;border:1px solid var(--sim-borde);border-radius:6px;background:var(--sim-panel);color:var(--sim-texto);cursor:pointer;}",
-    ".simraiz button:focus-visible,.simraiz select:focus-visible,.simraiz input:focus-visible,.palitem:focus-visible,svg .nodo:focus-visible,svg .puerto:focus-visible{outline:3px solid var(--sim-acento);outline-offset:2px;}",
-    ".simraiz button:hover,.simraiz select:hover{border-color:var(--sim-acento);}",
-    ".simbarra button.activo,.siminf .tabs button.activo,.simprop .tabs button.activo{background:var(--sim-acento);color:#fff;border-color:var(--sim-acento);}",
+    ".simbarra button,.simbarra select{background:transparent;color:#fff;border-color:rgba(255,255,255,.28);}",
+    ".simbarra select option{color:#14181f;background:#fff;}",
+    ".simbarra select{max-width:260px;min-width:0;}",
+    ".simbarra button.activo{background:#fff;color:var(--sim-cabecera);border-color:#fff;}",
+    ".simbarra .espacio{flex:1;}",
+    ".simbarra .enpres{display:none;font-size:13px;opacity:.85;}",
     ".simcuerpo{flex:1;display:flex;min-height:0;}",
-    ".simpaleta{width:180px;flex:0 0 180px;background:var(--sim-panel);border-right:1px solid var(--sim-borde);padding:8px;overflow:auto;}",
-    ".simpaleta.colapsada{width:52px;flex-basis:52px;}",
-    ".simpaleta.colapsada .etiqueta,.simpaleta.colapsada .titulopal,.simpaleta.colapsada .leyenda,.simpaleta.colapsada select{display:none;}",
-    ".simpaleta h3{font-size:13px;margin:4px 0 8px;}",
-    ".palitem{box-sizing:border-box;border:1px solid var(--sim-borde);border-radius:8px;padding:6px;margin-bottom:8px;text-align:center;cursor:grab;touch-action:none;user-select:none;}",
-    ".palitem.armado{outline:2px solid var(--sim-acento);}",
-    ".palitem svg{width:40px;height:40px;}",
-    ".palitem .etiqueta{display:block;font-size:12px;line-height:1.15;min-height:1.15em;overflow-wrap:anywhere;}",
+    ".simpaleta{width:180px;flex:0 0 180px;background:var(--sim-panel);border-right:1px solid var(--sim-borde);padding:8px;overflow:auto;box-sizing:border-box;}",
+    ".simpaleta.colapsada{width:60px;flex-basis:60px;}",
+    ".simpaleta.colapsada .etiqueta,.simpaleta.colapsada .titulopal,.simpaleta.colapsada .leyenda,.simpaleta.colapsada select,.simpaleta.colapsada label{display:none;}",
+    ".simpaleta h2{font-size:12px;letter-spacing:.02em;color:var(--sim-tenue);margin:4px 0 8px;}",
+    ".palitem{display:flex;align-items:center;gap:8px;width:100%;box-sizing:border-box;padding:6px 8px;margin-bottom:6px;text-align:left;cursor:grab;user-select:none;}",
+    ".simraiz .palitem{touch-action:none;}",
+    ".palitem.armado{outline:2px solid var(--sim-acento);outline-offset:1px;}",
+    ".palitem svg{width:28px;height:28px;flex:0 0 28px;}",
+    ".palitem .etiqueta{font-size:13px;line-height:1.15;overflow-wrap:anywhere;}",
+    ".simpaleta label{display:block;font-size:12px;color:var(--sim-tenue);margin:4px 0 2px;}",
+    ".simpaleta select,.simpaleta .herramienta{width:100%;box-sizing:border-box;margin-bottom:6px;}",
+    ".simpaleta .leyenda{font-size:11px;color:var(--sim-tenue);line-height:1.5;margin:4px 0 8px;}",
     ".simlienzo{flex:1;position:relative;min-width:0;background:var(--sim-fondo);}",
     ".simlienzo svg.lienzo{width:100%;height:100%;display:block;touch-action:none;}",
     ".simtools{position:absolute;top:8px;left:8px;display:flex;gap:4px;background:var(--sim-panel);border:1px solid var(--sim-borde);border-radius:8px;padding:4px;}",
     ".simtools button{padding:2px 8px;}",
-    ".simprop{width:295px;max-width:100%;flex:0 0 295px;background:var(--sim-panel);border-left:1px solid var(--sim-borde);overflow:auto;padding:8px;box-sizing:border-box;}",
+    ".leyenda-lienzo{display:none;position:absolute;right:12px;bottom:12px;background:var(--sim-panel);border:1px solid var(--sim-borde);border-radius:8px;padding:8px 12px;font-size:13px;line-height:1.6;}",
+    ".leyenda-lienzo .tenue{color:var(--sim-tenue);font-size:12px;}",
+    ".simprop{width:295px;max-width:100%;flex:0 0 295px;background:var(--sim-panel);border-left:1px solid var(--sim-borde);overflow:auto;padding:10px;box-sizing:border-box;}",
     ".simprop.colapsado{display:none;}",
-    ".simprop .tabs,.siminf .tabs{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px;}",
-    ".simprop label{display:block;font-size:12px;margin:6px 0 2px;}",
-    ".simprop input,.simprop select,.siminf input,.siminf select{font:inherit;font-size:13px;width:100%;box-sizing:border-box;padding:4px 6px;border:1px solid var(--sim-borde);border-radius:6px;background:var(--sim-panel);color:var(--sim-texto);}",
-    ".simprop input.invalido{border-color:var(--sim-mal);outline:2px solid var(--sim-mal);}",
-    ".filaif{display:flex;align-items:center;gap:6px;font-size:12px;padding:3px 0;border-bottom:1px dotted var(--sim-borde);}",
-    ".conmutador{margin-left:auto;}",
-    ".siminf{height:260px;flex:0 0 260px;background:var(--sim-panel);border-top:1px solid var(--sim-borde);padding:8px;overflow:auto;}",
-    ".siminf.colapsado{height:32px;flex-basis:32px;overflow:hidden;}",
-    ".siminf .columnas{display:flex;gap:12px;}",
-    ".siminf .col{flex:1;min-width:0;}",
-    ".consola{background:#0d1117;color:#d6f0d6;font-family:ui-monospace,Consolas,monospace;font-size:12px;border-radius:8px;padding:8px;height:150px;overflow:auto;white-space:pre-wrap;}",
+    ".simprop h2{font-size:17px;margin:10px 0 4px;}",
+    ".simprop h2 small{font-size:12px;font-weight:400;color:var(--sim-tenue);}",
+    ".simprop .tabs,.siminf .tabs{display:flex;gap:4px;flex-wrap:wrap;align-items:center;margin-bottom:8px;}",
+    ".simprop label{display:block;font-size:12px;color:var(--sim-tenue);margin:8px 0 3px;}",
+    ".simprop input,.simprop select,.siminf input,.siminf select{padding:5px 8px;box-sizing:border-box;}",
+    ".simprop input:not([type=checkbox]),.simprop select{width:100%;}",
+    ".simprop label.enlinea{display:flex;align-items:center;gap:8px;color:var(--sim-texto);font-size:13px;}",
+    ".simprop input.invalido,.siminf input.invalido{border-color:var(--sim-mal);outline:2px solid var(--sim-mal);}",
+    ".simprop .borrar{margin-top:14px;}",
+    ".filaif{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:12px;padding:6px 0;border-bottom:1px dotted var(--sim-borde);}",
+    ".filaif .datos{flex:1;min-width:0;}",
+    ".filaif label{margin:0;}",
+    ".filaif select{width:auto;}",
+    ".siminf{height:260px;flex:0 0 260px;background:var(--sim-panel);border-top:1px solid var(--sim-borde);padding:6px 12px 8px;box-sizing:border-box;overflow:hidden;display:flex;flex-direction:column;}",
+    ".siminf.colapsado{height:44px;flex-basis:44px;}",
+    ".siminf.compacta{height:44px;flex-basis:44px;}",
+    ".siminf .tabs button[role=tab]{border:0;border-bottom:3px solid transparent;border-radius:0;background:transparent;padding:6px 10px;font-size:14px;color:var(--sim-tenue);}",
+    ".siminf .tabs button[role=tab].activo{color:var(--sim-acento);border-bottom-color:var(--sim-acento);background:transparent;font-weight:600;}",
+    ".siminf .tabs .espacio{flex:1;}",
+    ".siminf .tabs label{font-size:12px;color:var(--sim-tenue);}",
+    ".siminf .cuerpoinf{flex:1;min-height:0;overflow:auto;}",
+    ".siminf .cuerpoinf.sim{display:flex;flex-direction:column;overflow:hidden;}",
+    ".simctrl{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;}",
+    ".simctrl label{font-size:12px;color:var(--sim-tenue);}",
+    ".simctrl .flecha{color:var(--sim-tenue);}",
+    ".simctrl input{width:170px;font-family:ui-monospace,Consolas,monospace;}",
+    ".simctrl .espacio{flex:1;}",
+    ".simres{display:flex;gap:12px;flex:1;min-height:0;}",
+    ".simres .recorrido{flex:3;min-width:0;border:1px solid var(--sim-borde);border-radius:8px;display:flex;flex-direction:column;min-height:0;}",
+    ".simres .lado{flex:2;min-width:0;display:flex;flex-direction:column;gap:8px;min-height:0;overflow:auto;}",
+    ".recorrido .cab{display:flex;justify-content:space-between;gap:8px;font-size:12px;font-weight:600;color:var(--sim-tenue);padding:4px 10px;border-bottom:1px solid var(--sim-borde);}",
+    ".recorrido .cab .ok{color:var(--sim-ok);font-weight:400;}",
+    ".recorrido .cab .mal{color:var(--sim-mal);font-weight:400;}",
+    ".recorrido .pasos{flex:1;min-height:0;overflow:auto;padding:4px 10px;}",
+    ".recorrido .pie{display:flex;align-items:center;gap:8px;padding:4px 10px 6px;font-size:12px;color:var(--sim-tenue);font-style:italic;}",
+    ".linpaso{font-size:13px;padding:2px 0;}",
+    ".linpaso .marca{color:var(--sim-ok);margin-right:4px;}",
+    ".linpaso.pendiente{color:var(--sim-tenue);}",
+    ".pasofallo{border:1px solid var(--sim-mal);background:var(--sim-malfondo);border-radius:6px;padding:6px 8px;margin:4px 0;font-size:13px;}",
+    ".pasofallo .marca{color:var(--sim-mal);margin-right:4px;}",
+    ".pasofallo pre{margin:4px 0 0;font-family:ui-monospace,Consolas,monospace;font-size:12px;white-space:pre-wrap;}",
+    ".banda-ok{border:1px solid var(--sim-ok);border-left:6px solid var(--sim-ok);background:var(--sim-okfondo);border-radius:8px;padding:8px 12px;}",
+    ".banda-ok b{font-size:16px;color:var(--sim-ok);}",
+    ".banda-ok .ruta{font-family:ui-monospace,Consolas,monospace;font-size:13px;margin-top:2px;}",
+    ".diagnostico{border:1px solid var(--sim-mal);border-left:6px solid var(--sim-mal);background:var(--sim-malfondo);border-radius:8px;padding:8px 12px;font-size:13px;line-height:1.45;flex:0 0 auto;}",
+    ".diagnostico .cod{display:inline-block;background:var(--sim-mal);color:#fff;font-family:ui-monospace,Consolas,monospace;font-weight:700;border-radius:4px;padding:1px 6px;margin-right:6px;}",
+    ".diagnostico .tit{font-weight:700;font-size:15px;color:var(--sim-mal);}",
+    ".diagnostico .rev{border-top:1px solid var(--sim-borde);margin-top:6px;padding-top:6px;}",
+    ".advertencia{border:1px solid var(--sim-aviso);border-radius:8px;padding:6px;margin:6px 0;font-size:12px;}",
+    ".consola{background:#0d1117;color:#d6f0d6;font-family:ui-monospace,Consolas,monospace;font-size:12px;border-radius:8px;padding:8px;flex:1;min-height:0;overflow:auto;white-space:pre-wrap;margin:0;}",
+    ".consola .error{color:#ff8a80;}",
+    ".consolabtn{text-align:left;font-family:ui-monospace,Consolas,monospace;font-size:12px;}",
+    ".vacio{text-align:center;color:var(--sim-tenue);font-size:13px;padding:14px 20px;}",
+    ".vacio b{display:block;color:var(--sim-texto);font-size:16px;margin-bottom:4px;}",
+    ".estadopres{display:flex;align-items:center;gap:12px;font-size:13px;color:var(--sim-tenue);}",
+    ".estadopres .espacio{flex:1;}",
     ".paso{border:1px solid var(--sim-borde);border-radius:6px;padding:4px 8px;margin-bottom:4px;font-size:12px;}",
     ".paso.ok{border-left:6px solid var(--sim-ok);}",
-    ".paso.mal{border-left:6px solid var(--sim-mal);background:rgba(180,35,24,.08);}",
-    ".paso.fallo{outline:2px solid var(--sim-mal);}",
-    ".diagnostico{border:2px solid var(--sim-mal);border-radius:8px;padding:8px;margin-top:8px;font-size:13px;}",
-    ".advertencia{border:1px solid var(--sim-aviso);border-radius:8px;padding:6px;margin:6px 0;font-size:12px;}",
+    ".paso.mal{border-left:6px solid var(--sim-mal);background:var(--sim-malfondo);}",
     ".binario{font-family:ui-monospace,Consolas,monospace;font-size:14px;letter-spacing:1px;}",
     ".binario .red{color:var(--sim-acento);font-weight:bold;}",
     ".binario .host{color:var(--sim-aviso);font-weight:bold;}",
     ".binario .corte{border-left:2px solid var(--sim-mal);}",
     ".calc{font-size:13px;}",
     ".calc .grid{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;}",
-    "svg .nodo{cursor:pointer;}",
+    "svg .nodo,svg .enlace{cursor:pointer;}",
+    "svg .enlace:focus{outline:none;}",
     "svg .puerto{cursor:pointer;stroke:#333;stroke-width:1;}",
     "svg text{font-family:system-ui,Arial,sans-serif;}",
-    ".simraiz.presentacion .simpaleta,.simraiz.presentacion .simprop{display:none;}",
-    "svg .fondoetq{fill:var(--sim-fondo);fill-opacity:.88;}",
+    "svg .etiqueta text.mono{font-family:ui-monospace,Consolas,monospace;}",
+    "svg .fondoetq{fill:var(--sim-fondo);fill-opacity:.9;}",
+    ".simraiz.presentacion .simpaleta,.simraiz.presentacion .simprop,.simraiz.presentacion .simbarra .modos,.simraiz.presentacion .simbarra select,.simraiz.presentacion .simbarra .enedicion{display:none;}",
+    ".simraiz.presentacion .simbarra .enpres{display:inline;}",
+    ".simraiz.presentacion .leyenda-lienzo{display:block;}",
     ".tooltip{position:absolute;pointer-events:none;background:var(--sim-panel);border:1px solid var(--sim-borde);border-radius:6px;padding:6px 8px;font-size:12px;max-width:260px;box-shadow:0 2px 8px rgba(0,0,0,.2);z-index:5;}",
+    ".menucel,.simacciones,.simhoja,.pista{display:none;}",
+    ".simacciones{gap:8px;padding:8px 10px calc(8px + env(safe-area-inset-bottom));background:var(--sim-panel);border-top:1px solid var(--sim-borde);}",
+    ".simacciones button{flex:1;padding:10px 4px;font-size:15px;}",
+    ".simhoja{position:fixed;left:0;right:0;bottom:0;max-height:80vh;background:var(--sim-panel);border-radius:16px 16px 0 0;box-shadow:0 -4px 20px rgba(0,0,0,.22);z-index:20;flex-direction:column;overscroll-behavior:contain;}",
+    ".simhoja .tirador{width:40px;height:4px;border-radius:2px;background:var(--sim-borde);margin:8px auto 0;flex:0 0 auto;}",
+    ".simhoja .cabhoja{display:flex;align-items:center;gap:8px;padding:8px 14px;border-bottom:1px solid var(--sim-borde);flex:0 0 auto;}",
+    ".simhoja .cabhoja h2{flex:1;margin:0;font-size:18px;}",
+    ".simhoja .cabhoja button{min-width:44px;min-height:44px;font-size:18px;}",
+    ".simhoja .cuerpohoja{overflow:auto;padding:10px 14px calc(16px + env(safe-area-inset-bottom));overscroll-behavior:contain;}",
+    ".gridagregar{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px;}",
+    ".gridagregar button{display:flex;flex-direction:column;align-items:center;gap:6px;padding:12px 4px;font-size:13px;}",
+    ".gridagregar svg{width:34px;height:34px;}",
+    ".simhoja h3{font-size:12px;color:var(--sim-tenue);margin:4px 0 8px;}",
+    ".simaviso{position:absolute;left:50%;top:10px;transform:translateX(-50%);background:var(--sim-acento);color:#fff;border-radius:10px;padding:6px 12px;font-size:13px;z-index:6;pointer-events:none;max-width:90%;text-align:center;}",
+    ".pista{position:absolute;left:10px;bottom:10px;background:var(--sim-panel);border:1px solid var(--sim-borde);border-radius:8px;padding:6px 10px;font-size:13px;color:var(--sim-tenue);}",
+    ".diagnostico .irconfig{margin-top:8px;border-color:var(--sim-mal);color:var(--sim-mal);}",
     "@media (max-width:900px){.simpaleta{width:140px;flex-basis:140px;}.simprop{width:240px;flex-basis:240px;}.simbarra{gap:5px;padding:5px 6px;}.simbarra button{padding:4px 7px;}}",
-    "@media (max-width:640px){.simraiz{min-height:100%;overflow:auto;}.simbarra{align-items:stretch;}.simbarra .modos{width:100%;overflow:auto;}.simbarra select{min-width:0;flex:1;}.simcuerpo{flex-direction:column;}.simpaleta{width:auto;flex:0 0 auto;border-right:0;border-bottom:1px solid var(--sim-borde);display:flex;align-items:center;gap:6px;overflow-x:auto;padding:6px;}.simpaleta h3,.simpaleta .leyenda{display:none;}.palitem{box-sizing:border-box;flex:0 0 68px;height:70px;margin:0;padding:4px;}.palitem svg{width:30px;height:30px;}.palitem .etiqueta{font-size:10px;line-height:1.15;min-height:2.3em;}.simpaleta select{flex:0 0 100px;}.simpaleta button{flex:0 0 auto;}.simlienzo{height:70vh;min-height:600px;flex:0 0 70vh;}.simprop{width:auto;flex:0 0 auto;max-height:35vh;border-left:0;border-top:1px solid var(--sim-borde);}.siminf{height:auto;min-height:220px;flex-basis:auto;}.siminf .columnas{flex-direction:column;gap:8px;}}",
+    "@media (max-width:640px){" +
+      ".simraiz{min-height:0;}" +
+      ".simbarra{flex-wrap:nowrap;padding:8px 10px;gap:8px;}" +
+      ".simbarra h1{font-size:16px;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:0;}" +
+      ".simbarra .menucel{display:inline-block;min-width:44px;min-height:40px;font-size:18px;}" +
+      ".simbarra>*:not(h1):not(.menucel){display:none;}" +
+      ".simbarra.menuabierto{flex-wrap:wrap;}" +
+      ".simbarra.menuabierto>.modos{display:flex;width:100%;flex-wrap:wrap;}" +
+      ".simbarra.menuabierto>select,.simbarra.menuabierto>button:not(.menucel){display:block;width:100%;max-width:none;padding:8px;}" +
+      ".simcuerpo{flex:1;min-height:0;}" +
+      ".simpaleta,.simprop,.siminf{display:none;}" +
+      ".simacciones{display:flex;}" +
+      ".simhoja:not([hidden]){display:flex;}" +
+      ".pista:not([hidden]){display:block;}" +
+      ".simhoja .simprop{display:block;width:auto;flex:none;border:0;padding:0;overflow:visible;}" +
+      ".simhoja .siminf{display:flex;height:auto;min-height:0;flex:none;border:0;padding:0;overflow:visible;}" +
+      ".simhoja .siminf .cuerpoinf,.simhoja .siminf .cuerpoinf.sim{overflow:visible;}" +
+      ".simhoja .siminf .tabs .espacio{display:none;}" +
+      ".simhoja .simres{flex-direction:column;}" +
+      ".simhoja .simres>*{width:100%;box-sizing:border-box;}" +
+      ".simhoja .consola{max-height:160px;}" +
+      ".simhoja .simprop>h2{display:none;}" +
+      ".simhoja .simres .lado{order:-1;}" +
+      ".simhoja .siminf .tabs>button{display:none;}" +
+      ".simctrl input{width:100%;}" +
+      ".simctrl .espacio{display:none;}" +
+      ".banda-ok .ruta,.linpaso,.recorrido .cab{overflow-wrap:anywhere;flex-wrap:wrap;}" +
+      ".simtools{flex-wrap:wrap;max-width:calc(100% - 16px);}" +
+      ".simraiz input,.simraiz select{font-size:16px;}" +
+    "}",
+    "@media (prefers-reduced-motion:reduce){.simraiz *{scroll-behavior:auto;}}",
     ".fantasma{position:fixed;pointer-events:none;opacity:.6;z-index:99;background:var(--sim-panel);border:1px dashed var(--sim-acento);border-radius:8px;padding:4px 8px;font-size:12px;}"
   ].join("\n");
 
@@ -4859,6 +5499,11 @@ var UI = (function () {
   /* ---------------- Iconos SVG dibujados a mano ---------------- */
 
   function icono(tipo) {
+    if (tipo === "router-8") {
+      return "<rect x='-22' y='-11' width='44' height='22' rx='4' fill='#f6d186' stroke='#8a5a00' stroke-width='2'/>" +
+        "<path d='M-9 -5 L9 5 M-9 5 L9 -5' stroke='#8a5a00' stroke-width='2'/>" +
+        "<circle cx='0' cy='0' r='2.5' fill='#8a5a00'/>";
+    }
     if (tipo === "pc") {
       return "<rect x='-16' y='-12' width='32' height='22' rx='2' fill='#9fc5e8' stroke='#0b5fa5' stroke-width='2'/>" +
         "<rect x='-12' y='-8' width='24' height='12' fill='#e8f2fa'/>" +
@@ -4898,6 +5543,53 @@ var UI = (function () {
     return n;
   }
 
+  function boton(texto, clase) {
+    var b = document.createElement("button");
+    b.type = "button";
+    if (clase) { b.className = clase; }
+    b.textContent = texto;
+    return b;
+  }
+
+  // Ids únicos para asociar cada <label> con su control.
+  var contadorCampos = 0;
+  function idCampo(base) {
+    contadorCampos += 1;
+    return "sim-" + base + "-" + contadorCampos;
+  }
+
+  function etiqueta(texto, control) {
+    var lab = document.createElement("label");
+    lab.textContent = texto;
+    if (!control.id) { control.id = idCampo("campo"); }
+    lab.htmlFor = control.id;
+    return lab;
+  }
+
+  // Los campos de direcciones: teclado numérico con punto en el celular y sin
+  // autocompletado ni corrector, que en una IP sólo estorban.
+  function campoDireccion(input, nombre) {
+    input.setAttribute("inputmode", "decimal");
+    input.setAttribute("autocomplete", "off");
+    input.setAttribute("spellcheck", "false");
+    if (nombre) { input.name = nombre; }
+  }
+
+  function movimientoReducido() {
+    try {
+      return !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function anunciar(texto) {
+    if (S.anuncio) {
+      S.anuncio.textContent = "";
+      S.anuncio.textContent = texto;
+    }
+  }
+
   function iniciar(contenedor, topologiaInicial) {
     inyectarCss();
     S.raiz = (typeof contenedor === "string") ? document.querySelector(contenedor) : contenedor;
@@ -4907,10 +5599,23 @@ var UI = (function () {
     S.inicioMs = Date.now();
 
     var barra = el("div", "simbarra");
+    var bMenu = boton("☰", "menucel");
+    bMenu.setAttribute("aria-label", "Menú");
+    bMenu.setAttribute("aria-expanded", "false");
+    bMenu.addEventListener("click", function () {
+      var abierto = barra.classList.toggle("menuabierto");
+      bMenu.setAttribute("aria-expanded", String(abierto));
+    });
+    barra.appendChild(bMenu);
+    barra.appendChild(el("h1", "", "Simulador de Redes"));
+    S.barra = barra;
     var modos = el("div", "modos");
+    modos.setAttribute("role", "group");
+    modos.setAttribute("aria-label", "Modo de trabajo");
     [["topologia", "Topología"], ["subredes", "Subredes"], ["desafio", "Desafío"], ["docente", "Docente"]].forEach(function (par) {
-      var b = el("button", par[0] === S.modo ? "activo" : "", escapar(par[1]));
+      var b = boton(par[1], par[0] === S.modo ? "activo" : "");
       b.setAttribute("data-modo", par[0]);
+      b.setAttribute("aria-pressed", String(par[0] === S.modo));
       b.addEventListener("click", function () { setModo(par[0]); });
       modos.appendChild(b);
     });
@@ -4933,37 +5638,51 @@ var UI = (function () {
       selEjemplo.value = "";
     });
     barra.appendChild(selEjemplo);
-    var bTema = el("button", "", "Tema oscuro");
-    bTema.addEventListener("click", alternarTema);
-    var bPres = el("button", "", "Presentación (F)");
-    bPres.addEventListener("click", alternarPresentacion);
-    var bImp = el("button", "", "Importar");
+    barra.appendChild(el("span", "espacio"));
+    barra.appendChild(el("span", "enpres", "Modo presentación"));
+    var bImp = boton("Importar", "enedicion");
     bImp.addEventListener("click", importarPorArchivo);
-    var bExp = el("button", "", "Exportar");
+    var bExp = boton("Exportar", "enedicion");
     bExp.addEventListener("click", exportarActual);
-    barra.appendChild(bTema); barra.appendChild(bPres);
+    var bTema = boton("Tema oscuro", "enedicion");
+    bTema.setAttribute("aria-pressed", "false");
+    bTema.addEventListener("click", alternarTema);
+    S.botonTema = bTema;
+    var bPres = boton("Presentación (F)");
+    bPres.setAttribute("aria-pressed", "false");
+    bPres.addEventListener("click", alternarPresentacion);
+    S.botonPres = bPres;
     barra.appendChild(bImp); barra.appendChild(bExp);
+    barra.appendChild(bTema); barra.appendChild(bPres);
     S.raiz.appendChild(barra);
 
     var cuerpo = el("div", "simcuerpo");
     var pal = el("div", "simpaleta");
-    pal.innerHTML = "<h3 class='titulopal'>Dispositivos</h3>";
+    pal.setAttribute("aria-label", "Paleta de dispositivos");
+    pal.appendChild(el("h2", "titulopal", "Dispositivos"));
     TIPOS.forEach(function (t) {
-      var item = el("div", "palitem");
+      var item = boton("", "palitem");
       item.setAttribute("data-tipo", t.tipo);
-      item.innerHTML = "<svg viewBox='-24 -20 48 40'>" + icono(t.tipo) + "</svg>" +
-        "<div class='etiqueta'>" + escapar(t.etiqueta) + "</div>";
+      item.innerHTML = "<svg viewBox='-24 -20 48 40' aria-hidden='true' focusable='false'>" + icono(t.tipo) + "</svg>" +
+        "<span class='etiqueta'>" + escapar(t.etiqueta) + "</span>";
+      item.setAttribute("aria-label", "Agregar " + t.etiqueta);
       item.addEventListener("pointerdown", function (ev) { arrastrePaleta(ev, t.tipo, item); });
-      item.addEventListener("click", function () { armarColocacion(t.tipo, item); });
+      item.addEventListener("click", function (ev) {
+        // Desde el teclado (detail 0) el equipo se coloca en el centro de la
+        // vista: no hace falta puntero para agregar un dispositivo.
+        if (ev.detail === 0) { colocarEnCentro(t.tipo); return; }
+        armarColocacion(t.tipo, item);
+      });
       pal.appendChild(item);
     });
-    var hz = el("h3", "titulopal", "Cable");
-    pal.appendChild(hz);
+    pal.appendChild(el("h2", "titulopal", "Cable"));
     var selCable = document.createElement("select");
-    selCable.innerHTML = "<option value='ethernet'>ethernet</option><option value='fibra'>fibra</option><option value='wireless'>wireless</option>";
-    selCable.addEventListener("change", function () { S.cableTipo = selCable.value; S.herramientaCable = true; });
+    selCable.id = idCampo("tipo-cable");
+    selCable.innerHTML = "<option value='ethernet'>ethernet (cobre)</option><option value='fibra'>fibra</option><option value='wireless'>wireless</option>";
+    selCable.addEventListener("change", function () { S.cableTipo = selCable.value; S.herramientaCable = true; renderLienzo(); });
+    pal.appendChild(etiqueta("Tipo de cable", selCable));
     pal.appendChild(selCable);
-    var bCable = el("button", "", "Cable: clic en dos puertos (Esc cancela)");
+    var bCable = boton("Cable: clic en dos puertos (Esc cancela)", "herramienta");
     bCable.setAttribute("aria-pressed", "false");
     bCable.addEventListener("click", function () {
       S.herramientaCable = !S.herramientaCable; S.cableOrigen = null;
@@ -4973,10 +5692,14 @@ var UI = (function () {
       renderLienzo();
     });
     pal.appendChild(bCable);
-    var ley = el("div", "leyenda", "<p style='font-size:11px'>Trazo lleno: cobre.<br>Con brillo: fibra.<br>Punteado curvo: wireless.</p>");
-    pal.appendChild(ley);
-    var bCol = el("button", "", "Colapsar");
-    bCol.addEventListener("click", function () { pal.classList.toggle("colapsada"); });
+    pal.appendChild(el("p", "leyenda", "Trazo lleno: cobre · grueso con brillo: fibra · puntos en curva: wireless.<br>Verde: activo · rojo y cortado: caído."));
+    var bCol = boton("Colapsar");
+    bCol.setAttribute("aria-expanded", "true");
+    bCol.addEventListener("click", function () {
+      var colapsada = pal.classList.toggle("colapsada");
+      bCol.textContent = colapsada ? "Expandir" : "Colapsar";
+      bCol.setAttribute("aria-expanded", String(!colapsada));
+    });
     pal.appendChild(bCol);
     cuerpo.appendChild(pal);
     S.paleta = pal;
@@ -4985,6 +5708,9 @@ var UI = (function () {
     var svgNS = "http://www.w3.org/2000/svg";
     var svg = document.createElementNS(svgNS, "svg");
     svg.setAttribute("class", "lienzo");
+    svg.setAttribute("tabindex", "0");
+    svg.setAttribute("role", "application");
+    svg.setAttribute("aria-label", "Lienzo de la topología. Flechas: desplazar. Más y menos: zoom. Tab recorre equipos y enlaces.");
     var mundo = document.createElementNS(svgNS, "g");
     var cEn = document.createElementNS(svgNS, "g");
     var cNo = document.createElementNS(svgNS, "g");
@@ -4994,13 +5720,26 @@ var UI = (function () {
     zona.appendChild(svg);
     var tools = el("div", "simtools");
     [["deshacer", "Deshacer"], ["rehacer", "Rehacer"], ["menos", "−"], ["porc", "100%"], ["mas", "+"], ["ajustar", "Ajustar"]].forEach(function (par) {
-      var b = el("button", "", par[1]);
+      var b = boton(par[1]);
       b.setAttribute("data-h", par[0]);
       b.setAttribute("aria-label", par[0] === "menos" ? "Alejar" : par[0] === "mas" ? "Acercar" : par[0] === "porc" ? "Restablecer zoom" : par[1]);
       b.addEventListener("click", function () { accionLienzo(par[0]); });
       tools.appendChild(b);
     });
     zona.appendChild(tools);
+    zona.appendChild(el("div", "leyenda-lienzo",
+      "<div><svg width='26' height='8' aria-hidden='true'><line x1='1' y1='4' x2='25' y2='4' stroke='#1e7a34' stroke-width='3'/></svg> cobre</div>" +
+      "<div><svg width='26' height='10' aria-hidden='true'><line x1='1' y1='5' x2='25' y2='5' stroke='#1e7a34' stroke-width='7' opacity='.3'/><line x1='1' y1='5' x2='25' y2='5' stroke='#1e7a34' stroke-width='4'/></svg> fibra</div>" +
+      "<div><svg width='26' height='8' aria-hidden='true'><line x1='1' y1='4' x2='25' y2='4' stroke='#1e7a34' stroke-width='3' stroke-dasharray='1 6' stroke-linecap='round'/></svg> wireless</div>" +
+      "<div><svg width='26' height='8' aria-hidden='true'><line x1='1' y1='4' x2='25' y2='4' stroke='#b42318' stroke-width='3' stroke-dasharray='8 5'/></svg> caído</div>" +
+      "<div class='tenue'>verde activo · rojo y cortado caído</div>"));
+    var pista = el("div", "pista", "Tocá un equipo para configurarlo");
+    zona.appendChild(pista);
+    S.pista = pista;
+    var aviso = el("div", "simaviso");
+    aviso.hidden = true;
+    zona.appendChild(aviso);
+    S.aviso = aviso;
     var tip = el("div", "tooltip");
     tip.style.display = "none";
     zona.appendChild(tip);
@@ -5014,8 +5753,50 @@ var UI = (function () {
     S.raiz.appendChild(cuerpo);
 
     var inf = el("div", "siminf");
+    inf.setAttribute("aria-label", "Simulación y resultados");
     S.raiz.appendChild(inf);
     S.inf = inf;
+    S.cuerpo = cuerpo;
+    var acciones = el("div", "simacciones");
+    var bAgregar = boton("+ Agregar");
+    bAgregar.addEventListener("click", function () {
+      if (S.colocando || S.herramientaCable) { cancelarHerramientas(); return; }
+      abrirHoja("agregar");
+    });
+    var bConfig = boton("Configurar");
+    bConfig.addEventListener("click", function () { abrirHoja("configurar"); });
+    var bPingCel = boton("Ping", "primario");
+    bPingCel.addEventListener("click", function () { abrirHoja("ping"); });
+    acciones.appendChild(bAgregar); acciones.appendChild(bConfig); acciones.appendChild(bPingCel);
+    S.raiz.appendChild(acciones);
+    S.botonAgregar = bAgregar;
+    var hoja = el("section", "simhoja");
+    hoja.hidden = true;
+    hoja.setAttribute("role", "dialog");
+    hoja.setAttribute("aria-labelledby", "sim-titulo-hoja");
+    hoja.innerHTML = "<div class='tirador' aria-hidden='true'></div>";
+    var cabHoja = el("div", "cabhoja");
+    var tituloHoja = el("h2", "");
+    tituloHoja.id = "sim-titulo-hoja";
+    var bCerrar = boton("✕");
+    bCerrar.setAttribute("aria-label", "Cerrar");
+    bCerrar.addEventListener("click", cerrarHoja);
+    cabHoja.appendChild(tituloHoja); cabHoja.appendChild(bCerrar);
+    var cuerpoHoja = el("div", "cuerpohoja");
+    hoja.appendChild(cabHoja); hoja.appendChild(cuerpoHoja);
+    S.raiz.appendChild(hoja);
+    S.hojaEl = hoja; S.hojaTitulo = tituloHoja; S.hojaCuerpo = cuerpoHoja; S.hojaCerrar = bCerrar;
+    try {
+      var mq = window.matchMedia("(max-width:640px)");
+      var alCambiar = function () { if (!mq.matches) { cerrarHoja(); } };
+      if (mq.addEventListener) { mq.addEventListener("change", alCambiar); } else if (mq.addListener) { mq.addListener(alCambiar); }
+    } catch (e) { /* sin matchMedia: no hay hojas */ }
+
+    var anuncio = el("div", "oculto-visual");
+    anuncio.setAttribute("role", "status");
+    anuncio.setAttribute("aria-live", "polite");
+    S.raiz.appendChild(anuncio);
+    S.anuncio = anuncio;
 
     cablearLienzo(zona, svg);
     document.addEventListener("keydown", atajos);
@@ -5043,6 +5824,10 @@ var UI = (function () {
 
   /* ---------------- Lienzo: zoom, paneo, dibujo ---------------- */
 
+  function escalaRotulos() {
+    return S.presentacion ? Math.max(1, 1 / S.vista.k) : 1;
+  }
+
   function aplicarVista() {
     S.capaMundo.setAttribute("transform",
       "translate(" + S.vista.x + " " + S.vista.y + ") scale(" + S.vista.k + ")");
@@ -5053,9 +5838,10 @@ var UI = (function () {
     if (cual === "rehacer") { rehacer(); return; }
     if (cual === "mas") { S.vista.k = Math.min(3, S.vista.k * 1.2); }
     if (cual === "menos") { S.vista.k = Math.max(0.3, S.vista.k / 1.2); }
-    if (cual === "porc") { S.vista.k = 1; S.vista.x = 0; S.vista.y = 0; }
+    if (cual === "porc") { S.vista.k = 1; S.vista.x = 0; S.vista.y = MARGEN_VISTA; }
     if (cual === "ajustar") { ajustarVista(); }
     aplicarVista();
+    if (S.presentacion) { renderLienzo(); }
   }
 
   function ajustarVista() {
@@ -5066,13 +5852,18 @@ var UI = (function () {
       minX = Math.min(minX, d.x); minY = Math.min(minY, d.y);
       maxX = Math.max(maxX, d.x); maxY = Math.max(maxY, d.y);
     });
+    // Márgenes que cubren íconos y rótulos: los rótulos cuelgan debajo del
+    // equipo y son más anchos que el ícono.
+    minX -= S.presentacion ? 130 : 100; maxX += S.presentacion ? 130 : 100; minY -= 50;
+    maxY += S.presentacion ? 210 : 130;
     var rect = S.svg.getBoundingClientRect();
-    var w = Math.max(200, maxX - minX + 200);
-    var h = Math.max(200, maxY - minY + 200);
-    var k = Math.min(rect.width / w, rect.height / h, 1.5);
+    var altoUtil = Math.max(100, rect.height - MARGEN_VISTA);
+    var w = Math.max(200, maxX - minX);
+    var h = Math.max(200, maxY - minY);
+    var k = Math.min(rect.width / w, altoUtil / h, 1.5);
     S.vista.k = Math.max(0.3, k);
     S.vista.x = rect.width / 2 - ((minX + maxX) / 2) * S.vista.k;
-    S.vista.y = rect.height / 2 - ((minY + maxY) / 2) * S.vista.k;
+    S.vista.y = MARGEN_VISTA + altoUtil / 2 - ((minY + maxY) / 2) * S.vista.k;
     aplicarVista();
   }
 
@@ -5121,6 +5912,11 @@ var UI = (function () {
       var a = porId[e.a.dispositivo], b = porId[e.b.dispositivo];
       if (!a || !b) { return; }
       var g = document.createElementNS(svgNS, "g");
+      g.setAttribute("class", "enlace");
+      g.setAttribute("tabindex", "0");
+      g.setAttribute("role", "button");
+      g.setAttribute("aria-label", "Enlace " + e.id + ", " + e.tipo + ", " + (e.estado === "up" ? "activo" : "caído") +
+        ", entre " + e.a.dispositivo + ":" + e.a.interfaz + " y " + e.b.dispositivo + ":" + e.b.interfaz);
       var pa = puntoPuerto(a, e.a.interfaz);
       var pb = puntoPuerto(b, e.b.interfaz);
       var x1 = pa.x, y1 = pa.y, x2 = pb.x, y2 = pb.y;
@@ -5130,7 +5926,9 @@ var UI = (function () {
         var mx = (x1 + x2) / 2, my = (y1 + y2) / 2 - 30;
         dib.setAttribute("d", "M" + x1 + " " + y1 + " Q" + mx + " " + my + " " + x2 + " " + y2);
         dib.setAttribute("fill", "none");
-        dib.setAttribute("stroke-dasharray", "6 5");
+        // Wireless: puntos redondos. Los guiones largos quedan para "caído".
+        dib.setAttribute("stroke-dasharray", "1 7");
+        dib.setAttribute("stroke-linecap", "round");
       } else {
         dib = document.createElementNS(svgNS, "line");
         dib.setAttribute("x1", x1); dib.setAttribute("y1", y1);
@@ -5138,18 +5936,45 @@ var UI = (function () {
       }
       dib.setAttribute("stroke", colorEnlace(e));
       dib.setAttribute("stroke-width", e.tipo === "fibra" ? 5 : 3);
-      if (e.tipo === "fibra") { dib.setAttribute("opacity", "0.85"); dib.setAttribute("stroke-linecap", "round"); }
+      var brillo = null;
+      if (e.tipo === "fibra") {
+        // La fibra se distingue por la forma: trazo grueso con un brillo
+        // debajo. El color queda para el estado del enlace.
+        brillo = document.createElementNS(svgNS, "line");
+        brillo.setAttribute("x1", x1); brillo.setAttribute("y1", y1);
+        brillo.setAttribute("x2", x2); brillo.setAttribute("y2", y2);
+        brillo.setAttribute("stroke", colorEnlace(e));
+        brillo.setAttribute("stroke-width", 11);
+        brillo.setAttribute("stroke-linecap", "round");
+        brillo.setAttribute("opacity", "0.25");
+        g.appendChild(brillo);
+        dib.setAttribute("stroke-linecap", "round");
+      }
+      // El estado no depende sólo del color (verde y rojo se confunden con
+      // daltonismo): un enlace caído además se dibuja con guiones largos.
+      if (e.estado !== "up" && e.tipo !== "wireless") {
+        dib.setAttribute("stroke-dasharray", "12 8");
+        dib.setAttribute("stroke-linecap", "butt");
+        if (brillo) { brillo.setAttribute("stroke-dasharray", "12 8"); brillo.setAttribute("stroke-linecap", "butt"); }
+      }
+      if (S.enlaceSel === e.id) { dib.setAttribute("stroke-width", e.tipo === "fibra" ? 7 : 5); }
       g.appendChild(dib);
       var mid = document.createElementNS(svgNS, "text");
       mid.setAttribute("x", (x1 + x2) / 2 + 6); mid.setAttribute("y", (y1 + y2) / 2 - 6);
-      mid.setAttribute("font-size", S.presentacion ? "15" : "12");
+      mid.setAttribute("font-size", S.presentacion ? String(Math.round(15 * escalaRotulos())) : "12");
       mid.setAttribute("fill", colorEnlace(e));
-      mid.textContent = e.id + (e.estado === "down" ? " (down)" : "");
-      g.appendChild(mid);
+      mid.textContent = e.id + (e.estado === "down" ? " (caído)" : "");
+      // Al proyectar, los nombres de enlace sólo estorban: quedan los caídos.
+      if (!S.presentacion || e.estado === "down") { g.appendChild(mid); }
       g.addEventListener("pointerenter", function (ev) { mostrarTipEnlace(ev, e); });
       g.addEventListener("pointerleave", ocultarTip);
-      g.addEventListener("click", function () {
-        S.seleccionado = null; S.enlaceSel = e.id; renderPropiedades();
+      g.addEventListener("click", function (ev) {
+        ev.stopPropagation();
+        seleccionarEnlace(e.id);
+        if (esCelular()) { abrirHoja("configurar"); }
+      });
+      g.addEventListener("keydown", function (ev) {
+        if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); ev.stopPropagation(); seleccionarEnlace(e.id); }
       });
       S.capaEnlaces.appendChild(g);
     });
@@ -5160,12 +5985,15 @@ var UI = (function () {
       g.setAttribute("class", "nodo");
       g.setAttribute("tabindex", "0");
       g.setAttribute("role", "button");
-      g.setAttribute("aria-label", (d.nombre || d.id) + ", dispositivo " + d.tipo);
+      g.setAttribute("data-id", d.id);
+      g.setAttribute("aria-label", (d.nombre || d.id) + ", " + nombreTipo(claveDe(d)) + ", " + lineasResumen(d).join(", ") +
+        (d.encendido ? "" : ", apagado") + ". Flechas: mover.");
       g.setAttribute("transform", "translate(" + d.x + " " + d.y + ")");
+      var halo = null;
       if (S.seleccionado === d.id) {
-        var halo = document.createElementNS(svgNS, "rect");
+        halo = document.createElementNS(svgNS, "rect");
         halo.setAttribute("x", -34); halo.setAttribute("y", -32);
-        halo.setAttribute("width", 68); halo.setAttribute("height", S.presentacion ? 140 : 124);
+        halo.setAttribute("width", 68); halo.setAttribute("height", 64);
         halo.setAttribute("rx", 10);
         halo.setAttribute("fill", "none");
         halo.setAttribute("stroke", "#0b5fa5");
@@ -5174,7 +6002,7 @@ var UI = (function () {
         g.appendChild(halo);
       }
       var cuerpo = document.createElementNS(svgNS, "g");
-      cuerpo.innerHTML = icono(d.tipo);
+      cuerpo.innerHTML = icono(claveDe(d));
       if (!d.encendido) { cuerpo.setAttribute("opacity", "0.4"); }
       g.appendChild(cuerpo);
 
@@ -5209,28 +6037,55 @@ var UI = (function () {
         c.addEventListener("keydown", function (ev) {
           if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); clicPuerto(d, iface); }
         });
+        // Con la herramienta de cable activa, cada puerto suma un área de
+        // toque invisible más grande (10 px es poco para un dedo). Mide 28 px
+        // de alto y lo que deje la separación con los vecinos, para no
+        // pisarlos. Fuera del modo cable no existe: taparía el ícono.
+        if (S.herramientaCable || S.cableOrigen) {
+          var enLado = idx < Math.ceil(d.interfaces.length / 2)
+            ? Math.ceil(d.interfaces.length / 2)
+            : d.interfaces.length - Math.ceil(d.interfaces.length / 2);
+          var anchoToque = Math.max(10, Math.min(28, 56 / Math.max(1, enLado)));
+          var toque = document.createElementNS(svgNS, "rect");
+          toque.setAttribute("x", p.x - anchoToque / 2); toque.setAttribute("y", p.y - 14);
+          toque.setAttribute("width", anchoToque); toque.setAttribute("height", 28);
+          toque.setAttribute("fill", "transparent");
+          toque.setAttribute("class", "toque");
+          toque.setAttribute("aria-hidden", "true");
+          toque.addEventListener("click", function (ev) {
+            ev.stopPropagation();
+            clicPuerto(d, iface);
+          });
+          g.appendChild(toque);
+        }
         g.appendChild(c);
       });
 
       // La etiqueta va después de los puertos: queda por encima en el orden
       // de dibujado y arranca debajo del borde inferior de los marcadores.
-      etiquetas.push(crearEtiqueta(g, d));
+      var etq = crearEtiqueta(g, d);
+      etq.halo = halo;
+      etiquetas.push(etq);
 
       g.addEventListener("pointerenter", function (ev) { mostrarTipNodo(ev, d); });
       g.addEventListener("pointerleave", ocultarTip);
       g.addEventListener("click", function (ev) {
         ev.stopPropagation();
-        if (S.colocando) { return; }
+        if (S.colocando || S.herramientaCable) { return; }
         seleccionar(d.id);
+        if (esCelular()) { abrirHoja("configurar"); }
       });
       g.addEventListener("keydown", function (ev) {
-        if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); seleccionar(d.id); }
+        if (ev.target !== g) { return; }
+        if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); seleccionar(d.id); enfocarNodo(d.id); return; }
+        if (moverConTeclado(d, ev)) { ev.preventDefault(); ev.stopPropagation(); }
       });
       g.addEventListener("pointerdown", function (ev) { arrastreNodo(ev, d, g); });
       S.capaNodos.appendChild(g);
     });
     resolverSolapes(etiquetas);
     aplicarVista();
+    actualizarCelular();
   }
 
   /* ---------------- Etiquetas del lienzo ---------------- */
@@ -5245,7 +6100,7 @@ var UI = (function () {
     var grupo = document.createElementNS(svgNS, "g");
     grupo.setAttribute("class", "etiqueta");
     // Modo presentación: todo el rótulo crece un 25 %.
-    var escala = S.presentacion ? 1.25 : 1;
+    var escala = (S.presentacion ? 1.25 : 1) * escalaRotulos();
     var textos = [d.nombre || d.id].concat(lineasResumen(d));
     var lineas = textos.map(function (t, i) {
       var fondo = document.createElementNS(svgNS, "rect");
@@ -5254,27 +6109,38 @@ var UI = (function () {
       var txt = document.createElementNS(svgNS, "text");
       txt.setAttribute("text-anchor", "middle");
       txt.setAttribute("fill", "currentColor");
-      if (i === 0) { txt.setAttribute("font-weight", "600"); }
+      if (i === 0) { txt.setAttribute("font-weight", "600"); } else { txt.setAttribute("class", "mono"); }
       txt.textContent = t;
       grupo.appendChild(fondo);
       grupo.appendChild(txt);
-      return { fondo: fondo, texto: txt, tam: Math.round((i === 0 ? 16 : 14) * escala) };
+      return { fondo: fondo, texto: txt, tam: Math.round((i === 0 ? 16 : 14) * escala * 10) / 10 };
     });
     g.appendChild(grupo);
-    return { d: d, grupo: grupo, lineas: lineas, dy: 0, caja: null };
+    return { d: d, grupo: grupo, lineas: lineas, dy: 0, caja: null, minimo: ETIQUETA_MIN * escalaRotulos(), paso: 2 * escalaRotulos() };
   }
 
-  // Acomoda las líneas de una etiqueta y devuelve su caja relativa al nodo.
+  // El armado de un rótulo va en tres tiempos para no alternar lecturas y
+  // escrituras de layout: fijar tamaños (escritura), medir (lectura) y
+  // ubicar (escritura).
+  function fijarTamanos(e) {
+    e.lineas.forEach(function (l) { l.texto.setAttribute("font-size", l.tam); });
+  }
+
   // El ancho sale del texto real; si el lienzo no está visible y el
   // navegador no puede medir, se estima.
-  function maquetarEtiqueta(e) {
-    var y = ETIQUETA_TOP + e.dy, ancho = 0, pad = 3;
+  function medirEtiqueta(e) {
     e.lineas.forEach(function (l) {
-      l.texto.setAttribute("font-size", l.tam);
-      l.texto.setAttribute("y", Math.round(y + l.tam * 0.85));
       var w = 0;
       try { w = l.texto.getComputedTextLength(); } catch (err) { w = 0; }
-      if (!w) { w = l.texto.textContent.length * l.tam * 0.58; }
+      l.ancho = w || l.texto.textContent.length * l.tam * 0.58;
+    });
+  }
+
+  function ubicarEtiqueta(e) {
+    var y = ETIQUETA_TOP + e.dy, ancho = 0, pad = 3;
+    e.lineas.forEach(function (l) {
+      var w = l.ancho;
+      l.texto.setAttribute("y", Math.round(y + l.tam * 0.85));
       l.fondo.setAttribute("x", Math.round(-w / 2 - pad));
       l.fondo.setAttribute("y", Math.round(y - pad + 1));
       l.fondo.setAttribute("width", Math.round(w + pad * 2));
@@ -5284,6 +6150,12 @@ var UI = (function () {
     });
     e.caja = { x1: -ancho / 2, x2: ancho / 2, y1: ETIQUETA_TOP + e.dy - pad, y2: y + pad };
     return e.caja;
+  }
+
+  function maquetarEtiqueta(e) {
+    fijarTamanos(e);
+    medirEtiqueta(e);
+    return ubicarEtiqueta(e);
   }
 
   function cajaMundo(e) {
@@ -5298,7 +6170,9 @@ var UI = (function () {
   // ubicada baja un escalón de tipografía (sin pasar del mínimo) y, si
   // todavía choca, se desplaza hacia abajo lo justo para despejarla.
   function resolverSolapes(etiquetas) {
-    etiquetas.forEach(maquetarEtiqueta);
+    etiquetas.forEach(fijarTamanos);
+    etiquetas.forEach(medirEtiqueta);
+    etiquetas.forEach(ubicarEtiqueta);
     var orden = etiquetas.slice().sort(function (a, b) { return (a.d.y - b.d.y) || (a.d.x - b.d.x); });
     var ubicadas = [];
     orden.forEach(function (e) {
@@ -5311,19 +6185,30 @@ var UI = (function () {
         return null;
       };
       var otra = choca();
-      if (otra && e.lineas.some(function (l) { return l.tam > ETIQUETA_MIN; })) {
-        e.lineas.forEach(function (l) { l.tam = Math.max(ETIQUETA_MIN, l.tam - 2); });
+      // Primero se achica de a un escalón hasta el mínimo: un rótulo más
+      // chico pero junto a su equipo se lee mejor que uno desplazado.
+      while (otra && e.lineas.some(function (l) { return l.tam > e.minimo; })) {
+        e.lineas.forEach(function (l) { l.tam = Math.max(e.minimo, l.tam - e.paso); });
         maquetarEtiqueta(e);
         otra = choca();
       }
       var vueltas = 0;
       while (otra && vueltas < 6) {
         e.dy += otra.y2 - cajaMundo(e).y1 + 2;
-        maquetarEtiqueta(e);
+        ubicarEtiqueta(e);
         otra = choca();
         vueltas++;
       }
       ubicadas.push(e);
+    });
+    // El recuadro de selección abarca el ícono y todo su rótulo.
+    etiquetas.forEach(function (e) {
+      if (e.halo && e.caja) {
+        var ancho = Math.max(68, Math.round(e.caja.x2 - e.caja.x1) + 8);
+        e.halo.setAttribute("x", -ancho / 2);
+        e.halo.setAttribute("width", ancho);
+        e.halo.setAttribute("height", Math.round(e.caja.y2 + 32 + 4));
+      }
     });
   }
 
@@ -5455,6 +6340,7 @@ var UI = (function () {
       ev.preventDefault();
       S.vista.k = Math.min(3, Math.max(0.3, S.vista.k * (ev.deltaY < 0 ? 1.1 : 0.9)));
       aplicarVista();
+      if (S.presentacion) { renderLienzo(); }
     }, { passive: false });
     zona.addEventListener("dragover", function (ev) { ev.preventDefault(); });
     zona.addEventListener("drop", function (ev) {
@@ -5465,6 +6351,158 @@ var UI = (function () {
     svg.addEventListener("click", function () {
       if (!S.herramientaCable && !S.colocando) { seleccionar(null); }
     });
+    // Alternativa de teclado al paneo y al zoom con el mouse.
+    svg.addEventListener("keydown", function (ev) {
+      if (ev.target !== svg) { return; }
+      var paso = ev.shiftKey ? 120 : 40;
+      var dx = { ArrowLeft: paso, ArrowRight: -paso }[ev.key] || 0;
+      var dy = { ArrowUp: paso, ArrowDown: -paso }[ev.key] || 0;
+      if (dx || dy) {
+        ev.preventDefault();
+        S.vista.x += dx; S.vista.y += dy; aplicarVista();
+        return;
+      }
+      if (ev.key === "+" || ev.key === "=") { ev.preventDefault(); accionLienzo("mas"); }
+      else if (ev.key === "-") { ev.preventDefault(); accionLienzo("menos"); }
+    });
+  }
+
+  /* ---------------- Celular: hojas inferiores ---------------- */
+
+  function esCelular() {
+    try { return !!(window.matchMedia && window.matchMedia("(max-width:640px)").matches); }
+    catch (e) { return false; }
+  }
+
+  // Las hojas reutilizan los paneles de escritorio: al abrir se mudan
+  // adentro de la hoja y al cerrar vuelven a su lugar.
+  function abrirHoja(tipo) {
+    if (!S.hojaEl) { return; }
+    devolverPaneles();
+    S.hoja = tipo;
+    S.hojaCuerpo.innerHTML = "";
+    if (tipo === "agregar") {
+      S.hojaTitulo.textContent = "Agregar";
+      S.hojaCuerpo.appendChild(el("h3", "", "Dispositivos"));
+      var grilla = el("div", "gridagregar");
+      TIPOS.forEach(function (t) {
+        var b = boton("");
+        b.innerHTML = "<svg viewBox='-24 -20 48 40' aria-hidden='true' focusable='false'>" + icono(t.tipo) + "</svg><span>" + escapar(t.etiqueta) + "</span>";
+        b.addEventListener("click", function () {
+          armarColocacion(t.tipo, null);
+          cerrarHoja();
+          avisar(t.etiqueta + " armado · tocá el lienzo para colocarlo");
+        });
+        grilla.appendChild(b);
+      });
+      S.hojaCuerpo.appendChild(grilla);
+      S.hojaCuerpo.appendChild(el("h3", "", "Cable"));
+      var grillaCable = el("div", "gridagregar");
+      [["ethernet", "Cobre", "<line x1='-18' y1='0' x2='18' y2='0' stroke='#1e7a34' stroke-width='3'/>"],
+       ["fibra", "Fibra", "<line x1='-18' y1='0' x2='18' y2='0' stroke='#1e7a34' stroke-width='9' opacity='.3'/><line x1='-18' y1='0' x2='18' y2='0' stroke='#1e7a34' stroke-width='5'/>"],
+       ["wireless", "Wireless", "<line x1='-18' y1='0' x2='18' y2='0' stroke='#1e7a34' stroke-width='3' stroke-dasharray='1 6' stroke-linecap='round'/>"]].forEach(function (c) {
+        var b = boton("");
+        b.innerHTML = "<svg viewBox='-24 -20 48 40' aria-hidden='true' focusable='false'>" + c[2] + "</svg><span>" + c[1] + "</span>";
+        b.addEventListener("click", function () {
+          S.cableTipo = c[0]; S.herramientaCable = true; S.cableOrigen = null; S.colocando = null;
+          cerrarHoja();
+          renderLienzo();
+          avisar("Cable " + c[1].toLowerCase() + " armado · tocá dos puertos");
+        });
+        grillaCable.appendChild(b);
+      });
+      S.hojaCuerpo.appendChild(grillaCable);
+      S.hojaCuerpo.appendChild(el("p", "", "<small>Verde: activo; rojo y cortado: caído. La forma del trazo indica el medio.</small>"));
+    } else if (tipo === "configurar") {
+      var d = S.seleccionado ? buscarDisp(S.seleccionado) : null;
+      S.hojaTitulo.textContent = d ? (d.nombre || d.id) : (S.enlaceSel ? "Enlace " + S.enlaceSel : "Configurar");
+      S.hojaCuerpo.appendChild(S.prop);
+      renderPropiedades();
+    } else {
+      S.hojaTitulo.textContent = "Ping";
+      S.pestañaInf = "simulacion";
+      S.hojaCuerpo.appendChild(S.inf);
+      renderInferior();
+    }
+    S.hojaEl.hidden = false;
+    actualizarCelular();
+    try { S.hojaCerrar.focus(); } catch (e) { /* sin foco: se sigue igual */ }
+  }
+
+  function devolverPaneles() {
+    if (S.prop && S.cuerpo && S.prop.parentNode !== S.cuerpo) { S.cuerpo.appendChild(S.prop); }
+    if (S.inf && S.cuerpo && S.inf.parentNode !== S.raiz) {
+      S.raiz.insertBefore(S.inf, S.cuerpo.nextSibling);
+    }
+  }
+
+  function cerrarHoja() {
+    if (!S.hojaEl || S.hojaEl.hidden) { return; }
+    devolverPaneles();
+    S.hoja = null;
+    S.hojaEl.hidden = true;
+    S.hojaCuerpo.innerHTML = "";
+    actualizarCelular();
+  }
+
+  function cancelarHerramientas() {
+    S.colocando = null; S.herramientaCable = false; S.cableOrigen = null;
+    var todos = S.paleta ? S.paleta.querySelectorAll(".palitem") : [];
+    for (var i = 0; i < todos.length; i++) { todos[i].classList.remove("armado"); }
+    renderLienzo();
+    avisar("Cancelado");
+  }
+
+  // Mensaje breve sobre el lienzo; también se anuncia al lector de pantalla.
+  function avisar(texto) {
+    if (!S.aviso) { return; }
+    S.aviso.textContent = texto;
+    S.aviso.hidden = false;
+    anunciar(texto);
+    clearTimeout(S.temporizadorAviso);
+    S.temporizadorAviso = setTimeout(function () { S.aviso.hidden = true; }, 2800);
+  }
+
+  function actualizarCelular() {
+    if (S.botonAgregar) {
+      S.botonAgregar.textContent = (S.colocando || S.herramientaCable) ? "Cancelar" : "+ Agregar";
+    }
+    if (S.pista) { S.pista.hidden = !!(S.seleccionado || S.hoja || S.colocando || S.herramientaCable); }
+  }
+
+  // Colocación desde el teclado: el equipo aparece en el centro de lo que se
+  // ve del lienzo, con el foco puesto en él para moverlo con las flechas.
+  function colocarEnCentro(tipo) {
+    var rect = S.svg.getBoundingClientRect();
+    var x = (rect.width / 2 - S.vista.x) / S.vista.k;
+    var y = (rect.height / 2 - S.vista.y) / S.vista.k;
+    agregarDispositivo(tipo, x, y);
+    enfocarNodo(S.seleccionado);
+  }
+
+  function enfocarNodo(id) {
+    if (!id) { return; }
+    var nodos = S.capaNodos.querySelectorAll("g.nodo");
+    for (var i = 0; i < nodos.length; i++) {
+      if (nodos[i].getAttribute("data-id") === id) {
+        try { nodos[i].focus(); } catch (e) { /* SVG sin foco programático: se sigue igual */ }
+        return;
+      }
+    }
+  }
+
+  // Mover un equipo con las flechas: la alternativa de teclado al arrastre.
+  function moverConTeclado(d, ev) {
+    var paso = ev.shiftKey ? 50 : 10;
+    var dx = { ArrowLeft: -paso, ArrowRight: paso }[ev.key] || 0;
+    var dy = { ArrowUp: -paso, ArrowDown: paso }[ev.key] || 0;
+    if (!dx && !dy) { return false; }
+    empujarHistorialSuave();
+    d.x += dx; d.y += dy;
+    reconstruirEstado();
+    renderLienzo();
+    enfocarNodo(d.id);
+    return true;
   }
 
   function clicPuerto(d, iface) {
@@ -5518,8 +6556,10 @@ var UI = (function () {
     return id;
   }
 
-  function agregarDispositivo(tipo, x, y) {
+  function agregarDispositivo(clave, x, y) {
     empujarHistorial();
+    var equipo = equipoDeClave(clave);
+    var tipo = equipo.tipo;
     var nombre = nombreAutomatico(tipo);
     var id = idUnico(nombre.toLowerCase().replace(/[^a-z0-9]+/g, "") || "eq");
     var gx = Math.round(x / 10) * 10, gy = Math.round(y / 10) * 10;
@@ -5534,11 +6574,13 @@ var UI = (function () {
       }
       intentos += 1;
     }
-    lista.push({
+    var nuevo = {
       id: id, tipo: tipo, nombre: nombre, x: gx, y: gy,
-      encendido: true, interfaces: interfacesPorDefecto(tipo),
-      gateway: null, dns: null, rutas: tipo === "router" ? [] : [], dhcp: null
-    });
+      encendido: true, interfaces: interfacesPorDefecto(clave),
+      gateway: null, dns: null, rutas: [], dhcp: null
+    };
+    if (equipo.modelo) { nuevo.modelo = equipo.modelo; }
+    lista.push(nuevo);
     reconstruirEstado(); renderTodo();
     seleccionar(id);
     registrar("topologia", "Se agregó " + nombre + " (" + tipo + ").");
@@ -5595,25 +6637,48 @@ var UI = (function () {
       ev.preventDefault(); borrarSeleccion(); return;
     }
     if (ev.key === "Escape") {
+      if (S.hoja) { cerrarHoja(); return; }
       S.colocando = null; S.cableOrigen = null; S.herramientaCable = false;
       renderLienzo(); return;
     }
-    if (ev.key.toLowerCase() === "f" && !mod) {
+    if (ev.key.toLowerCase() === "f" && !mod && !ev.altKey) {
       var a = document.activeElement;
-      if (a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA")) { return; }
+      if (a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT")) { return; }
       alternarPresentacion();
     }
   }
 
   function alternarPresentacion() {
     S.presentacion = !S.presentacion;
+    S.presExpandida = false;
     S.raiz.classList.toggle("presentacion", S.presentacion);
+    if (S.botonPres) {
+      S.botonPres.textContent = S.presentacion ? "Salir (F)" : "Presentación (F)";
+      S.botonPres.setAttribute("aria-pressed", String(S.presentacion));
+    }
     renderLienzo();
+    renderInferior();
+    // Al proyectar, la topología entra entera; al salir vuelve la vista que
+    // había.
+    if (S.presentacion) {
+      S.vistaPrevia = { x: S.vista.x, y: S.vista.y, k: S.vista.k };
+      ajustarVista();
+      renderLienzo();
+    } else if (S.vistaPrevia) {
+      S.vista = S.vistaPrevia;
+      S.vistaPrevia = null;
+      aplicarVista();
+      renderLienzo();
+    }
   }
 
   function alternarTema() {
     S.tema = (S.tema === "claro") ? "oscuro" : "claro";
     S.raiz.classList.toggle("oscuro", S.tema === "oscuro");
+    if (S.botonTema) {
+      S.botonTema.textContent = S.tema === "oscuro" ? "Tema claro" : "Tema oscuro";
+      S.botonTema.setAttribute("aria-pressed", String(S.tema === "oscuro"));
+    }
   }
 
   /* ---------------- Panel derecho ---------------- */
@@ -5625,38 +6690,53 @@ var UI = (function () {
       var e = buscarEnlace(S.enlaceSel);
       if (!e) { S.enlaceSel = null; }
       else {
-        c.appendChild(el("h3", "", "Enlace " + escapar(e.id)));
-        var bB = el("button", "", "Borrar enlace (Supr)");
-        bB.addEventListener("click", borrarSeleccion);
-        c.appendChild(bB);
-        var lab = document.createElement("label");
-        lab.textContent = "Estado";
+        c.appendChild(el("h2", "", "Enlace " + escapar(e.id)));
         var sel = document.createElement("select");
-        sel.innerHTML = "<option value='up'>up</option><option value='down'>down</option>";
+        sel.innerHTML = "<option value='up'>activo (up)</option><option value='down'>caído (down)</option>";
         sel.value = e.estado;
         sel.addEventListener("change", function () { empujarHistorial(); e.estado = sel.value; reconstruirEstado(); renderLienzo(); });
-        c.appendChild(lab); c.appendChild(sel);
-        c.appendChild(el("p", "", "Tipo: " + escapar(e.tipo) + "<br>Velocidad: " + escapar(String(e.velocidadMbps)) + " Mbps<br>Retardo: " + escapar(String(e.retardoMs)) + " ms"));
+        c.appendChild(etiqueta("Estado", sel)); c.appendChild(sel);
+        var extra = "";
+        if (e.tipo === "wireless") {
+          var da = buscarDisp(e.a.dispositivo), db = buscarDisp(e.b.dispositivo);
+          if (da && db) {
+            var dist = Math.round(Math.sqrt(Math.pow(da.x - db.x, 2) + Math.pow(da.y - db.y, 2)));
+            var umbral = (S.estado && S.estado.umbralWireless) || 250;
+            extra = "<br>Distancia: " + dist + " de " + umbral + " como máximo" + (dist > umbral ? " (fuera de alcance)" : "");
+          }
+        }
+        c.appendChild(el("p", "", escapar(e.a.dispositivo + ":" + e.a.interfaz) + " — " + escapar(e.b.dispositivo + ":" + e.b.interfaz) +
+          "<br>Tipo: " + escapar(e.tipo) + "<br>Velocidad: " + escapar(String(e.velocidadMbps)) + " Mbps<br>Retardo: " +
+          escapar(String(e.retardoMs)) + " ms" + extra));
+        var bB = boton("Borrar enlace (Supr)", "borrar");
+        bB.addEventListener("click", borrarSeleccion);
+        c.appendChild(bB);
         return;
       }
     }
     var d = S.seleccionado ? buscarDisp(S.seleccionado) : null;
     if (!d) {
-      c.innerHTML = "<h3>Propiedades</h3><p style='font-size:12px'>Seleccioná un dispositivo del lienzo para configurarlo. Supr lo borra.</p>";
+      c.innerHTML = "<h2>Propiedades</h2><p style='font-size:13px'>Seleccioná un dispositivo o un enlace del lienzo para configurarlo. Con el teclado: Tab hasta el equipo y Enter.</p>";
       return;
     }
     var tabs = el("div", "tabs");
+    tabs.setAttribute("role", "tablist");
+    tabs.setAttribute("aria-label", "Propiedades de " + (d.nombre || d.id));
     var nombres = [["config", "Configuración"], ["ifs", "Interfaces"], ["rutas", "Rutas"], ["dhcp", "DHCP"], ["estado", "Estado"]];
     if (d.tipo !== "router") {
       nombres = nombres.filter(function (p) { return p[0] !== "rutas" && p[0] !== "dhcp"; });
     }
+    if (!nombres.some(function (p) { return p[0] === S.pestañaProps; })) { S.pestañaProps = "config"; }
     nombres.forEach(function (p) {
-      var b = el("button", p[0] === S.pestañaProps ? "activo" : "", p[1]);
+      var activa = p[0] === S.pestañaProps;
+      var b = boton(p[1], activa ? "activo" : "");
+      b.setAttribute("role", "tab");
+      b.setAttribute("aria-selected", String(activa));
       b.addEventListener("click", function () { S.pestañaProps = p[0]; renderPropiedades(); });
       tabs.appendChild(b);
     });
     c.appendChild(tabs);
-    c.appendChild(el("h3", "", escapar(d.nombre || d.id) + " <small>(" + escapar(d.tipo) + ")</small>"));
+    c.appendChild(el("h2", "", escapar(d.nombre || d.id) + " <small>" + escapar(nombreTipo(claveDe(d))) + "</small>"));
 
     if (S.pestañaProps === "config") { panelConfig(c, d); }
     else if (S.pestañaProps === "ifs") { panelInterfaces(c, d); }
@@ -5664,19 +6744,23 @@ var UI = (function () {
     else if (S.pestañaProps === "dhcp") { panelDhcp(c, d); }
     else { panelEstado(c, d); }
 
-    var bBorrar = el("button", "", "Borrar dispositivo (Supr)");
+    var bBorrar = boton("Borrar dispositivo (Supr)", "borrar");
     bBorrar.addEventListener("click", borrarSeleccion);
     c.appendChild(bBorrar);
   }
 
-  function campoTexto(c, titulo, valor, alCambiar, validar) {
-    var lab = document.createElement("label");
-    lab.textContent = titulo;
+  function campoTexto(c, titulo, valor, alCambiar, validar, esDireccion) {
     var inp = document.createElement("input");
+    inp.type = "text";
+    inp.id = idCampo("prop");
+    if (esDireccion) { campoDireccion(inp, titulo.toLowerCase().replace(/[^a-z]+/g, "-")); }
+    else { inp.setAttribute("autocomplete", "off"); }
+    var lab = etiqueta(titulo, inp);
     inp.value = valor === null || valor === undefined ? "" : String(valor);
     inp.addEventListener("input", function () {
       var ok = validar ? validar(inp.value) : true;
       inp.classList.toggle("invalido", !ok);
+      inp.setAttribute("aria-invalid", String(!ok));
       if (ok) { alCambiar(inp.value); }
     });
     c.appendChild(lab); c.appendChild(inp);
@@ -5697,9 +6781,7 @@ var UI = (function () {
     });
     var interfazInicial = S.interfazEditada[d.id] || (principal ? principal.id : (d.interfaces[0] && d.interfaces[0].id));
     if (interfazInicial) { selIf.value = interfazInicial; }
-    var labIf = document.createElement("label");
-    labIf.textContent = "Interfaz que se edita";
-    c.appendChild(labIf); c.appendChild(selIf);
+    c.appendChild(etiqueta("Interfaz que se edita", selIf)); c.appendChild(selIf);
     var editada = buscarIface(d, selIf.value) || d.interfaces[0];
     selIf.addEventListener("change", function () {
       S.interfazEditada[d.id] = selIf.value;
@@ -5707,8 +6789,6 @@ var UI = (function () {
     });
     if (!editada) { return; }
 
-    var labModo = document.createElement("label");
-    labModo.textContent = "Modo";
     var selModo = document.createElement("select");
     selModo.innerHTML = "<option value='estatico'>estática</option><option value='dhcp'>DHCP</option>";
     selModo.value = editada.modo || "estatico";
@@ -5717,15 +6797,13 @@ var UI = (function () {
       if (selModo.value === "dhcp") { solicitarDhcp(d.id, editada.id); }
       reconstruirEstado(); renderTodo();
     });
-    c.appendChild(labModo); c.appendChild(selModo);
+    c.appendChild(etiqueta("Modo", selModo)); c.appendChild(selModo);
 
     campoTexto(c, "Dirección IP", editada.ip || "", function (v) {
       editada.ip = v.trim() === "" ? null : v.trim();
       reconstruirEstado(); renderLienzo(); refrescarCalculo();
-    }, function (v) { return v.trim() === "" || Red.esIpValida(v.trim()); });
+    }, function (v) { return v.trim() === "" || Red.esIpValida(v.trim()); }, true);
 
-    var labM = document.createElement("label");
-    labM.textContent = "Máscara (prefijo y decimal)";
     var selM = document.createElement("select");
     for (var p = 8; p <= 30; p++) {
       var op = document.createElement("option");
@@ -5738,26 +6816,26 @@ var UI = (function () {
       empujarHistorial(); editada.prefijo = parseInt(selM.value, 10);
       reconstruirEstado(); renderTodo();
     });
-    c.appendChild(labM); c.appendChild(selM);
+    c.appendChild(etiqueta("Máscara (prefijo y decimal)", selM)); c.appendChild(selM);
     void habiles;
 
     if (d.tipo !== "switch-l2") {
       campoTexto(c, "Puerta de enlace predeterminada", d.gateway || "", function (v) {
         d.gateway = v.trim() === "" ? null : v.trim();
         reconstruirEstado(); renderLienzo(); refrescarCalculo();
-      }, function (v) { return v.trim() === "" || Red.esIpValida(v.trim()); });
+      }, function (v) { return v.trim() === "" || Red.esIpValida(v.trim()); }, true);
       campoTexto(c, "DNS", d.dns || "", function (v) {
         d.dns = v.trim() === "" ? null : v.trim();
-      }, function (v) { return v.trim() === "" || Red.esIpValida(v.trim()); });
+      }, function (v) { return v.trim() === "" || Red.esIpValida(v.trim()); }, true);
     }
-    var labE = document.createElement("label");
-    labE.textContent = "Encendido";
+    var labE = el("label", "enlinea");
     var chk = document.createElement("input");
     chk.type = "checkbox"; chk.checked = !!d.encendido;
     chk.addEventListener("change", function () {
       empujarHistorial(); d.encendido = chk.checked; reconstruirEstado(); renderTodo();
     });
-    c.appendChild(labE); c.appendChild(chk);
+    labE.appendChild(chk); labE.appendChild(document.createTextNode("Encendido"));
+    c.appendChild(labE);
   }
 
   var temporizadorSuave = null;
@@ -5771,17 +6849,36 @@ var UI = (function () {
     (d.interfaces || []).forEach(function (f) {
       var fila = el("div", "filaif");
       var enl = enlaceEnPuerto(d.id, f.id);
-      fila.innerHTML = "<span><b>" + escapar(f.id) + "</b> · " + escapar(f.medio) +
-        "<br>" + (enl ? "enlace " + escapar(enl.id) : "sin enlace") + "</span>";
+      fila.appendChild(el("span", "datos", "<b>" + escapar(f.id) + "</b> · " + escapar(f.medio) +
+        "<br>" + (f.ip ? escapar(f.ip + "/" + f.prefijo) + " · " : "") + (enl ? "enlace " + escapar(enl.id) : "sin enlace")));
+      if (f.medio === "wireless") {
+        // Modo de radio (Parche 1): ap sostiene la celda, cliente se asocia a
+        // un ap, bridge une dos puntos.
+        var selR = document.createElement("select");
+        selR.innerHTML = "<option value='ap'>ap</option><option value='cliente'>cliente</option><option value='bridge'>bridge</option>";
+        selR.value = f.modoRadio || ((d.tipo === "ap" || d.tipo === "router") ? "ap" : "cliente");
+        selR.addEventListener("change", function () {
+          empujarHistorial(); f.modoRadio = selR.value;
+          reconstruirEstado(); renderTodo();
+          registrar("radio", "Interfaz " + d.id + ":" + f.id + " en modo " + selR.value + ".");
+        });
+        var labR = etiqueta("Modo de radio de " + f.id, selR);
+        labR.className = "oculto-visual";
+        fila.appendChild(labR);
+        fila.appendChild(selR);
+      }
+      var labH = el("label", "enlinea");
       var sw = document.createElement("input");
-      sw.type = "checkbox"; sw.className = "conmutador"; sw.checked = !!f.habilitada;
-      sw.title = "Habilitada / deshabilitada (produce D01)";
+      sw.type = "checkbox"; sw.checked = !!f.habilitada;
       sw.addEventListener("change", function () {
         empujarHistorial(); f.habilitada = sw.checked;
         reconstruirEstado(); renderTodo();
-        registrar(sw.checked ? "D01" : "D01", "Interfaz " + d.id + ":" + f.id + (sw.checked ? " habilitada." : " deshabilitada a propósito."));
+        registrar("D01", "Interfaz " + d.id + ":" + f.id + (sw.checked ? " habilitada." : " deshabilitada a propósito."));
       });
-      fila.appendChild(sw);
+      labH.appendChild(sw);
+      labH.appendChild(document.createTextNode("habilitada"));
+      labH.setAttribute("title", "Deshabilitarla produce D01");
+      fila.appendChild(labH);
       c.appendChild(fila);
     });
   }
@@ -5791,20 +6888,20 @@ var UI = (function () {
     var tabla = el("div", "");
     (d.rutas || []).forEach(function (r, i) {
       var fila = el("div", "filaif", "<span>" + escapar(r.destino + "/" + r.prefijo) + " vía " + escapar(r.siguienteSalto || "directa") + "</span>");
-      var b = el("button", "", "Quitar");
+      var b = boton("Quitar");
       b.addEventListener("click", function () { empujarHistorial(); d.rutas.splice(i, 1); reconstruirEstado(); renderPropiedades(); });
       fila.appendChild(b);
       tabla.appendChild(fila);
     });
     c.appendChild(tabla);
-    var bDef = el("button", "", "Agregar ruta por defecto 0.0.0.0/0");
+    var bDef = boton("Agregar ruta por defecto 0.0.0.0/0");
     bDef.addEventListener("click", function () {
       empujarHistorial();
       d.rutas.push({ destino: "0.0.0.0", prefijo: 0, siguienteSalto: "" });
       reconstruirEstado(); renderPropiedades();
     });
     c.appendChild(bDef);
-    var bUna = el("button", "", "Agregar ruta");
+    var bUna = boton("Agregar ruta");
     bUna.addEventListener("click", function () {
       empujarHistorial();
       d.rutas.push({ destino: "10.0.0.0", prefijo: 24, siguienteSalto: "" });
@@ -5812,14 +6909,14 @@ var UI = (function () {
     });
     c.appendChild(bUna);
     (d.rutas || []).forEach(function (r) {
-      campoTexto(c, "Destino", r.destino, function (v) { r.destino = v.trim(); reconstruirEstado(); }, function (v) { return Red.esIpValida(v.trim()); });
+      campoTexto(c, "Destino", r.destino, function (v) { r.destino = v.trim(); reconstruirEstado(); }, function (v) { return Red.esIpValida(v.trim()); }, true);
       campoTexto(c, "Prefijo (0–32)", String(r.prefijo), function (v) {
         var n = parseInt(v, 10);
         if (!isNaN(n)) { r.prefijo = n; reconstruirEstado(); }
       });
       campoTexto(c, "Siguiente salto", r.siguienteSalto || "", function (v) {
         r.siguienteSalto = v.trim() === "" ? null : v.trim(); reconstruirEstado();
-      }, function (v) { return v.trim() === "" || Red.esIpValida(v.trim()); });
+      }, function (v) { return v.trim() === "" || Red.esIpValida(v.trim()); }, true);
     });
   }
 
@@ -5828,17 +6925,17 @@ var UI = (function () {
     var cfg = d.dhcp || { habilitado: false, desde: "", hasta: "", prefijo: 24, gateway: "" };
     var chk = document.createElement("input");
     chk.type = "checkbox"; chk.checked = !!cfg.habilitado;
-    var lab = document.createElement("label");
-    lab.textContent = "Servidor habilitado";
+    var lab = el("label", "enlinea");
     chk.addEventListener("change", function () {
       empujarHistorial(); cfg.habilitado = chk.checked; d.dhcp = cfg;
       reconstruirEstado(); renderPropiedades();
     });
-    c.appendChild(lab); c.appendChild(chk);
+    lab.appendChild(chk); lab.appendChild(document.createTextNode("Servidor DHCP habilitado"));
+    c.appendChild(lab);
     [["desde", "Desde"], ["hasta", "Hasta"], ["gateway", "Gateway que entrega"]].forEach(function (par) {
       campoTexto(c, par[1], cfg[par[0]] || "", function (v) {
         cfg[par[0]] = v.trim(); d.dhcp = cfg; reconstruirEstado();
-      }, function (v) { return v.trim() === "" || Red.esIpValida(v.trim()); });
+      }, function (v) { return v.trim() === "" || Red.esIpValida(v.trim()); }, true);
     });
     campoTexto(c, "Prefijo", String(cfg.prefijo === undefined ? 24 : cfg.prefijo), function (v) {
       var n = parseInt(v, 10);
@@ -5888,28 +6985,92 @@ var UI = (function () {
   function renderInferior() {
     var c = S.inf;
     c.innerHTML = "";
+    var compacta = S.presentacion && !S.presExpandida;
+    c.classList.toggle("compacta", compacta);
+    if (compacta) { renderEstadoPresentacion(c); return; }
     var barra = el("div", "tabs");
+    var lista = el("div", "");
+    lista.setAttribute("role", "tablist");
+    lista.setAttribute("aria-label", "Paneles de la franja inferior");
+    lista.style.display = "flex";
+    lista.style.gap = "4px";
     [["simulacion", "Simulación"], ["dhcp", "DHCP"], ["calculo", "Cálculo de subred"], ["ayuda", "Ayuda"]].forEach(function (p) {
-      var b = el("button", p[0] === S.pestañaInf ? "activo" : "", p[1]);
+      var activa = p[0] === S.pestañaInf;
+      var b = boton(p[1], activa ? "activo" : "");
+      b.setAttribute("role", "tab");
+      b.setAttribute("aria-selected", String(activa));
       b.addEventListener("click", function () { S.pestañaInf = p[0]; renderInferior(); });
-      barra.appendChild(b);
+      lista.appendChild(b);
     });
-    var bCol = el("button", "", S.inf.classList.contains("colapsado") ? "Expandir" : "Colapsar");
-    bCol.addEventListener("click", function () { S.inf.classList.toggle("colapsado"); renderInferior(); });
-    barra.appendChild(bCol);
+    barra.appendChild(lista);
+    barra.appendChild(el("span", "espacio"));
     var selV = document.createElement("select");
-    selV.style.width = "auto";
     selV.innerHTML = "<option value='lenta'>lenta</option><option value='normal'>normal</option><option value='rapida'>rápida</option>";
     selV.value = S.velocidad;
-    selV.title = "Velocidad de animación";
     selV.addEventListener("change", function () { S.velocidad = selV.value; });
+    barra.appendChild(etiqueta("Velocidad", selV));
     barra.appendChild(selV);
+    var colapsado = S.inf.classList.contains("colapsado");
+    var bCol = boton(S.presentacion ? "Volver a una línea" : (colapsado ? "Expandir" : "Colapsar"));
+    bCol.setAttribute("aria-expanded", String(!colapsado));
+    bCol.addEventListener("click", function () {
+      if (S.presentacion) { S.presExpandida = false; renderInferior(); return; }
+      S.inf.classList.toggle("colapsado");
+      renderInferior();
+    });
+    barra.appendChild(bCol);
     c.appendChild(barra);
-    if (S.inf.classList.contains("colapsado")) { return; }
-    if (S.pestañaInf === "simulacion") { panelSimulacion(c); }
-    else if (S.pestañaInf === "dhcp") { panelDhcpInf(c); }
-    else if (S.pestañaInf === "calculo") { panelCalculo(c); }
-    else { panelAyuda(c); }
+    if (colapsado) { return; }
+    var cuerpo = el("div", "cuerpoinf");
+    c.appendChild(cuerpo);
+    if (S.pestañaInf === "simulacion") { panelSimulacion(cuerpo); }
+    else if (S.pestañaInf === "dhcp") { panelDhcpInf(cuerpo); }
+    else if (S.pestañaInf === "calculo") { panelCalculo(cuerpo); }
+    else { panelAyuda(cuerpo); }
+  }
+
+  // Modo presentación: la franja queda en una línea de estado para que la
+  // topología entre entera en pantalla.
+  function renderEstadoPresentacion(c) {
+    var fila = el("div", "estadopres");
+    var bExp = boton("Expandir simulación");
+    bExp.addEventListener("click", function () { S.presExpandida = true; renderInferior(); });
+    fila.appendChild(bExp);
+    fila.appendChild(el("span", "", escapar(resumenUltimoPing())));
+    fila.appendChild(el("span", "espacio"));
+    fila.appendChild(el("span", "", "F para salir · flechas sobre el lienzo para desplazarlo"));
+    c.appendChild(fila);
+  }
+
+  function resumenUltimoPing() {
+    var u = S.ultimo;
+    if (!u) { return "Todavía no se hizo ningún ping."; }
+    var base = "Último ping: " + nombreDe(u.origen) + " → " + u.destino + " · ";
+    if (u.res.exito) {
+      var r = u.res.respuestas[0] || { ms: 1 };
+      return base + "éxito en " + r.ms + " ms · " + cantidadSaltos(u.res) + " saltos";
+    }
+    var dg = u.res.diagnostico;
+    return base + "falla" + (dg ? " " + dg.codigo + " · " + dg.titulo : "");
+  }
+
+  function nombreDe(id) {
+    var d = buscarDisp(id);
+    return d ? (d.nombre || d.id) : id;
+  }
+
+  // Recorrido del paquete por nombre de equipo, sin repeticiones seguidas.
+  function rutaNombres(res) {
+    var nombres = [];
+    (res.saltos || []).forEach(function (s) {
+      var n = nombreDe(s.dispositivo);
+      if (nombres[nombres.length - 1] !== n) { nombres.push(n); }
+    });
+    return nombres;
+  }
+
+  function cantidadSaltos(res) {
+    return Math.max(0, rutaNombres(res).length - 1);
   }
 
   function opcionesEquipos(sel, excluirSwitches) {
@@ -5922,46 +7083,53 @@ var UI = (function () {
   }
 
   function panelSimulacion(c) {
-    var cont = el("div", "columnas");
-    var izq = el("div", "col");
+    c.classList.add("sim");
+    var ctrl = el("div", "simctrl");
     var selO = document.createElement("select");
-    var selD = document.createElement("input");
     opcionesEquipos(selO);
-    if (S.seleccionado) { selO.value = S.seleccionado; }
-    selD.placeholder = "IP destino, p. ej. 10.45.7.122";
+    if (S.origenElegido && buscarDisp(S.origenElegido)) { selO.value = S.origenElegido; }
+    else if (S.seleccionado) { selO.value = S.seleccionado; }
+    selO.addEventListener("change", function () { S.origenElegido = selO.value; });
+    var selD = document.createElement("input");
+    selD.type = "text";
+    campoDireccion(selD, "destino");
+    selD.placeholder = "p. ej. 10.45.7.122…";
     selD.value = S.ultimoDestino || "";
-    var bPing = el("button", "", "Ping");
-    var bCopiar = el("button", "", "Copiar registro");
-    var bExp = el("button", "", "Exportar registro");
-    var bVer = el("button", "", "Verificar");
-    var bAuto = el("button", "", "Autotest");
-    izq.appendChild(el("p", "", "<b>Origen:</b>"));
-    izq.appendChild(selO);
-    izq.appendChild(el("p", "", "<b>Destino (IP):</b>"));
-    izq.appendChild(selD);
-    [bPing, bCopiar, bExp, bVer, bAuto].forEach(function (b) { izq.appendChild(b); });
-    var cons = el("div", "consola", "La consola muestra el ping y el diagnóstico.\n");
-    S.consola = cons;
-    izq.appendChild(cons);
-    var der = el("div", "col");
-    der.innerHTML = "<b>Recorrido paso a paso</b>";
-    var lista = el("div", "");
-    S.listaPasos = lista;
-    der.appendChild(lista);
-    var diag = el("div", "");
-    S.cajaDiag = diag;
-    der.appendChild(diag);
-    cont.appendChild(izq); cont.appendChild(der);
-    c.appendChild(cont);
+    var bPing = boton("Ping", "primario");
+    ctrl.appendChild(etiqueta("Origen", selO)); ctrl.appendChild(selO);
+    ctrl.appendChild(el("span", "flecha", "→")).setAttribute("aria-hidden", "true");
+    ctrl.appendChild(etiqueta("Destino", selD)); ctrl.appendChild(selD);
+    ctrl.appendChild(bPing);
+    ctrl.appendChild(el("span", "espacio"));
+    // Los botones están siempre en el mismo lugar; si no aplican, quedan
+    // deshabilitados en lugar de desaparecer.
+    var esc = S.topologia.escenario;
+    var bVer = boton("Verificar");
+    bVer.disabled = !(esc && esc.objetivos && esc.objetivos.length);
+    if (bVer.disabled) { bVer.title = "Esta topología no trae objetivos para verificar"; }
+    var hayResultado = !!(S.ultimo || S.ultimaVerif || S.ultimoAutotest);
+    var bCopiar = boton("Copiar registro");
+    var bExp = boton("Exportar registro");
+    bCopiar.disabled = !hayResultado;
+    bExp.disabled = !hayResultado;
+    var bAuto = boton("Autotest");
+    [bVer, bCopiar, bExp, bAuto].forEach(function (b) { ctrl.appendChild(b); });
+    c.appendChild(ctrl);
+    c.appendChild(renderResultado());
 
-    bPing.addEventListener("click", function () {
+    function hacerPing() {
       S.ultimoDestino = selD.value;
+      S.origenElegido = selO.value;
       if (!S.estado) { reconstruirEstado(); }
       var res;
       try { res = Motor.ping(S.estado, selO.value, selD.value.trim()); }
       catch (e) { registrar("error", "El ping falló por un error interno: " + e.message); return; }
       pintarPing(selO.value, selD.value.trim(), res);
       animarPing(res);
+    }
+    bPing.addEventListener("click", hacerPing);
+    selD.addEventListener("keydown", function (ev) {
+      if (ev.key === "Enter") { ev.preventDefault(); hacerPing(); }
     });
     bCopiar.addEventListener("click", function () {
       var texto = S.registro.join("\n");
@@ -5969,13 +7137,11 @@ var UI = (function () {
         if (navigator.clipboard && navigator.clipboard.writeText) {
           navigator.clipboard.writeText(texto).then(function () {
             registrar("registro", "Registro copiado al portapapeles.");
-          }).catch(function () { throw new Error("permiso de portapapeles"); });
+            anunciar("Registro copiado al portapapeles.");
+          }).catch(function () { mostrarTextoCopiable(c, texto); });
         } else { throw new Error("sin portapapeles"); }
       } catch (e) {
-        var ta = document.createElement("textarea");
-        ta.value = texto; ta.rows = 8; ta.style.width = "100%";
-        izq.appendChild(ta); ta.select();
-        registrar("registro", "El portapapeles falló: el texto quedó seleccionado abajo.");
+        mostrarTextoCopiable(c, texto);
       }
     });
     bExp.addEventListener("click", function () {
@@ -5988,77 +7154,285 @@ var UI = (function () {
         setTimeout(function () { URL.revokeObjectURL(a.href); }, 2000);
       } catch (e) { registrar("registro", "No se pudo exportar el registro."); }
     });
-    bVer.addEventListener("click", function () { verificarActual(der); });
+    bVer.addEventListener("click", verificarActual);
     bAuto.addEventListener("click", function () {
       var r1 = Red.autopruebas(), r2 = Motor.autopruebas(), r3 = Escenarios.autopruebas();
-      var total = r1.total + r2.total + r3.total;
-      var ok = r1.pasadas + r2.pasadas + r3.pasadas;
-      cons.textContent += "Autotest: " + ok + "/" + total + " pruebas pasadas.\n";
-      (r1.fallos.concat(r2.fallos).concat(r3.fallos)).slice(0, 10).forEach(function (f) {
-        cons.textContent += "- " + f.nombre + "\n";
-      });
-      cons.scrollTop = cons.scrollHeight;
+      var fallos = r1.fallos.concat(r2.fallos).concat(r3.fallos);
+      S.ultimoAutotest = {
+        total: r1.total + r2.total + r3.total,
+        pasadas: r1.pasadas + r2.pasadas + r3.pasadas,
+        fallos: fallos
+      };
+      consolaAgregar("Autotest: " + S.ultimoAutotest.pasadas + "/" + S.ultimoAutotest.total + " pruebas pasadas.", fallos.length > 0);
+      fallos.slice(0, 10).forEach(function (f) { consolaAgregar("- " + f.nombre, true); });
+      S.panelRes = "autotest";
+      renderInferior();
+      anunciar("Autotest: " + S.ultimoAutotest.pasadas + " de " + S.ultimoAutotest.total + " pruebas pasadas.");
     });
+    if (S.enfocarPing) {
+      S.enfocarPing = false;
+      try { bPing.focus(); } catch (e) { /* sin foco: se sigue igual */ }
+    }
+  }
+
+  // Si el portapapeles no está disponible, el texto queda seleccionado en
+  // pantalla para copiarlo a mano.
+  function mostrarTextoCopiable(c, texto) {
+    var ta = document.createElement("textarea");
+    ta.value = texto; ta.rows = 6; ta.style.width = "100%";
+    ta.setAttribute("aria-label", "Registro para copiar");
+    c.appendChild(ta); ta.select();
+    registrar("registro", "El portapapeles falló: el texto quedó seleccionado abajo.");
+  }
+
+  /* ---------------- Resultado: reposo, ping, verificación ---------------- */
+
+  function renderResultado() {
+    var cont = el("div", "simres");
+    if (S.panelRes === "verificacion" && S.ultimaVerif) { return renderVerificacion(cont); }
+    if (S.panelRes === "autotest" && S.ultimoAutotest) { return renderAutotest(cont); }
+    if (!S.ultimo) {
+      cont.appendChild(el("div", "vacio",
+        "<b>Elegí un origen y un destino, y apretá Ping</b>" +
+        "Vas a ver el recorrido paso a paso: cada cosa que el sistema operativo verifica antes de mandar el paquete. " +
+        "Si algo falla, acá se indica cuál de esos pasos se rompió y por qué.<br>" +
+        "Antes de configurar una IP, mirá la pestaña <b style='display:inline;font-size:inherit'>Cálculo de subred</b>."));
+      return cont;
+    }
+    var res = S.ultimo.res;
+    cont.appendChild(renderRecorrido(res));
+    var lado = el("div", "lado");
+    if (res.exito) {
+      var r = res.respuestas[0] || { ms: 1, ttl: 64 };
+      var ruta = rutaNombres(res);
+      lado.appendChild(el("div", "banda-ok",
+        "<b>✓ El eco volvió en " + r.ms + " ms.</b>" +
+        "<div class='ruta'>" + escapar(ruta.join(" → ")) + " · " + cantidadSaltos(res) + " saltos · TTL " + r.ttl + "</div>"));
+      lado.appendChild(renderConsola());
+    } else {
+      lado.appendChild(renderDiagnostico(res.diagnostico));
+      // Con un diagnóstico a la vista, la consola se pliega a una línea.
+      lado.appendChild(renderConsolaPlegable());
+    }
+    cont.appendChild(lado);
+    return cont;
+  }
+
+  function renderDiagnostico(dg) {
+    if (!dg) { return el("div", "diagnostico", "<span class='tit'>El ping falló sin diagnóstico.</span>"); }
+    var caja = el("div", "diagnostico",
+      "<span class='cod'>" + escapar(dg.codigo) + "</span><span class='tit'>" + escapar(dg.titulo) + "</span>" +
+      "<div>" + escapar(dg.explicacion) + "</div>" +
+      "<div class='rev'><b>Sugerencia:</b> " + escapar(dg.sugerencia) + "</div>");
+    var origen = S.ultimo && S.ultimo.origen;
+    if (origen && buscarDisp(origen) && dg.codigo !== "ENTRADA") {
+      var bIr = boton("Ir a configurar " + nombreDe(origen), "irconfig");
+      bIr.addEventListener("click", function () {
+        seleccionar(origen);
+        if (esCelular()) { abrirHoja("configurar"); return; }
+        var primero = S.prop.querySelector("input,select");
+        if (primero) { try { primero.focus(); } catch (e) { /* se sigue igual */ } }
+      });
+      caja.appendChild(bIr);
+    }
+    return caja;
+  }
+
+  function resumenPaso(p) {
+    var lineas = String(p.detalle || "").split("\n").filter(function (l) { return l.trim() !== ""; });
+    return lineas.length ? lineas[lineas.length - 1].trim() : "";
+  }
+
+  var PASOS_CLAVE = /^(Comparar redes|Buscar ruta|Verificar que el destino)/;
+
+  function renderRecorrido(res) {
+    var caja = el("div", "recorrido");
+    var pasos = res.pasos || [];
+    var fallo = -1;
+    pasos.forEach(function (p, i) { if (!p.ok && fallo < 0) { fallo = i; } });
+    var cab = el("div", "cab", "<span>Recorrido paso a paso</span>");
+    if (res.exito) {
+      cab.appendChild(el("span", "ok", pasos.length + " de " + pasos.length + " verificaciones correctas"));
+    } else if (fallo >= 0) {
+      cab.appendChild(el("span", "mal", "se detuvo en el paso " + pasos[fallo].n));
+    }
+    caja.appendChild(cab);
+    var lista = el("div", "pasos");
+    var visibles = [];
+    if (!pasos.length) {
+      lista.appendChild(el("p", "", res.diagnostico && res.diagnostico.codigo === "ENTRADA"
+        ? "No se recorrió ningún paso: la dirección de destino no es válida."
+        : "No se recorrió ningún paso."));
+    } else if (S.verTodos) {
+      visibles = pasos;
+    } else if (res.exito) {
+      visibles = pasos.filter(function (p) { return PASOS_CLAVE.test(p.titulo); });
+    } else {
+      visibles = pasos.slice(Math.max(0, fallo - 1), fallo + 1);
+    }
+    visibles.forEach(function (p) {
+      if (p.ok) {
+        var resumen = resumenPaso(p);
+        lista.appendChild(el("div", "linpaso",
+          "<span class='marca' aria-hidden='true'>✓</span><b>" + p.n + ".</b> " + escapar(p.titulo) +
+          (resumen ? " — " + escapar(resumen) : "")));
+      } else {
+        var f = el("div", "pasofallo",
+          "<span class='marca' aria-hidden='true'>✗</span><b>" + p.n + ". " + escapar(p.titulo) + "</b>");
+        var pre = document.createElement("pre");
+        // En el resumen van las dos primeras líneas del detalle (la cuenta
+        // que falló); el detalle completo, con los binarios, en "Ver los pasos".
+        var det = String(p.detalle || "").split("\n");
+        pre.textContent = (S.verTodos ? det : det.slice(0, 2)).join("\n");
+        f.appendChild(pre);
+        lista.appendChild(f);
+      }
+    });
+    caja.appendChild(lista);
+    var pie = el("div", "pie");
+    if (!res.exito && fallo >= 0 && !S.verTodos) {
+      pie.appendChild(el("span", "", "los pasos siguientes no se llegaron a verificar"));
+    }
+    if (pasos.length > visibles.length || S.verTodos) {
+      var bTodos = boton(S.verTodos ? "Ver resumen" : "Ver los " + pasos.length + " pasos");
+      bTodos.addEventListener("click", function () { S.verTodos = !S.verTodos; renderInferior(); });
+      pie.appendChild(bTodos);
+    }
+    if (pie.childNodes.length) { caja.appendChild(pie); }
+    return caja;
+  }
+
+  function renderVerificacion(cont) {
+    var v = S.ultimaVerif;
+    var caja = el("div", "recorrido");
+    var cab = el("div", "cab", "<span>Objetivos del escenario</span>");
+    var lista = el("div", "pasos");
+    if (v.error) {
+      lista.appendChild(el("p", "", escapar(v.error)));
+    } else {
+      var cumplidos = v.res.filter(function (r) { return r.cumple; }).length;
+      cab.appendChild(el("span", cumplidos === v.res.length ? "ok" : "mal", cumplidos + " de " + v.res.length + " cumplidos"));
+      v.res.forEach(function (r) {
+        var o = r.objetivo;
+        lista.appendChild(el("div", r.cumple ? "linpaso" : "pasofallo",
+          "<span class='marca' aria-hidden='true'>" + (r.cumple ? "✓" : "✗") + "</span><b>" +
+          escapar(nombreDe(o.origen) + " → " + o.destino) + "</b> (se espera " + escapar(o.esperado || "exito") + ")" +
+          (r.cumple ? " — cumple" : " — no cumple" + (r.codigo ? ": " + escapar(r.codigo) : ""))));
+      });
+    }
+    caja.insertBefore(cab, caja.firstChild);
+    caja.appendChild(lista);
+    cont.appendChild(caja);
+    var lado = el("div", "lado");
+    lado.appendChild(renderConsola());
+    cont.appendChild(lado);
+    return cont;
+  }
+
+  function renderAutotest(cont) {
+    var a = S.ultimoAutotest;
+    var caja = el("div", "recorrido");
+    var cab = el("div", "cab", "<span>Autotest de las capas 1 a 3</span>");
+    cab.appendChild(el("span", a.fallos.length ? "mal" : "ok", a.pasadas + " de " + a.total + " pruebas pasadas"));
+    caja.appendChild(cab);
+    var lista = el("div", "pasos");
+    if (!a.fallos.length) {
+      lista.appendChild(el("div", "linpaso", "<span class='marca' aria-hidden='true'>✓</span>Todas las pruebas pasaron."));
+    }
+    a.fallos.forEach(function (f) {
+      lista.appendChild(el("div", "pasofallo", "<span class='marca' aria-hidden='true'>✗</span>" + escapar(f.nombre)));
+    });
+    caja.appendChild(lista);
+    cont.appendChild(caja);
+    var lado = el("div", "lado");
+    lado.appendChild(renderConsola());
+    cont.appendChild(lado);
+    return cont;
+  }
+
+  /* ---------------- Consola ---------------- */
+
+  function consolaAgregar(texto, error) {
+    S.lineasConsola.push({ texto: texto, error: !!error });
+    if (S.lineasConsola.length > 200) { S.lineasConsola.shift(); }
+    refrescarConsola();
+  }
+
+  function refrescarConsola() {
+    var cons = S.consola;
+    if (!cons || !cons.isConnected) { return; }
+    cons.innerHTML = S.lineasConsola.length
+      ? S.lineasConsola.map(function (l) {
+        return l.error ? "<span class='error'>" + escapar(l.texto) + "</span>" : escapar(l.texto);
+      }).join("\n")
+      : "La consola muestra el ping y el diagnóstico.";
+    cons.scrollTop = cons.scrollHeight;
+  }
+
+  function renderConsola() {
+    var cons = el("pre", "consola");
+    cons.setAttribute("aria-label", "Consola");
+    S.consola = cons;
+    setTimeout(refrescarConsola, 0);
+    return cons;
+  }
+
+  function renderConsolaPlegable() {
+    var cont = el("div", "");
+    cont.style.display = "flex";
+    cont.style.flexDirection = "column";
+    cont.style.minHeight = "0";
+    cont.style.flex = S.consolaAbierta ? "1" : "0 0 auto";
+    var b = boton("Consola · " + S.lineasConsola.length + " líneas " + (S.consolaAbierta ? "▾" : "▸"), "consolabtn");
+    b.setAttribute("aria-expanded", String(!!S.consolaAbierta));
+    b.addEventListener("click", function () { S.consolaAbierta = !S.consolaAbierta; renderInferior(); });
+    cont.appendChild(b);
+    if (S.consolaAbierta) { cont.appendChild(renderConsola()); }
+    else { S.consola = null; }
+    return cont;
   }
 
   function pintarPing(origen, destino, res) {
-    var cons = S.consola;
-    if (cons) {
-      if (res.exito) {
-        var r = res.respuestas[0] || { ttl: 64, ms: 1 };
-        cons.textContent += "Respuesta desde " + destino + ": bytes=32 tiempo=" + r.ms + "ms TTL=" + r.ttl + "\n";
-        cons.textContent += "Estadísticas: 1 enviados, 1 recibidos, 0 perdidos.\n";
-      } else {
-        cons.textContent += "El ping de " + origen + " a " + destino + " falló.\n";
-        if (res.diagnostico) {
-          cons.textContent += res.diagnostico.codigo + " · " + res.diagnostico.titulo + "\n";
-        }
-      }
-      cons.scrollTop = cons.scrollHeight;
-    }
-    var lista = S.listaPasos;
-    if (lista) {
-      lista.innerHTML = "";
-      var fallado = -1;
-      (res.pasos || []).forEach(function (p, i) { if (!p.ok && fallado < 0) { fallado = i; } });
-      (res.pasos || []).forEach(function (p, i) {
-        var dv = el("div", "paso " + (p.ok ? "ok" : "mal") + (i === fallado ? " fallo" : ""),
-          "<b>" + p.n + ". " + escapar(p.titulo) + "</b> " + (p.ok ? "✓" : "✗") +
-          "<br>" + escapar(p.detalle || "").replace(/\n/g, "<br>"));
-        lista.appendChild(dv);
-      });
-    }
-    var diag = S.cajaDiag;
-    if (diag) {
-      diag.innerHTML = "";
+    S.ultimo = { origen: origen, destino: destino, res: res };
+    S.panelRes = "ping";
+    S.verTodos = false;
+    S.consolaAbierta = false;
+    if (res.exito) {
+      var r = res.respuestas[0] || { ttl: 64, ms: 1 };
+      consolaAgregar("Respuesta desde " + destino + ": bytes=32 tiempo=" + r.ms + "ms TTL=" + r.ttl);
+      consolaAgregar("Estadísticas: 1 enviados, 1 recibidos, 0 perdidos.");
+      anunciar("Ping a " + destino + ": el eco volvió en " + r.ms + " milisegundos.");
+    } else {
+      consolaAgregar("El ping de " + origen + " a " + destino + " falló.", true);
       if (res.diagnostico) {
-        diag.appendChild(el("div", "diagnostico",
-          "<b>" + escapar(res.diagnostico.codigo + " · " + res.diagnostico.titulo) + "</b><br>" +
-          escapar(res.diagnostico.explicacion) + "<br><i>" + escapar(res.diagnostico.sugerencia) + "</i>"));
-      } else {
-        diag.appendChild(el("p", "", "Ping exitoso: el eco volvió sin problemas."));
+        consolaAgregar(res.diagnostico.codigo + " · " + res.diagnostico.titulo, true);
       }
+      anunciar("Ping a " + destino + " falló" + (res.diagnostico ? ": " + res.diagnostico.codigo + ", " + res.diagnostico.titulo : "") + ".");
     }
-    registrar(res.exito ? "ping" : (res.diagnostico ? res.diagnostico.codigo : "ping"),
+    registrar("resultado",
       "Ping " + origen + " → " + destino + ": " + (res.exito ? "éxito." : ("falla " + (res.diagnostico ? res.diagnostico.codigo : "") + ".")));
+    S.enfocarPing = true;
+    renderInferior();
     renderLienzo(); renderPropiedades();
   }
 
-  function verificarActual(donde) {
+  function verificarActual() {
     var esc = S.topologia.escenario;
     if (!esc || !esc.objetivos) {
-      donde.appendChild(el("p", "", "Esta topología no trae objetivos. Cargá el ejemplo docente para practicar."));
-      return;
+      S.ultimaVerif = { error: "Esta topología no trae objetivos. Cargá el ejemplo docente para practicar." };
+    } else {
+      if (!S.estado) { reconstruirEstado(); }
+      try { S.ultimaVerif = { res: Escenarios.verificarObjetivos(S.estado, esc.objetivos) }; }
+      catch (e) { S.ultimaVerif = { error: "No se pudo verificar: " + e.message }; }
     }
-    if (!S.estado) { reconstruirEstado(); }
-    var res;
-    try { res = Escenarios.verificarObjetivos(S.estado, esc.objetivos); }
-    catch (e) { donde.appendChild(el("p", "", "No se pudo verificar: " + escapar(e.message))); return; }
-    res.forEach(function (r) {
-      donde.appendChild(el("div", "paso " + (r.cumple ? "ok" : "mal"),
-        "<b>" + escapar(r.objetivo.origen + " → " + r.objetivo.destino) + "</b> " +
-        (r.cumple ? "cumple ✓" : "no cumple ✗ " + escapar(r.codigo || ""))));
-    });
+    S.panelRes = "verificacion";
+    renderInferior();
+    if (S.ultimaVerif.res) {
+      var ok = S.ultimaVerif.res.filter(function (r) { return r.cumple; }).length;
+      anunciar("Verificación: " + ok + " de " + S.ultimaVerif.res.length + " objetivos cumplidos.");
+    } else {
+      anunciar(S.ultimaVerif.error);
+    }
   }
 
   /* Cálculo de subred atado al seleccionado, con binario en dos colores. */
@@ -6134,7 +7508,7 @@ var UI = (function () {
 
   function panelDhcpInf(c) {
     c.innerHTML = "";
-    c.appendChild(el("div", "", "<b>DHCP</b> <span style='font-size:12px'>— la animación DORA ocurre sobre la topología del lienzo.</span>"));
+    c.appendChild(el("p", "", "<b>DHCP</b> <span style='font-size:12px'>— la animación DORA ocurre sobre la topología del lienzo.</span>"));
     var selC = document.createElement("select");
     (S.topologia.dispositivos || []).forEach(function (d) {
       var op = document.createElement("option");
@@ -6154,9 +7528,14 @@ var UI = (function () {
     }
     cargarIfaces();
     selC.addEventListener("change", cargarIfaces);
-    var b = el("button", "", "Solicitar dirección (DORA)");
+    var b = boton("Solicitar dirección (DORA)", "primario");
     var out = el("div", "");
-    c.appendChild(selC); c.appendChild(selI); c.appendChild(b); c.appendChild(out);
+    out.setAttribute("aria-live", "polite");
+    var fila = el("div", "simctrl");
+    fila.appendChild(etiqueta("Equipo", selC)); fila.appendChild(selC);
+    fila.appendChild(etiqueta("Interfaz", selI)); fila.appendChild(selI);
+    fila.appendChild(b);
+    c.appendChild(fila); c.appendChild(out);
     b.addEventListener("click", function () {
       if (!S.estado) { reconstruirEstado(); }
       var res;
@@ -6184,10 +7563,14 @@ var UI = (function () {
       "<p><b>Simplificaciones declaradas:</b> sin STP ni bucles reales, sin enrutamiento dinámico (OSPF, BGP, RIP), " +
       "sin VLAN ni switch L3, sin NAT, sin HTTP, sin fragmentación, sin IPv6, sin TCP real, sin cifrado ni TLS, " +
       "sin QoS real, sin 802.1X y sin radiofrecuencia: el wireless es una abstracción por distancia.</p>" +
-      "<p><b>Atajos:</b> Ctrl+Z deshacer, Ctrl+Y rehacer, Supr borra, Esc cancela, F presenta. Paneo: arrastrar el fondo o botón central.</p>";
-    if (S.modo === "desafio" || (S.topologia.escenario && S.topologia.escenario.sectores)) {
-      var b = el("button", "", "Verificar diseño VLSM");
+      "<p><b>Atajos:</b> Ctrl+Z deshacer, Ctrl+Y rehacer, Supr borra, Esc cancela, F presenta. " +
+      "Paneo: arrastrar el fondo, o flechas con el foco en el lienzo. Con el foco en un equipo, las flechas lo mueven. " +
+      "Desde el teclado, Enter sobre un dispositivo de la paleta lo agrega en el centro de la vista.</p>";
+    var escD = S.topologia.escenario;
+    if (S.modo === "desafio" || (escD && (escD.modo === "desafio" || escD.sectores || escD.requerimientos))) {
+      var b = boton("Verificar diseño VLSM", "primario");
       var out = el("div", "");
+      out.setAttribute("aria-live", "polite");
       c.appendChild(b); c.appendChild(out);
       b.addEventListener("click", function () {
         var inf;
@@ -6238,6 +7621,18 @@ var UI = (function () {
     marca.setAttribute("r", 7); marca.setAttribute("fill", resultado.exito ? "#1a7f37" : "#b42318");
     marca.setAttribute("stroke", "#fff"); marca.setAttribute("stroke-width", 2);
     S.capaAnim.appendChild(marca);
+    if (movimientoReducido()) {
+      var fin = puntos[puntos.length - 1];
+      marca.setAttribute("cx", fin.x); marca.setAttribute("cy", fin.y - 30);
+      if (!resultado.exito) {
+        var cruzFija = document.createElementNS(svgNS, "text");
+        cruzFija.setAttribute("x", fin.x + 10); cruzFija.setAttribute("y", fin.y - 24);
+        cruzFija.setAttribute("font-size", "18"); cruzFija.setAttribute("fill", "#b42318");
+        cruzFija.textContent = "✗";
+        S.capaAnim.appendChild(cruzFija);
+      }
+      return;
+    }
     var tramo = 0;
     var t0 = null;
     var dur = msVelocidad();
@@ -6314,6 +7709,9 @@ var UI = (function () {
       i += 1;
       setTimeout(siguiente, msVelocidad());
     }
+    // Con movimiento reducido se muestra sólo el último mensaje (el ACK o el
+    // último que se llegó a enviar), sin la secuencia animada.
+    if (movimientoReducido()) { i = msgs.length - 1; }
     siguiente();
   }
 
@@ -6334,9 +7732,8 @@ var UI = (function () {
     var linea = "[" + momentoAbs() + " " + momentoRel() + "] " + codigo + " — " + texto;
     S.registro.push(linea);
     if (S.registro.length > 400) { S.registro.shift(); }
-    if (S.consola && (codigo === "ping" || (typeof codigo === "string" && codigo[0] === "D"))) {
-      S.consola.textContent += linea + "\n";
-      S.consola.scrollTop = S.consola.scrollHeight;
+    if (typeof codigo === "string" && /^D\d/.test(codigo)) {
+      consolaAgregar(codigo + " — " + texto, true);
     }
   }
 
@@ -6408,7 +7805,9 @@ var UI = (function () {
     refrescarCalculo();
     var botones = S.raiz.querySelectorAll("[data-modo]");
     for (var i = 0; i < botones.length; i++) {
-      botones[i].classList.toggle("activo", botones[i].getAttribute("data-modo") === S.modo);
+      var esActivo = botones[i].getAttribute("data-modo") === S.modo;
+      botones[i].classList.toggle("activo", esActivo);
+      botones[i].setAttribute("aria-pressed", String(esActivo));
     }
   }
 
@@ -6423,6 +7822,13 @@ var UI = (function () {
 
   function topologiaActual() {
     return clonar(S.topologia);
+  }
+
+  function seleccionarEnlace(idEnlace) {
+    S.seleccionado = null;
+    S.enlaceSel = idEnlace;
+    renderLienzo();
+    renderPropiedades();
   }
 
   function seleccionar(idDispositivo) {
@@ -6880,20 +8286,28 @@ var Autotest = (function () {
   function crit12() {
     var nombre = "El modo desafío detecta un solapamiento y una subred desalineada";
     try {
-      var topoVacia = { version: 1, nombre: "vacia", dispositivos: [], enlaces: [], escenario: null };
-      var escenario = {
-        bloqueBase: "10.45.7.0/24",
-        sectores: [
-          { nombre: "Huéspedes", red: "10.45.7.0", prefijo: 26, hosts: 40, gateway: "10.45.7.1", equipos: [] },
-          { nombre: "Administración", red: "10.45.7.50", prefijo: 27, hosts: 20, gateway: "10.45.7.65", equipos: [] }
-        ]
+      /* Sobre equipos realmente direccionados: el router de Cámaras en
+       * .41/28 hace pensar una subred que arranca en .40 (desalineada), y la
+       * máscara la ubica en .32/28, adentro del Wi-Fi .0/26 (solapamiento). */
+      var topo = clonar(ejemploPorId("desafio-complejo").topologia);
+      var poner = function (idDisp, idIf, ip, prefijo, gateway) {
+        var d = dispEn(topo, idDisp);
+        var f = ifaceEn(d, idIf);
+        f.ip = ip; f.prefijo = prefijo; f.habilitada = true;
+        if (gateway !== undefined) { d.gateway = gateway; }
       };
-      var informe = Escenarios.verificarDesafio(topoVacia, escenario);
+      poner("r1", "wlan0", "10.45.7.1", 26);
+      poner("pc-wifi", "wlan0", "10.45.7.10", 26, "10.45.7.1");
+      poner("iot1", "wlan0", "10.45.7.20", 26, "10.45.7.1");
+      poner("r1", "g0/1", "10.45.7.41", 28);
+      poner("cam1", "eth0", "10.45.7.42", 28, "10.45.7.41");
+      var informe = Escenarios.verificarDesafio(topo, topo.escenario);
       var texto = JSON.stringify(informe.porSector);
       var haySolape = texto.indexOf("solapa") >= 0;
-      var hayAline = texto.indexOf("alineada") >= 0;
-      if (informe.resumen.errores > 0 && haySolape && hayAline) {
-        return fila(12, nombre, true, "10.45.7.50/27 se solapa con 10.45.7.0/26 y además no está alineada; errores: " + informe.resumen.errores + ".");
+      var hayAline = texto.indexOf("no arranca en un múltiplo") >= 0;
+      if (informe.porSector.length === 5 && informe.resumen.errores > 0 && haySolape && hayAline) {
+        return fila(12, nombre, true, "Cámaras con el router en 10.45.7.41/28: desalineada y solapada con el Wi-Fi; errores: " +
+          informe.resumen.errores + ".");
       }
       return fila(12, nombre, false, "Se esperaba al menos un error de solape y uno de alineación; se obtuvo " +
         JSON.stringify(informe.resumen) + " y hallazgos " + texto + ".");
