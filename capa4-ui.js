@@ -611,7 +611,7 @@ var UI = (function () {
       renderLienzo();
     });
     pal.appendChild(bCable);
-    pal.appendChild(el("p", "leyenda", "Trazo lleno: cobre · grueso con brillo: fibra · punteado curvo: wireless.<br>Verde: activo · rojo: caído."));
+    pal.appendChild(el("p", "leyenda", "Trazo lleno: cobre · grueso con brillo: fibra · puntos en curva: wireless.<br>Verde: activo · rojo y cortado: caído."));
     var bCol = boton("Colapsar");
     bCol.setAttribute("aria-expanded", "true");
     bCol.addEventListener("click", function () {
@@ -649,8 +649,9 @@ var UI = (function () {
     zona.appendChild(el("div", "leyenda-lienzo",
       "<div><svg width='26' height='8' aria-hidden='true'><line x1='1' y1='4' x2='25' y2='4' stroke='#1e7a34' stroke-width='3'/></svg> cobre</div>" +
       "<div><svg width='26' height='10' aria-hidden='true'><line x1='1' y1='5' x2='25' y2='5' stroke='#1e7a34' stroke-width='7' opacity='.3'/><line x1='1' y1='5' x2='25' y2='5' stroke='#1e7a34' stroke-width='4'/></svg> fibra</div>" +
-      "<div><svg width='26' height='8' aria-hidden='true'><line x1='1' y1='4' x2='25' y2='4' stroke='#1e7a34' stroke-width='3' stroke-dasharray='3 4'/></svg> wireless</div>" +
-      "<div class='tenue'>verde activo · rojo caído</div>"));
+      "<div><svg width='26' height='8' aria-hidden='true'><line x1='1' y1='4' x2='25' y2='4' stroke='#1e7a34' stroke-width='3' stroke-dasharray='1 6' stroke-linecap='round'/></svg> wireless</div>" +
+      "<div><svg width='26' height='8' aria-hidden='true'><line x1='1' y1='4' x2='25' y2='4' stroke='#b42318' stroke-width='3' stroke-dasharray='8 5'/></svg> caído</div>" +
+      "<div class='tenue'>verde activo · rojo y cortado caído</div>"));
     var pista = el("div", "pista", "Tocá un equipo para configurarlo");
     zona.appendChild(pista);
     S.pista = pista;
@@ -742,6 +743,10 @@ var UI = (function () {
 
   /* ---------------- Lienzo: zoom, paneo, dibujo ---------------- */
 
+  function escalaRotulos() {
+    return S.presentacion ? Math.max(1, 1 / S.vista.k) : 1;
+  }
+
   function aplicarVista() {
     S.capaMundo.setAttribute("transform",
       "translate(" + S.vista.x + " " + S.vista.y + ") scale(" + S.vista.k + ")");
@@ -755,6 +760,7 @@ var UI = (function () {
     if (cual === "porc") { S.vista.k = 1; S.vista.x = 0; S.vista.y = MARGEN_VISTA; }
     if (cual === "ajustar") { ajustarVista(); }
     aplicarVista();
+    if (S.presentacion) { renderLienzo(); }
   }
 
   function ajustarVista() {
@@ -767,8 +773,8 @@ var UI = (function () {
     });
     // Márgenes que cubren íconos y rótulos: los rótulos cuelgan debajo del
     // equipo y son más anchos que el ícono.
-    minX -= 100; maxX += 100; minY -= 50;
-    maxY += S.presentacion ? 160 : 130;
+    minX -= S.presentacion ? 130 : 100; maxX += S.presentacion ? 130 : 100; minY -= 50;
+    maxY += S.presentacion ? 210 : 130;
     var rect = S.svg.getBoundingClientRect();
     var altoUtil = Math.max(100, rect.height - MARGEN_VISTA);
     var w = Math.max(200, maxX - minX);
@@ -839,7 +845,9 @@ var UI = (function () {
         var mx = (x1 + x2) / 2, my = (y1 + y2) / 2 - 30;
         dib.setAttribute("d", "M" + x1 + " " + y1 + " Q" + mx + " " + my + " " + x2 + " " + y2);
         dib.setAttribute("fill", "none");
-        dib.setAttribute("stroke-dasharray", "6 5");
+        // Wireless: puntos redondos. Los guiones largos quedan para "caído".
+        dib.setAttribute("stroke-dasharray", "1 7");
+        dib.setAttribute("stroke-linecap", "round");
       } else {
         dib = document.createElementNS(svgNS, "line");
         dib.setAttribute("x1", x1); dib.setAttribute("y1", y1);
@@ -847,10 +855,11 @@ var UI = (function () {
       }
       dib.setAttribute("stroke", colorEnlace(e));
       dib.setAttribute("stroke-width", e.tipo === "fibra" ? 5 : 3);
+      var brillo = null;
       if (e.tipo === "fibra") {
         // La fibra se distingue por la forma: trazo grueso con un brillo
         // debajo. El color queda para el estado del enlace.
-        var brillo = document.createElementNS(svgNS, "line");
+        brillo = document.createElementNS(svgNS, "line");
         brillo.setAttribute("x1", x1); brillo.setAttribute("y1", y1);
         brillo.setAttribute("x2", x2); brillo.setAttribute("y2", y2);
         brillo.setAttribute("stroke", colorEnlace(e));
@@ -860,14 +869,22 @@ var UI = (function () {
         g.appendChild(brillo);
         dib.setAttribute("stroke-linecap", "round");
       }
+      // El estado no depende sólo del color (verde y rojo se confunden con
+      // daltonismo): un enlace caído además se dibuja con guiones largos.
+      if (e.estado !== "up" && e.tipo !== "wireless") {
+        dib.setAttribute("stroke-dasharray", "12 8");
+        dib.setAttribute("stroke-linecap", "butt");
+        if (brillo) { brillo.setAttribute("stroke-dasharray", "12 8"); brillo.setAttribute("stroke-linecap", "butt"); }
+      }
       if (S.enlaceSel === e.id) { dib.setAttribute("stroke-width", e.tipo === "fibra" ? 7 : 5); }
       g.appendChild(dib);
       var mid = document.createElementNS(svgNS, "text");
       mid.setAttribute("x", (x1 + x2) / 2 + 6); mid.setAttribute("y", (y1 + y2) / 2 - 6);
-      mid.setAttribute("font-size", S.presentacion ? "15" : "12");
+      mid.setAttribute("font-size", S.presentacion ? String(Math.round(15 * escalaRotulos())) : "12");
       mid.setAttribute("fill", colorEnlace(e));
-      mid.textContent = e.id + (e.estado === "down" ? " (down)" : "");
-      g.appendChild(mid);
+      mid.textContent = e.id + (e.estado === "down" ? " (caído)" : "");
+      // Al proyectar, los nombres de enlace sólo estorban: quedan los caídos.
+      if (!S.presentacion || e.estado === "down") { g.appendChild(mid); }
       g.addEventListener("pointerenter", function (ev) { mostrarTipEnlace(ev, e); });
       g.addEventListener("pointerleave", ocultarTip);
       g.addEventListener("click", function (ev) {
@@ -981,7 +998,7 @@ var UI = (function () {
     var grupo = document.createElementNS(svgNS, "g");
     grupo.setAttribute("class", "etiqueta");
     // Modo presentación: todo el rótulo crece un 25 %.
-    var escala = S.presentacion ? 1.25 : 1;
+    var escala = (S.presentacion ? 1.25 : 1) * escalaRotulos();
     var textos = [d.nombre || d.id].concat(lineasResumen(d));
     var lineas = textos.map(function (t, i) {
       var fondo = document.createElementNS(svgNS, "rect");
@@ -994,10 +1011,10 @@ var UI = (function () {
       txt.textContent = t;
       grupo.appendChild(fondo);
       grupo.appendChild(txt);
-      return { fondo: fondo, texto: txt, tam: Math.round((i === 0 ? 16 : 14) * escala) };
+      return { fondo: fondo, texto: txt, tam: Math.round((i === 0 ? 16 : 14) * escala * 10) / 10 };
     });
     g.appendChild(grupo);
-    return { d: d, grupo: grupo, lineas: lineas, dy: 0, caja: null };
+    return { d: d, grupo: grupo, lineas: lineas, dy: 0, caja: null, minimo: ETIQUETA_MIN * escalaRotulos(), paso: 2 * escalaRotulos() };
   }
 
   // El armado de un rótulo va en tres tiempos para no alternar lecturas y
@@ -1066,8 +1083,10 @@ var UI = (function () {
         return null;
       };
       var otra = choca();
-      if (otra && e.lineas.some(function (l) { return l.tam > ETIQUETA_MIN; })) {
-        e.lineas.forEach(function (l) { l.tam = Math.max(ETIQUETA_MIN, l.tam - 2); });
+      // Primero se achica de a un escalón hasta el mínimo: un rótulo más
+      // chico pero junto a su equipo se lee mejor que uno desplazado.
+      while (otra && e.lineas.some(function (l) { return l.tam > e.minimo; })) {
+        e.lineas.forEach(function (l) { l.tam = Math.max(e.minimo, l.tam - e.paso); });
         maquetarEtiqueta(e);
         otra = choca();
       }
@@ -1219,6 +1238,7 @@ var UI = (function () {
       ev.preventDefault();
       S.vista.k = Math.min(3, Math.max(0.3, S.vista.k * (ev.deltaY < 0 ? 1.1 : 0.9)));
       aplicarVista();
+      if (S.presentacion) { renderLienzo(); }
     }, { passive: false });
     zona.addEventListener("dragover", function (ev) { ev.preventDefault(); });
     zona.addEventListener("drop", function (ev) {
@@ -1278,7 +1298,7 @@ var UI = (function () {
       var grillaCable = el("div", "gridagregar");
       [["ethernet", "Cobre", "<line x1='-18' y1='0' x2='18' y2='0' stroke='#1e7a34' stroke-width='3'/>"],
        ["fibra", "Fibra", "<line x1='-18' y1='0' x2='18' y2='0' stroke='#1e7a34' stroke-width='9' opacity='.3'/><line x1='-18' y1='0' x2='18' y2='0' stroke='#1e7a34' stroke-width='5'/>"],
-       ["wireless", "Wireless", "<line x1='-18' y1='0' x2='18' y2='0' stroke='#1e7a34' stroke-width='3' stroke-dasharray='3 4'/>"]].forEach(function (c) {
+       ["wireless", "Wireless", "<line x1='-18' y1='0' x2='18' y2='0' stroke='#1e7a34' stroke-width='3' stroke-dasharray='1 6' stroke-linecap='round'/>"]].forEach(function (c) {
         var b = boton("");
         b.innerHTML = "<svg viewBox='-24 -20 48 40' aria-hidden='true' focusable='false'>" + c[2] + "</svg><span>" + c[1] + "</span>";
         b.addEventListener("click", function () {
@@ -1290,7 +1310,7 @@ var UI = (function () {
         grillaCable.appendChild(b);
       });
       S.hojaCuerpo.appendChild(grillaCable);
-      S.hojaCuerpo.appendChild(el("p", "", "<small>El color indica el estado: verde activo, rojo caído. La forma indica el medio.</small>"));
+      S.hojaCuerpo.appendChild(el("p", "", "<small>Verde: activo; rojo y cortado: caído. La forma del trazo indica el medio.</small>"));
     } else if (tipo === "configurar") {
       var d = S.seleccionado ? buscarDisp(S.seleccionado) : null;
       S.hojaTitulo.textContent = d ? (d.nombre || d.id) : (S.enlaceSel ? "Enlace " + S.enlaceSel : "Configurar");
@@ -1537,10 +1557,12 @@ var UI = (function () {
     if (S.presentacion) {
       S.vistaPrevia = { x: S.vista.x, y: S.vista.y, k: S.vista.k };
       ajustarVista();
+      renderLienzo();
     } else if (S.vistaPrevia) {
       S.vista = S.vistaPrevia;
       S.vistaPrevia = null;
       aplicarVista();
+      renderLienzo();
     }
   }
 
