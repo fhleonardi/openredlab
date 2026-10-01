@@ -6,8 +6,8 @@
       "id": "pc-wifi",
       "tipo": "pc",
       "nombre": "PC-Huéspedes",
-      "x": 340,
-      "y": 110,
+      "x": 170,
+      "y": 80,
       "encendido": true,
       "interfaces": [
         {
@@ -39,8 +39,8 @@
       "id": "iot1",
       "tipo": "iot",
       "nombre": "IOT-Huéspedes",
-      "x": 580,
-      "y": 110,
+      "x": 410,
+      "y": 80,
       "encendido": true,
       "interfaces": [
         {
@@ -63,8 +63,8 @@
       "id": "pc-admin",
       "tipo": "pc",
       "nombre": "PC-Admin",
-      "x": 110,
-      "y": 300,
+      "x": 50,
+      "y": 430,
       "encendido": true,
       "interfaces": [
         {
@@ -96,8 +96,8 @@
       "id": "sw-admin",
       "tipo": "switch-l2",
       "nombre": "SW-Admin",
-      "x": 280,
-      "y": 300,
+      "x": 230,
+      "y": 430,
       "encendido": true,
       "interfaces": [
         {
@@ -191,8 +191,8 @@
       "id": "r1",
       "tipo": "router",
       "nombre": "R1",
-      "x": 460,
-      "y": 300,
+      "x": 290,
+      "y": 250,
       "encendido": true,
       "interfaces": [
         {
@@ -248,8 +248,8 @@
       "id": "cam1",
       "tipo": "camara",
       "nombre": "CAM-Entrada",
-      "x": 110,
-      "y": 470,
+      "x": 620,
+      "y": 430,
       "encendido": true,
       "interfaces": [
         {
@@ -280,8 +280,8 @@
       "id": "sw-cam",
       "tipo": "switch-l2",
       "nombre": "SW-Cámaras",
-      "x": 280,
-      "y": 470,
+      "x": 430,
+      "y": 430,
       "encendido": true,
       "interfaces": [
         {
@@ -375,8 +375,8 @@
       "id": "r2",
       "tipo": "router",
       "nombre": "R2",
-      "x": 700,
-      "y": 300,
+      "x": 800,
+      "y": 250,
       "encendido": true,
       "interfaces": [
         {
@@ -431,8 +431,8 @@
       "id": "sw-srv",
       "tipo": "switch-l2",
       "nombre": "SW-Servidores",
-      "x": 700,
-      "y": 440,
+      "x": 800,
+      "y": 430,
       "encendido": true,
       "interfaces": [
         {
@@ -526,8 +526,8 @@
       "id": "srv1",
       "tipo": "pc",
       "nombre": "Servidor",
-      "x": 540,
-      "y": 480,
+      "x": 800,
+      "y": 610,
       "encendido": true,
       "interfaces": [
         {
