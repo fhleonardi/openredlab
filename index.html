@@ -652,6 +652,10 @@ var Motor = (function () {
       titulo: "El router no sabe cómo llegar al destino",
       explicacion: function (ctx) {
         ctx = ctx || {};
+        if (ctx.internet) {
+          return (ctx.destino || "Esa dirección") + " es una dirección privada: internet no la enruta y descarta el paquete. " +
+            "El destino tendría que estar dentro de tu red, y algún router no tiene ruta hacia él (o la IP está mal escrita).";
+        }
         return "El router " + (ctx.router || "?") + " no tiene una ruta hacia " +
           (ctx.destino || "esa red") + ", ni siquiera una ruta por defecto. El paquete muere ahí.";
       },
@@ -1784,6 +1788,57 @@ var Motor = (function () {
     var msTotal = 0;
     var recorrido = [];
 
+    // Llegada a la nube Internet. Con destino público, responde ahí; con un
+    // destino privado que no es de sus redes, lo descarta (internet no enruta
+    // direcciones privadas). Desde la propia nube (la vuelta) no se revisa:
+    // la respuesta vuelve por su vecino, que es la simplificación del NAT.
+    // interfazLlegada se pasa cuando la nube se alcanza como gateway de un
+    // equipo y todavía no figura en los saltos.
+    function revisarNube(dispositivo, interfazLlegada) {
+      if (!esInternet(dispositivo) || dispositivo.id === origen.id) { return null; }
+      var propia = (dispositivo.interfaces || []).some(function (f) {
+        return f.habilitada && f.ip && Red.esIpValida(f.ip) && prefijoValido(f.prefijo) && Red.mismaRed(f.ip, destinoIp, f.prefijo);
+      });
+      if (propia) { return null; }
+      if (interfazLlegada) { saltos.push({ dispositivo: dispositivo.id, interfaz: interfazLlegada }); }
+      if (!destinoEnInternet(dispositivo, destinoIp)) {
+        agregarPaso("Llegar a internet",
+          "El paquete llegó a " + (dispositivo.nombre || dispositivo.id) + " con destino " + destinoIp +
+          ", que es una dirección privada: internet no la enruta.", false);
+        return {
+          exito: false,
+          pasos: pasos,
+          saltos: saltos,
+          diagnostico: diagnosticoDe("D11", { router: dispositivo.nombre || dispositivo.id, destino: destinoIp, internet: true }),
+          respuestas: []
+        };
+      }
+      agregarPaso("Llegar a internet",
+        "El paquete llegó a " + (dispositivo.nombre || dispositivo.id) + ", que representa internet: " + destinoIp +
+        " es una dirección pública y responde. Simplificación: no se simula NAT; la respuesta vuelve por el mismo enlace.", true);
+      msTotal += 20;
+      if (profundidad < 1) {
+        var vueltaNube = ejecutarPing(estado, dispositivo.id, ipOrigen, { registrar: false, profundidad: profundidad + 1 });
+        if (!vueltaNube.exito) {
+          return {
+            exito: false,
+            pasos: pasos.concat(vueltaNube.pasos.map(function (pv) {
+              return { n: pasos.length + pv.n, titulo: "Vuelta: " + pv.titulo, detalle: pv.detalle, ok: pv.ok };
+            })),
+            saltos: saltos,
+            diagnostico: diagnosticoDe("D12", {
+              origen: origen.id,
+              destino: dispositivo.nombre || dispositivo.id,
+              detalleVuelta: "la vuelta falla con " + (vueltaNube.diagnostico ? vueltaNube.diagnostico.codigo : "?")
+            }),
+            respuestas: []
+          };
+        }
+      }
+      respuestas.push({ ttl: Math.max(1, 64 - (saltos.length - 1)), ms: Math.max(1, Math.round(msTotal)) });
+      return { exito: true, pasos: pasos, saltos: saltos, diagnostico: null, respuestas: respuestas };
+    }
+
     while (true) {
       if (ttl <= 0) {
         var textoRecorrido = recorrido.join(" → ");
@@ -1792,32 +1847,8 @@ var Motor = (function () {
           "El TTL llegó a 0 después de " + recorrido.length + " saltos: " + textoRecorrido + ".");
       }
       var dispActual = buscarDispositivo(estado, actualId);
-      if (destinoEnInternet(dispActual, destinoIp)) {
-        agregarPaso("Llegar a internet",
-          "El paquete llegó a " + (dispActual.nombre || actualId) + ", que representa internet: " + destinoIp +
-          " es una dirección pública y responde. Simplificación: no se simula NAT; la respuesta vuelve por el mismo enlace.", true);
-        msTotal += 20;
-        if (profundidad < 1) {
-          var vueltaNube = ejecutarPing(estado, actualId, ipOrigen, { registrar: false, profundidad: profundidad + 1 });
-          if (!vueltaNube.exito) {
-            return {
-              exito: false,
-              pasos: pasos.concat(vueltaNube.pasos.map(function (pv) {
-                return { n: pasos.length + pv.n, titulo: "Vuelta: " + pv.titulo, detalle: pv.detalle, ok: pv.ok };
-              })),
-              saltos: saltos,
-              diagnostico: diagnosticoDe("D12", {
-                origen: origen.id,
-                destino: dispActual.nombre || actualId,
-                detalleVuelta: "la vuelta falla con " + (vueltaNube.diagnostico ? vueltaNube.diagnostico.codigo : "?")
-              }),
-              respuestas: []
-            };
-          }
-        }
-        respuestas.push({ ttl: Math.max(1, 64 - (saltos.length - 1)), ms: Math.max(1, Math.round(msTotal)) });
-        return { exito: true, pasos: pasos, saltos: saltos, diagnostico: null, respuestas: respuestas };
-      }
+      var enNube = revisarNube(dispActual, null);
+      if (enNube) { return enNube; }
       if (esRouter(dispActual) && actualId !== origen.id) {
         var rutaActual = rutaElegida(estado, actualId, destinoIp);
         if (rutaActual && rutaActual.directa && rutaActual.interfaz) {
@@ -2095,6 +2126,8 @@ var Motor = (function () {
 
         // El gateway tiene que ser un router (o al menos el equipo que responde).
         router = respGw[0].dispositivo;
+        var gatewayNube = revisarNube(router, respGw[0].interfaz.id);
+        if (gatewayNube) { return gatewayNube; }
         if (!esRouter(router)) {
           agregarPaso("Llegar al gateway",
             "El equipo " + router.id + " respondió el ARP del gateway pero no es un router: " +
@@ -3396,6 +3429,29 @@ var Motor = (function () {
         ping(crearEstado(conInternet(porDefecto, "8.8.8.8")), "pc1", "noexiste.example").diagnostico.codigo, "D25");
       var rSinRuta = ping(crearEstado(conInternet([], "8.8.8.8")), "pc1", "google.com");
       comparar("router sin salida a internet: el DNS no responde (D26)", rSinRuta.diagnostico.codigo, "D26");
+    })();
+
+    // 43. Una PC con la nube como gateway directo llega a internet.
+    (function () {
+      var pcD = fabPc("pc1", "200.45.7.2", 30, "200.45.7.1");
+      pcD.dns = "8.8.8.8";
+      var nubeD = {
+        id: "nube", tipo: "internet", nombre: "Internet", x: 300, y: 0, encendido: true,
+        interfaces: [{ id: "eth0", nombre: "eth0", medio: "ethernet", habilitada: true, modo: "estatico", ip: "200.45.7.1", prefijo: 30, mac: "02:00:00:00:09:01" }],
+        gateway: null, dns: null, rutas: [], dhcp: null
+      };
+      var topoD = fabTopo([pcD, nubeD], [fabEnlace("l1", "pc1", "eth0", "nube", "eth0")]);
+      comparar("nube como gateway directo: ping a IP pública", ping(crearEstado(topoD), "pc1", "8.8.8.8").exito, true);
+      comparar("nube como gateway directo: ping a google.com", ping(crearEstado(topoD), "pc1", "google.com").exito, true);
+    })();
+
+    // 44. Una IP privada que no existe no es un bucle: internet la descarta.
+    (function () {
+      var porDefecto = [{ destino: "0.0.0.0", prefijo: 0, siguienteSalto: "200.45.7.1" }];
+      var rPriv = ping(crearEstado(conInternet(porDefecto, "8.8.8.8")), "pc1", "10.9.9.9");
+      comparar("IP privada inexistente: D11 en internet, no D23", rPriv.diagnostico.codigo, "D11");
+      comparar("D11 de internet explica la dirección privada",
+        rPriv.diagnostico.explicacion.indexOf("dirección privada") >= 0, true);
     })();
 
     // 36. Un destino mal escrito no es un diagnóstico de red.
