@@ -456,6 +456,14 @@ var Autotest = (function () {
       var topo = UI.topologiaActual();
       var lista = topo.dispositivos || [];
       var i;
+      // Preferencia: un equipo con IP y gateway, que es el caso que el panel
+      // tiene que mostrar completo (los routers y la nube no usan gateway).
+      for (i = 0; i < lista.length; i++) {
+        var conIp = (lista[i].interfaces || []).some(function (f) { return f.ip && Red.esIpValida(String(f.ip)); });
+        if (conIp && lista[i].gateway && Red.esIpValida(String(lista[i].gateway))) {
+          return lista[i].id;
+        }
+      }
       for (i = 0; i < lista.length; i++) {
         var ifaces = lista[i].interfaces || [];
         for (var j = 0; j < ifaces.length; j++) {

@@ -2665,12 +2665,18 @@ var UI = (function () {
     html += "<span>Cantidad de hosts</span><span>" + escapar(String(det.cantidadHosts)) + "</span>";
     html += "</div>";
     if (det.advertencia) { html += "<div class='advertencia'>" + escapar(det.advertencia) + "</div>"; }
+    // El AND de la propia IP se muestra siempre; la comparación con el
+    // gateway, sólo si el equipo tiene uno.
     html += "<p><b>¿Tu gateway está en tu subred?</b><br>";
+    html += "IP&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;" + escapar(det.ip) + " AND máscara → " + escapar((det.gateway && det.gateway.andIp) || det.direccionDeRed) + "<br>";
     if (det.gateway) {
-      html += "IP&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;" + escapar(det.ip) + " AND máscara → " + escapar(det.gateway.andIp || "?") + "<br>";
       html += "Gateway " + escapar(det.gateway.ip) + " AND máscara → " + escapar(det.gateway.andGateway || "?") + "<br>";
       html += escapar(det.gateway.veredicto) + "</p>";
-    } else { html += "Sin gateway configurado.</p>"; }
+    } else if (d.tipo === "router" || d.tipo === "internet") {
+      html += "Un router no necesita gateway para llegar a sus propias redes: para las demás decide con su tabla de rutas.</p>";
+    } else {
+      html += "Sin gateway configurado: este equipo sólo puede comunicarse con los de su propia red.</p>";
+    }
     caja.innerHTML = html;
   }
 

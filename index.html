@@ -7954,12 +7954,18 @@ var UI = (function () {
     html += "<span>Cantidad de hosts</span><span>" + escapar(String(det.cantidadHosts)) + "</span>";
     html += "</div>";
     if (det.advertencia) { html += "<div class='advertencia'>" + escapar(det.advertencia) + "</div>"; }
+    // El AND de la propia IP se muestra siempre; la comparación con el
+    // gateway, sólo si el equipo tiene uno.
     html += "<p><b>¿Tu gateway está en tu subred?</b><br>";
+    html += "IP&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;" + escapar(det.ip) + " AND máscara → " + escapar((det.gateway && det.gateway.andIp) || det.direccionDeRed) + "<br>";
     if (det.gateway) {
-      html += "IP&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;" + escapar(det.ip) + " AND máscara → " + escapar(det.gateway.andIp || "?") + "<br>";
       html += "Gateway " + escapar(det.gateway.ip) + " AND máscara → " + escapar(det.gateway.andGateway || "?") + "<br>";
       html += escapar(det.gateway.veredicto) + "</p>";
-    } else { html += "Sin gateway configurado.</p>"; }
+    } else if (d.tipo === "router" || d.tipo === "internet") {
+      html += "Un router no necesita gateway para llegar a sus propias redes: para las demás decide con su tabla de rutas.</p>";
+    } else {
+      html += "Sin gateway configurado: este equipo sólo puede comunicarse con los de su propia red.</p>";
+    }
     caja.innerHTML = html;
   }
 
@@ -8785,6 +8791,14 @@ var Autotest = (function () {
       var topo = UI.topologiaActual();
       var lista = topo.dispositivos || [];
       var i;
+      // Preferencia: un equipo con IP y gateway, que es el caso que el panel
+      // tiene que mostrar completo (los routers y la nube no usan gateway).
+      for (i = 0; i < lista.length; i++) {
+        var conIp = (lista[i].interfaces || []).some(function (f) { return f.ip && Red.esIpValida(String(f.ip)); });
+        if (conIp && lista[i].gateway && Red.esIpValida(String(lista[i].gateway))) {
+          return lista[i].id;
+        }
+      }
       for (i = 0; i < lista.length; i++) {
         var ifaces = lista[i].interfaces || [];
         for (var j = 0; j < ifaces.length; j++) {
