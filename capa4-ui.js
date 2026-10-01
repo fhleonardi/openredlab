@@ -64,7 +64,9 @@ var UI = (function () {
     presExpandida: false,
     origenElegido: null,
     anuncio: null,
-    hoja: null
+    hoja: null,
+    moviendoExtremo: null,
+    lineaTemporal: null
   };
 
   var TIPOS = [
@@ -373,7 +375,8 @@ var UI = (function () {
     ".binario .corte{border-left:2px solid var(--sim-mal);}",
     ".calc{font-size:13px;}",
     ".calc .grid{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;}",
-    "svg .nodo,svg .enlace{cursor:pointer;}",
+    "svg .nodo,svg .enlace,svg .asa{cursor:pointer;}",
+    "svg .asa:focus-visible{outline:3px solid var(--sim-acento);outline-offset:2px;}",
     "svg .enlace:focus{outline:none;}",
     "svg .puerto{cursor:pointer;stroke:#333;stroke-width:1;}",
     "svg text{font-family:system-ui,Arial,sans-serif;}",
@@ -661,7 +664,8 @@ var UI = (function () {
     var cEn = document.createElementNS(svgNS, "g");
     var cNo = document.createElementNS(svgNS, "g");
     var cAn = document.createElementNS(svgNS, "g");
-    mundo.appendChild(cEn); mundo.appendChild(cNo); mundo.appendChild(cAn);
+    var cAs = document.createElementNS(svgNS, "g");
+    mundo.appendChild(cEn); mundo.appendChild(cNo); mundo.appendChild(cAn); mundo.appendChild(cAs);
     svg.appendChild(mundo);
     zona.appendChild(svg);
     var tools = el("div", "simtools");
@@ -691,7 +695,7 @@ var UI = (function () {
     zona.appendChild(tip);
     S.tooltip = tip;
     cuerpo.appendChild(zona);
-    S.svg = svg; S.capaMundo = mundo; S.capaEnlaces = cEn; S.capaNodos = cNo; S.capaAnim = cAn;
+    S.svg = svg; S.capaMundo = mundo; S.capaEnlaces = cEn; S.capaNodos = cNo; S.capaAnim = cAn; S.capaAsas = cAs;
 
     var prop = el("div", "simprop");
     cuerpo.appendChild(prop);
@@ -925,8 +929,10 @@ var UI = (function () {
       if (!S.presentacion || e.estado === "down") { g.appendChild(mid); }
       g.addEventListener("pointerenter", function (ev) { mostrarTipEnlace(ev, e); });
       g.addEventListener("pointerleave", ocultarTip);
+      if (S.moviendoExtremo && S.moviendoExtremo.enlace === e.id) { g.setAttribute("opacity", "0.35"); }
       g.addEventListener("click", function (ev) {
         ev.stopPropagation();
+        if (S.moviendoExtremo) { return; }
         seleccionarEnlace(e.id);
         if (esCelular()) { abrirHoja("configurar"); }
       });
@@ -982,6 +988,11 @@ var UI = (function () {
           var comp = !S.cableOrigen || (iface.medio === S.cableTipo && (!ocupado || comparte) && iface.id !== undefined);
           c.setAttribute("opacity", comp ? "1" : "0.3");
           c.setAttribute("stroke-width", comp ? "2" : "1");
+        } else if (S.moviendoExtremo) {
+          var em = buscarEnlace(S.moviendoExtremo.enlace);
+          var sirve = !!em && !motivoPuertoInvalido(em, S.moviendoExtremo.lado, d, iface);
+          c.setAttribute("opacity", sirve ? "1" : "0.3");
+          c.setAttribute("stroke-width", sirve ? "2" : "1");
         }
         c.addEventListener("pointerenter", function (ev) {
           mostrarTipPuerto(ev, d, iface);
@@ -998,7 +1009,7 @@ var UI = (function () {
         // toque invisible más grande (10 px es poco para un dedo). Mide 28 px
         // de alto y lo que deje la separación con los vecinos, para no
         // pisarlos. Fuera del modo cable no existe: taparía el ícono.
-        if (S.herramientaCable || S.cableOrigen) {
+        if (S.herramientaCable || S.cableOrigen || S.moviendoExtremo) {
           var dpT = disposicionPuertos(d, d.interfaces.length);
           var arribaT = idx < dpT.arriba;
           var enLado = arribaT ? dpT.arriba : d.interfaces.length - dpT.arriba;
@@ -1028,7 +1039,7 @@ var UI = (function () {
       g.addEventListener("pointerleave", ocultarTip);
       g.addEventListener("click", function (ev) {
         ev.stopPropagation();
-        if (S.colocando || S.herramientaCable) { return; }
+        if (S.colocando || S.herramientaCable || S.moviendoExtremo) { return; }
         seleccionar(d.id);
         if (esCelular()) { abrirHoja("configurar"); }
       });
@@ -1041,6 +1052,7 @@ var UI = (function () {
       S.capaNodos.appendChild(g);
     });
     resolverSolapes(etiquetas);
+    dibujarAsas();
     aplicarVista();
     actualizarCelular();
   }
@@ -1286,6 +1298,7 @@ var UI = (function () {
       }
     });
     window.addEventListener("pointermove", function (ev) {
+      if (S.moviendoExtremo) { actualizarLineaTemporal(ev); }
       if (S.abajo) {
         S.vista.x = S.abajo.vx + (ev.clientX - S.abajo.x);
         S.vista.y = S.abajo.vy + (ev.clientY - S.abajo.y);
@@ -1306,6 +1319,7 @@ var UI = (function () {
       if (f) { importarTextoDeArchivo(f); }
     });
     svg.addEventListener("click", function () {
+      if (S.moviendoExtremo) { cancelarMovimiento(); return; }
       if (!S.herramientaCable && !S.colocando) { seleccionar(null); }
     });
     // Alternativa de teclado al paneo y al zoom con el mouse.
@@ -1462,7 +1476,143 @@ var UI = (function () {
     return true;
   }
 
+  /* ---------------- Mover la punta de un cable ----------------
+   * Clic en el asa de una punta: queda pegada al puntero. Clic en un puerto
+   * válido: el cable se reconecta ahí. Esc o clic en el fondo: se cancela. */
+
+  function extremoOtro(lado) { return lado === "a" ? "b" : "a"; }
+
+  function enlacesEnPuerto(idDisp, idIf) {
+    return (S.topologia.enlaces || []).filter(function (x) {
+      return (x.a.dispositivo === idDisp && x.a.interfaz === idIf) ||
+        (x.b.dispositivo === idDisp && x.b.interfaz === idIf);
+    });
+  }
+
+  // null si el puerto sirve para esa punta; si no, el motivo en palabras.
+  function motivoPuertoInvalido(e, lado, d, iface) {
+    var otro = e[extremoOtro(lado)];
+    if (d.id === otro.dispositivo && iface.id === otro.interfaz) {
+      return "Las dos puntas del cable no pueden ir al mismo puerto.";
+    }
+    if (iface.medio !== e.tipo) {
+      return "El cable " + e.id + " es " + e.tipo + " y " + d.id + ":" + iface.id + " es un puerto " + iface.medio + ".";
+    }
+    if (!iface.habilitada) {
+      return "La interfaz " + d.id + ":" + iface.id + " está deshabilitada: habilitala primero.";
+    }
+    var otros = enlacesEnPuerto(d.id, iface.id).filter(function (x) { return x.id !== e.id; });
+    if (otros.length && !puertoAdmiteMultiplesEnlaces(d, iface)) {
+      return "El puerto " + d.id + ":" + iface.id + " ya tiene el cable " + otros[0].id + ".";
+    }
+    return null;
+  }
+
+  function iniciarMovimiento(idEnlace, lado) {
+    S.moviendoExtremo = { enlace: idEnlace, lado: lado };
+    S.herramientaCable = false; S.cableOrigen = null; S.colocando = null;
+    renderLienzo();
+    avisar("Elegí el puerto nuevo para esta punta del cable · Esc cancela");
+  }
+
+  function cancelarMovimiento() {
+    if (!S.moviendoExtremo) { return; }
+    S.moviendoExtremo = null;
+    S.lineaTemporal = null;
+    renderLienzo();
+  }
+
+  function aplicarMovimiento(e, lado, idDisp, idIf) {
+    var antes = e[lado].dispositivo + ":" + e[lado].interfaz;
+    empujarHistorial();
+    e[lado] = { dispositivo: idDisp, interfaz: idIf };
+    S.moviendoExtremo = null;
+    S.lineaTemporal = null;
+    reconstruirEstado(); renderTodo();
+    registrar("cable", "Cable " + e.id + ": la punta pasó de " + antes + " a " + idDisp + ":" + idIf + ".");
+    avisar("Cable " + e.id + " conectado en " + idDisp + ":" + idIf);
+  }
+
+  function moverExtremo(d, iface) {
+    var m = S.moviendoExtremo;
+    var e = buscarEnlace(m.enlace);
+    if (!e) { cancelarMovimiento(); return; }
+    var actual = e[m.lado];
+    if (actual.dispositivo === d.id && actual.interfaz === iface.id) { cancelarMovimiento(); return; }
+    var motivo = motivoPuertoInvalido(e, m.lado, d, iface);
+    // Si el puerto no sirve, la punta sigue pegada para elegir otro.
+    if (motivo) { avisar(motivo); return; }
+    aplicarMovimiento(e, m.lado, d.id, iface.id);
+  }
+
+  // Línea punteada desde la punta fija hasta el puntero.
+  function actualizarLineaTemporal(ev) {
+    var m = S.moviendoExtremo;
+    var e = m && buscarEnlace(m.enlace);
+    if (!e) { return; }
+    var fija = e[extremoOtro(m.lado)];
+    var dFija = buscarDisp(fija.dispositivo);
+    if (!dFija) { return; }
+    var desde = puntoPuerto(dFija, fija.interfaz);
+    var hasta = aMundo(ev);
+    if (!S.lineaTemporal || !S.lineaTemporal.isConnected) {
+      S.lineaTemporal = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      S.lineaTemporal.setAttribute("stroke", "#1a5fb4");
+      S.lineaTemporal.setAttribute("stroke-width", 3);
+      S.lineaTemporal.setAttribute("stroke-dasharray", "8 6");
+      S.lineaTemporal.setAttribute("pointer-events", "none");
+      S.capaAsas.appendChild(S.lineaTemporal);
+    }
+    S.lineaTemporal.setAttribute("x1", desde.x); S.lineaTemporal.setAttribute("y1", desde.y);
+    S.lineaTemporal.setAttribute("x2", hasta.x); S.lineaTemporal.setAttribute("y2", hasta.y);
+  }
+
+  // Asas en las dos puntas del cable seleccionado, un poco corridas hacia el
+  // centro del cable para que el puerto siga a la vista.
+  function dibujarAsas() {
+    var svgNS = "http://www.w3.org/2000/svg";
+    while (S.capaAsas.firstChild) { S.capaAsas.removeChild(S.capaAsas.firstChild); }
+    S.lineaTemporal = null;
+    var e = S.enlaceSel ? buscarEnlace(S.enlaceSel) : null;
+    if (!e) { return; }
+    var da = buscarDisp(e.a.dispositivo), db = buscarDisp(e.b.dispositivo);
+    if (!da || !db) { return; }
+    var pa = puntoPuerto(da, e.a.interfaz), pb = puntoPuerto(db, e.b.interfaz);
+    [["a", pa, pb, e.a], ["b", pb, pa, e.b]].forEach(function (t) {
+      var lado = t[0], aqui = t[1], alla = t[2], punta = t[3];
+      var dx = alla.x - aqui.x, dy = alla.y - aqui.y;
+      var largo = Math.sqrt(dx * dx + dy * dy) || 1;
+      var corr = Math.min(16, largo / 3);
+      var activa = S.moviendoExtremo && S.moviendoExtremo.enlace === e.id && S.moviendoExtremo.lado === lado;
+      var asa = document.createElementNS(svgNS, "circle");
+      asa.setAttribute("cx", aqui.x + dx / largo * corr);
+      asa.setAttribute("cy", aqui.y + dy / largo * corr);
+      asa.setAttribute("r", 8);
+      asa.setAttribute("class", "asa");
+      asa.setAttribute("fill", activa ? "#1a5fb4" : "#ffffff");
+      asa.setAttribute("stroke", "#1a5fb4");
+      asa.setAttribute("stroke-width", 3);
+      asa.setAttribute("tabindex", "0");
+      asa.setAttribute("role", "button");
+      asa.setAttribute("aria-label", "Mover la punta del cable " + e.id + " que está en " + punta.dispositivo + ":" + punta.interfaz);
+      var tit = document.createElementNS(svgNS, "title");
+      tit.textContent = "Mover esta punta: clic acá y después en el puerto nuevo";
+      asa.appendChild(tit);
+      var accion = function (ev) {
+        ev.stopPropagation();
+        if (activa) { cancelarMovimiento(); } else { iniciarMovimiento(e.id, lado); }
+      };
+      asa.addEventListener("click", accion);
+      asa.addEventListener("pointerdown", function (ev) { ev.stopPropagation(); });
+      asa.addEventListener("keydown", function (ev) {
+        if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); accion(ev); }
+      });
+      S.capaAsas.appendChild(asa);
+    });
+  }
+
   function clicPuerto(d, iface) {
+    if (S.moviendoExtremo) { moverExtremo(d, iface); return; }
     if (!S.herramientaCable && !S.cableOrigen) { return; }
     if (!iface.habilitada) {
       registrar("D01", "La interfaz " + d.id + ":" + iface.id + " está deshabilitada.");
@@ -1594,6 +1744,7 @@ var UI = (function () {
       ev.preventDefault(); borrarSeleccion(); return;
     }
     if (ev.key === "Escape") {
+      if (S.moviendoExtremo) { cancelarMovimiento(); return; }
       if (S.hoja) { cerrarHoja(); return; }
       S.colocando = null; S.cableOrigen = null; S.herramientaCable = false;
       renderLienzo(); return;
@@ -1653,6 +1804,29 @@ var UI = (function () {
         sel.value = e.estado;
         sel.addEventListener("change", function () { empujarHistorial(); e.estado = sel.value; reconstruirEstado(); renderLienzo(); });
         c.appendChild(etiqueta("Estado", sel)); c.appendChild(sel);
+        ["a", "b"].forEach(function (lado) {
+          var selX = document.createElement("select");
+          (S.topologia.dispositivos || []).forEach(function (dev) {
+            (dev.interfaces || []).forEach(function (f) {
+              if (f.medio !== e.tipo) { return; }
+              var esActual = e[lado].dispositivo === dev.id && e[lado].interfaz === f.id;
+              var motivo = esActual ? null : motivoPuertoInvalido(e, lado, dev, f);
+              var op = document.createElement("option");
+              op.value = dev.id + ":" + f.id;
+              op.textContent = (dev.nombre || dev.id) + " · " + f.id + (esActual ? " (actual)" : (motivo ? " (no disponible)" : ""));
+              op.disabled = !!motivo;
+              selX.appendChild(op);
+            });
+          });
+          selX.value = e[lado].dispositivo + ":" + e[lado].interfaz;
+          selX.addEventListener("change", function () {
+            var corte = selX.value.indexOf(":");
+            aplicarMovimiento(e, lado, selX.value.slice(0, corte), selX.value.slice(corte + 1));
+          });
+          c.appendChild(etiqueta("Punta " + lado.toUpperCase(), selX));
+          c.appendChild(selX);
+        });
+        c.appendChild(el("p", "leyenda", "Para mover una punta también podés hacer clic en su asa redonda, en el lienzo, y después en el puerto nuevo."));
         var extra = "";
         if (e.tipo === "wireless") {
           var da = buscarDisp(e.a.dispositivo), db = buscarDisp(e.b.dispositivo);
@@ -2522,7 +2696,9 @@ var UI = (function () {
       "sin QoS real, sin 802.1X y sin radiofrecuencia: el wireless es una abstracción por distancia.</p>" +
       "<p><b>Atajos:</b> Ctrl+Z deshacer, Ctrl+Y rehacer, Supr borra, Esc cancela, F presenta. " +
       "Paneo: arrastrar el fondo, o flechas con el foco en el lienzo. Con el foco en un equipo, las flechas lo mueven. " +
-      "Desde el teclado, Enter sobre un dispositivo de la paleta lo agrega en el centro de la vista.</p>";
+      "Desde el teclado, Enter sobre un dispositivo de la paleta lo agrega en el centro de la vista. " +
+      "Para cambiar un cable de puerto: seleccionalo, hacé clic en el asa redonda de la punta que querés mover " +
+      "y después en el puerto nuevo (también desde las listas Punta A y Punta B del panel).</p>";
     var escD = S.topologia.escenario;
     if (S.modo === "desafio" || (escD && (escD.modo === "desafio" || escD.sectores || escD.requerimientos))) {
       var b = boton("Verificar diseño VLSM", "primario");
@@ -2782,6 +2958,7 @@ var UI = (function () {
   }
 
   function seleccionarEnlace(idEnlace) {
+    S.moviendoExtremo = null;
     S.seleccionado = null;
     S.enlaceSel = idEnlace;
     renderLienzo();
@@ -2789,6 +2966,7 @@ var UI = (function () {
   }
 
   function seleccionar(idDispositivo) {
+    S.moviendoExtremo = null;
     S.seleccionado = idDispositivo;
     S.enlaceSel = null;
     renderLienzo();
