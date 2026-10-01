@@ -262,6 +262,33 @@ var Motor = (function () {
       },
       sugerencia: "Revisá el siguiente salto de esa ruta: tiene que ser la IP de un router vecino, en una red que este router tenga conectada."
     },
+    D24: {
+      titulo: "No hay servidor DNS configurado",
+      explicacion: function (ctx) {
+        ctx = ctx || {};
+        return (ctx.origen || "El equipo") + " no tiene servidor DNS configurado: no tiene a quién preguntarle qué IP corresponde a " +
+          (ctx.nombre || "ese nombre") + ". Sin esa respuesta no puede armar el paquete.";
+      },
+      sugerencia: "Cargá un servidor DNS en la configuración del equipo (por ejemplo 8.8.8.8), o hacé el ping directamente a la IP."
+    },
+    D25: {
+      titulo: "El nombre no existe",
+      explicacion: function (ctx) {
+        ctx = ctx || {};
+        return "El DNS respondió, pero no conoce " + (ctx.nombre || "ese nombre") + ". Puede estar mal escrito. " +
+          "Este simulador conoce google.com, www.google.com, dns.google y one.one.one.one.";
+      },
+      sugerencia: "Revisá cómo escribiste el nombre."
+    },
+    D26: {
+      titulo: "El servidor DNS no responde",
+      explicacion: function (ctx) {
+        ctx = ctx || {};
+        return "Para traducir " + (ctx.nombre || "el nombre") + ", " + (ctx.origen || "el equipo") + " consulta al DNS " +
+          (ctx.dns || "?") + ", pero esa consulta no llega" + (ctx.causa ? ": " + ctx.causa : "") + ".";
+      },
+      sugerencia: "Hacé ping a la IP del DNS para ver dónde se corta: el problema está en el camino hasta el DNS, no en el nombre."
+    },
     D23: {
       titulo: "Se agotó el TTL: bucle de enrutamiento",
       explicacion: function (ctx) {
@@ -440,7 +467,20 @@ var Motor = (function () {
   }
 
   function esRouter(dispositivo) {
-    return !!dispositivo && dispositivo.tipo === "router";
+    return !!dispositivo && (dispositivo.tipo === "router" || dispositivo.tipo === "internet");
+  }
+
+  // La nube "internet" representa todas las direcciones públicas: es dueña
+  // de cualquier destino público que no esté en sus propias redes.
+  function esInternet(dispositivo) {
+    return !!dispositivo && dispositivo.tipo === "internet";
+  }
+
+  function destinoEnInternet(dispositivo, ip) {
+    if (!esInternet(dispositivo) || Red.clasificar(ip) !== "publica") { return false; }
+    return !(dispositivo.interfaces || []).some(function (f) {
+      return f.habilitada && f.ip && Red.esIpValida(f.ip) && prefijoValido(f.prefijo) && Red.mismaRed(f.ip, ip, f.prefijo);
+    });
   }
 
   function prefijoValido(prefijo) {
@@ -802,6 +842,19 @@ var Motor = (function () {
         if (Red.mismaRed(conectadas[i].ip, router.gateway, conectadas[i].prefijo)) {
           mejor = { destino: "0.0.0.0", prefijo: 0, siguienteSalto: router.gateway, directa: false, porGateway: true };
           break;
+        }
+      }
+    }
+    if (!mejor && esInternet(router)) {
+      for (i = 0; i < conectadas.length && !mejor; i++) {
+        var enlacesNube = enlacesDe(estado, router.id, conectadas[i].id);
+        for (var en = 0; en < enlacesNube.length && !mejor; en++) {
+          var lado = (enlacesNube[en].a.dispositivo === router.id && enlacesNube[en].a.interfaz === conectadas[i].id)
+            ? enlacesNube[en].b : enlacesNube[en].a;
+          var vecinoIf = buscarInterfaz(buscarDispositivo(estado, lado.dispositivo), lado.interfaz);
+          if (vecinoIf && vecinoIf.ip && Red.esIpValida(vecinoIf.ip) && Red.mismaRed(conectadas[i].ip, vecinoIf.ip, conectadas[i].prefijo)) {
+            mejor = { destino: "0.0.0.0", prefijo: 0, siguienteSalto: vecinoIf.ip, directa: false };
+          }
         }
       }
     }
@@ -1217,6 +1270,32 @@ var Motor = (function () {
           "El TTL llegó a 0 después de " + recorrido.length + " saltos: " + textoRecorrido + ".");
       }
       var dispActual = buscarDispositivo(estado, actualId);
+      if (destinoEnInternet(dispActual, destinoIp)) {
+        agregarPaso("Llegar a internet",
+          "El paquete llegó a " + (dispActual.nombre || actualId) + ", que representa internet: " + destinoIp +
+          " es una dirección pública y responde. Simplificación: no se simula NAT; la respuesta vuelve por el mismo enlace.", true);
+        msTotal += 20;
+        if (profundidad < 1) {
+          var vueltaNube = ejecutarPing(estado, actualId, ipOrigen, { registrar: false, profundidad: profundidad + 1 });
+          if (!vueltaNube.exito) {
+            return {
+              exito: false,
+              pasos: pasos.concat(vueltaNube.pasos.map(function (pv) {
+                return { n: pasos.length + pv.n, titulo: "Vuelta: " + pv.titulo, detalle: pv.detalle, ok: pv.ok };
+              })),
+              saltos: saltos,
+              diagnostico: diagnosticoDe("D12", {
+                origen: origen.id,
+                destino: dispActual.nombre || actualId,
+                detalleVuelta: "la vuelta falla con " + (vueltaNube.diagnostico ? vueltaNube.diagnostico.codigo : "?")
+              }),
+              respuestas: []
+            };
+          }
+        }
+        respuestas.push({ ttl: Math.max(1, 64 - (saltos.length - 1)), ms: Math.max(1, Math.round(msTotal)) });
+        return { exito: true, pasos: pasos, saltos: saltos, diagnostico: null, respuestas: respuestas };
+      }
       if (esRouter(dispActual) && actualId !== origen.id) {
         var rutaActual = rutaElegida(estado, actualId, destinoIp);
         if (rutaActual && rutaActual.directa && rutaActual.interfaz) {
@@ -1692,13 +1771,75 @@ var Motor = (function () {
     }
   }
 
+  /* ---------------- Nombres: una resolución DNS mínima ----------------
+   * Si el destino es un nombre, el equipo consulta a su servidor DNS (la
+   * consulta es un viaje de ida y vuelta hasta esa IP) y, si el nombre
+   * existe, hace el ping a la IP que resultó. */
+
+  var NOMBRES_PUBLICOS = {
+    "google.com": "142.250.79.46",
+    "www.google.com": "142.250.79.46",
+    "dns.google": "8.8.8.8",
+    "one.one.one.one": "1.1.1.1"
+  };
+
+  function pareceNombre(texto) {
+    return /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(texto) && /[a-z]/.test(texto);
+  }
+
+  function pingConNombre(estado, idOrigen, destino, opciones) {
+    var texto = String(destino === undefined || destino === null ? "" : destino).trim().toLowerCase();
+    if (Red.esIpValida(texto) || !pareceNombre(texto)) {
+      return ejecutarPing(estado, idOrigen, Red.esIpValida(texto) ? texto : destino, opciones);
+    }
+    var origen = buscarDispositivo(estado, idOrigen);
+    if (!origen) { return ejecutarPing(estado, idOrigen, texto, opciones); }
+    var nombreOrigen = origen.nombre || origen.id;
+    var salida = { dispositivo: origen.id, interfaz: "" };
+    var dns = origen.dns ? String(origen.dns).trim() : "";
+    var titulo = "Resolver el nombre " + texto;
+    if (!dns || !Red.esIpValida(dns)) {
+      return {
+        exito: false,
+        pasos: [{ n: 1, titulo: titulo, detalle: nombreOrigen + " no tiene servidor DNS configurado.", ok: false }],
+        saltos: [salida], diagnostico: diagnosticoDe("D24", { origen: nombreOrigen, nombre: texto }), respuestas: []
+      };
+    }
+    var consulta = ejecutarPing(estado, idOrigen, dns, { registrar: false, profundidad: 0 });
+    if (!consulta.exito) {
+      var dc = consulta.diagnostico;
+      return {
+        exito: false,
+        pasos: [{ n: 1, titulo: titulo, detalle: "Se le pregunta al DNS " + dns + " y la consulta no llega" +
+          (dc ? " (" + dc.codigo + " · " + dc.titulo + ")." : "."), ok: false }],
+        saltos: consulta.saltos,
+        diagnostico: diagnosticoDe("D26", { origen: nombreOrigen, nombre: texto, dns: dns, causa: dc ? dc.codigo + ", " + dc.titulo.toLowerCase() : "" }),
+        respuestas: []
+      };
+    }
+    var ip = NOMBRES_PUBLICOS[texto];
+    if (!ip) {
+      return {
+        exito: false,
+        pasos: [{ n: 1, titulo: titulo, detalle: "El DNS " + dns + " respondió que no conoce " + texto + ".", ok: false }],
+        saltos: [salida], diagnostico: diagnosticoDe("D25", { nombre: texto }), respuestas: []
+      };
+    }
+    var res = ejecutarPing(estado, idOrigen, ip, opciones);
+    res.pasos = [{ n: 1, titulo: titulo, detalle: "El DNS " + dns + " respondió: " + texto + " es " + ip + ".", ok: true }]
+      .concat(res.pasos.map(function (pn) { return { n: pn.n + 1, titulo: pn.titulo, detalle: pn.detalle, ok: pn.ok }; }));
+    res.nombre = texto;
+    res.ipResuelta = ip;
+    return res;
+  }
+
   function ping(estado, idOrigen, destinoIp) {
     estado.ahora = Date.now();
-    return ejecutarPing(estado, idOrigen, destinoIp, { registrar: true, profundidad: 0 });
+    return pingConNombre(estado, idOrigen, destinoIp, { registrar: true, profundidad: 0 });
   }
 
   function diagnosticar(estado, idOrigen, destinoIp) {
-    var resultado = ejecutarPing(estado, idOrigen, destinoIp, { registrar: false, profundidad: 0 });
+    var resultado = pingConNombre(estado, idOrigen, destinoIp, { registrar: false, profundidad: 0 });
     return resultado.diagnostico;
   }
 
@@ -2703,6 +2844,36 @@ var Motor = (function () {
       var topo = fabTopo([pc, fabSwitch("sw1")], [fabEnlace("l1", "pc1", "eth0", "sw1", "fa0/1")]);
       var res = ping(crearEstado(topo), "pc1", "10.9.9.9");
       comparar("D09 nombra al equipo", res.diagnostico && res.diagnostico.explicacion.indexOf("PC-Aula no puede alcanzarlo") >= 0, true);
+    })();
+
+    // 38 a 42. Internet y nombres: pc — sw — r1 — nube.
+    function conInternet(rutasR1, dnsPc) {
+      var pcN = fabPc("pc1", "192.168.1.10", 24, "192.168.1.1");
+      pcN.dns = dnsPc;
+      var nube = {
+        id: "nube", tipo: "internet", nombre: "Internet", x: 300, y: 0, encendido: true,
+        interfaces: [{ id: "eth0", nombre: "eth0", medio: "ethernet", habilitada: true, modo: "estatico", ip: "200.45.7.1", prefijo: 30, mac: "02:00:00:00:09:01" }],
+        gateway: null, dns: null, rutas: [], dhcp: null
+      };
+      return fabTopo(
+        [pcN, fabSwitch("sw1"), nube,
+         fabRouter("r1", [{ id: "g0/0", ip: "192.168.1.1", prefijo: 24 }, { id: "g0/1", ip: "200.45.7.2", prefijo: 30 }], rutasR1)],
+        [fabEnlace("l1", "pc1", "eth0", "sw1", "fa0/1"),
+         fabEnlace("l2", "r1", "g0/0", "sw1", "fa0/2"),
+         fabEnlace("l3", "r1", "g0/1", "nube", "eth0")]);
+    }
+    (function () {
+      var porDefecto = [{ destino: "0.0.0.0", prefijo: 0, siguienteSalto: "200.45.7.1" }];
+      var rIp = ping(crearEstado(conInternet(porDefecto, "8.8.8.8")), "pc1", "8.8.8.8");
+      comparar("internet responde una IP pública", rIp.exito, true);
+      var rNombre = ping(crearEstado(conInternet(porDefecto, "8.8.8.8")), "pc1", "google.com");
+      comparar("ping a google.com resuelve y llega", rNombre.exito && rNombre.ipResuelta, "142.250.79.46");
+      comparar("sin DNS configurado da D24",
+        ping(crearEstado(conInternet(porDefecto, null)), "pc1", "google.com").diagnostico.codigo, "D24");
+      comparar("nombre desconocido da D25",
+        ping(crearEstado(conInternet(porDefecto, "8.8.8.8")), "pc1", "noexiste.example").diagnostico.codigo, "D25");
+      var rSinRuta = ping(crearEstado(conInternet([], "8.8.8.8")), "pc1", "google.com");
+      comparar("router sin salida a internet: el DNS no responde (D26)", rSinRuta.diagnostico.codigo, "D26");
     })();
 
     // 36. Un destino mal escrito no es un diagnóstico de red.

@@ -31,7 +31,7 @@ var Escenarios = (function () {
   var VERSIONES_SOPORTADAS = [1];
 
   // Tipos de dispositivo reconocidos (§4 del BASE, más el punto de acceso).
-  var TIPOS_VALIDOS = ["pc", "switch-l2", "router", "camara", "iot", "ap"];
+  var TIPOS_VALIDOS = ["pc", "switch-l2", "router", "camara", "iot", "ap", "internet"];
 
   // Medios y tipos de enlace reconocidos.
   var MEDIOS_VALIDOS = ["ethernet", "fibra", "wireless"];
@@ -65,6 +65,10 @@ var Escenarios = (function () {
       { id: "fa0/7", medio: "ethernet" },
       { id: "fa0/8", medio: "ethernet" },
       { id: "fib0", medio: "fibra" }
+    ],
+    // Internet: una nube con un solo puerto hacia el router o firewall de salida.
+    internet: [
+      { id: "eth0", medio: "ethernet" }
     ],
     // Punto de acceso: bridge de capa 2 entre el aire y el cable.
     ap: [
@@ -1697,6 +1701,10 @@ var Escenarios = (function () {
       var pcModelo = clonar(r8);
       buscarDispositivo(pcModelo, "pc-adm").modelo = "8-puertos";
       comparar("modelo en una PC no valida", validarTopologia(pcModelo).ok, false);
+      var conNube = clonar(r8);
+      conNube.dispositivos.push({ id: "nube", tipo: "internet", nombre: "Internet", x: 400, y: -80, encendido: true,
+        interfaces: [interfaz("eth0", "ethernet", "200.45.7.1", 30, true)], gateway: null, dns: null, rutas: [], dhcp: null });
+      comparar("dispositivo internet valida", validarTopologia(conNube).ok, true);
       var faltante = clonar(r8);
       buscarDispositivo(faltante, "r1").interfaces.pop();
       comparar("router 8 puertos sin wlan1 no valida", validarTopologia(faltante).ok, false);

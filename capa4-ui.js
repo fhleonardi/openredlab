@@ -76,10 +76,11 @@ var UI = (function () {
     { tipo: "switch-l2", etiqueta: "Switch" },
     { tipo: "camara", etiqueta: "Cámara" },
     { tipo: "iot", etiqueta: "IoT" },
-    { tipo: "ap", etiqueta: "Punto de acceso" }
+    { tipo: "ap", etiqueta: "Punto de acceso" },
+    { tipo: "internet", etiqueta: "Internet" }
   ];
 
-  var PREFIJOS_NOMBRES = { pc: "PC-", router: "R", "switch-l2": "SW", camara: "CAM", iot: "IOT", ap: "AP-" };
+  var PREFIJOS_NOMBRES = { pc: "PC-", router: "R", "switch-l2": "SW", camara: "CAM", iot: "IOT", ap: "AP-", internet: "Internet-" };
 
   /* ---------------- Utilidades ---------------- */
 
@@ -167,7 +168,7 @@ var UI = (function () {
     return lineas;
   }
 
-  var NOMBRES_TIPO = { pc: "PC", router: "router", "router-8": "router de 8 puertos", "switch-l2": "switch", camara: "cámara", iot: "IoT", ap: "punto de acceso" };
+  var NOMBRES_TIPO = { pc: "PC", router: "router", "router-8": "router de 8 puertos", internet: "internet", "switch-l2": "switch", camara: "cámara", iot: "IoT", ap: "punto de acceso" };
 
   // Clave de paleta e ícono: el tipo, salvo el router de 8 puertos, que es
   // tipo "router" con modelo "8-puertos".
@@ -229,6 +230,9 @@ var UI = (function () {
     if (tipo === "router") {
       return [iface("g0/0", "ethernet", true), iface("g0/1", "ethernet", true),
         iface("fib0", "fibra", true), iface("wlan0", "wireless", false)];
+    }
+    if (tipo === "internet") {
+      return [iface("eth0", "ethernet", true)];
     }
     if (tipo === "router-8") {
       // Como un equipo de oficina tipo MikroTik: cada puerto es ruteado y
@@ -448,6 +452,10 @@ var UI = (function () {
   /* ---------------- Iconos SVG dibujados a mano ---------------- */
 
   function icono(tipo) {
+    if (tipo === "internet") {
+      return "<path d='M-14 9 C-23 9 -23 -3 -14 -3 C-14 -12 -2 -15 3 -8 C8 -14 19 -10 17 -1 C25 0 24 9 16 9 Z' " +
+        "fill='#dbe9f7' stroke='#1a5fb4' stroke-width='2' stroke-linejoin='round'/>";
+    }
     if (tipo === "router-8") {
       return "<rect x='-26' y='-11' width='52' height='22' rx='4' fill='#f6d186' stroke='#8a5a00' stroke-width='2'/>" +
         "<path d='M-9 -5 L9 5 M-9 5 L9 -5' stroke='#8a5a00' stroke-width='2'/>" +
@@ -838,7 +846,7 @@ var UI = (function () {
 
   function posicionPuerto(disp, indice, total) {
     var h = 52;
-    if (total === 1) { return { x: disp.x, y: disp.y - h / 2 }; }
+    if (total === 1) { return { x: disp.x, y: disp.y + (disp.tipo === "internet" ? h / 2 : -h / 2) }; }
     var dp = disposicionPuertos(disp, total);
     if (indice < dp.arriba) {
       return { x: disp.x - dp.anchoArriba / 2 + (indice + 0.5) * (dp.anchoArriba / dp.arriba), y: disp.y - h / 2 };
@@ -2251,7 +2259,8 @@ var UI = (function () {
     var selD = document.createElement("input");
     selD.type = "text";
     campoDireccion(selD, "destino");
-    selD.placeholder = "p. ej. 10.45.7.122…";
+    selD.setAttribute("inputmode", "url");
+    selD.placeholder = "p. ej. 10.45.7.122 o google.com…";
     selD.value = S.ultimoDestino || "";
     var bPing = boton("Ping", "primario");
     ctrl.appendChild(etiqueta("Origen", selO)); ctrl.appendChild(selO);
@@ -2401,7 +2410,7 @@ var UI = (function () {
     return lineas.length ? lineas[lineas.length - 1].trim() : "";
   }
 
-  var PASOS_CLAVE = /^(Comparar redes|Buscar ruta|Verificar que el destino)/;
+  var PASOS_CLAVE = /^(Resolver el nombre|Comparar redes|Buscar ruta|Llegar a internet|Verificar que el destino)/;
 
   function renderRecorrido(res) {
     var caja = el("div", "recorrido");
@@ -2557,7 +2566,8 @@ var UI = (function () {
     S.consolaAbierta = false;
     if (res.exito) {
       var r = res.respuestas[0] || { ttl: 64, ms: 1 };
-      consolaAgregar("Respuesta desde " + destino + ": bytes=32 tiempo=" + r.ms + "ms TTL=" + r.ttl);
+      if (res.ipResuelta) { consolaAgregar("Haciendo ping a " + destino + " [" + res.ipResuelta + "]"); }
+      consolaAgregar("Respuesta desde " + (res.ipResuelta || destino) + ": bytes=32 tiempo=" + r.ms + "ms TTL=" + r.ttl);
       consolaAgregar("Estadísticas: 1 enviados, 1 recibidos, 0 perdidos.");
       anunciar("Ping a " + destino + ": el eco volvió en " + r.ms + " milisegundos.");
     } else {
@@ -2720,7 +2730,10 @@ var UI = (function () {
       "el switch no mira IP y no enruta; la vuelta del ping también necesita camino; el prefijo es la fuente de verdad.</p>" +
       "<p><b>Simplificaciones declaradas:</b> sin STP ni bucles reales, sin enrutamiento dinámico (OSPF, BGP, RIP), " +
       "sin VLAN ni switch L3, sin NAT, sin HTTP, sin fragmentación, sin IPv6, sin TCP real, sin cifrado ni TLS, " +
-      "sin QoS real, sin 802.1X y sin radiofrecuencia: el wireless es una abstracción por distancia.</p>" +
+      "sin QoS real, sin 802.1X y sin radiofrecuencia: el wireless es una abstracción por distancia. " +
+      "La nube Internet responde por cualquier dirección pública y devuelve la respuesta por el mismo enlace: " +
+      "en una red real, el firewall o router de salida haría NAT. El DNS conoce google.com, www.google.com, " +
+      "dns.google y one.one.one.one.</p>" +
       "<p><b>Atajos:</b> Ctrl+Z deshacer, Ctrl+Y rehacer, Supr borra, Esc cancela, F presenta. " +
       "Paneo: arrastrar el fondo, o flechas con el foco en el lienzo. Con el foco en un equipo, las flechas lo mueven. " +
       "Desde el teclado, Enter sobre un dispositivo de la paleta lo agrega en el centro de la vista. " +

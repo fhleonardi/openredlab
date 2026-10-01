@@ -62,7 +62,7 @@ Todas las capas operan sobre este objeto. El JSON exportado es exactamente este 
   "dispositivos": [
     {
       "id": "pc1",
-      "tipo": "pc",                    // pc | switch-l2 | router | camara | iot | ap
+      "tipo": "pc",                    // pc | switch-l2 | router | camara | iot | ap | internet
       // "modelo": "8-puertos",        // sólo router; si falta es el router estándar
       "nombre": "PC-Admin",
       "x": 160, "y": 240,
@@ -128,6 +128,12 @@ Reglas:
 | `iot` | 1 wireless | `wlan0` |
 | `ap` | 1 wireless (modo `ap`) + 1 ethernet | `wlan0`, `eth0` |
 | `router`, `"modelo": "8-puertos"` | 8 ethernet + 1 fibra + 1 wireless (modo `ap`, deshabilitada) | `ether1` … `ether8`, `sfp1`, `wlan1` |
+
+| `internet` | 1 ethernet | `eth0` |
+
+**Internet** es una nube que representa todas las direcciones públicas: un paquete que llega a ella con destino público se responde ahí. Para enrutar se comporta como un router, y lo que no conoce lo devuelve por su vecino. **Simplificación declarada:** no se simula NAT; en una red real, el firewall o router de salida traduciría las direcciones privadas.
+
+**Nombres.** Si el destino de un ping es un nombre, el equipo consulta al servidor DNS configurado en su campo `dns` (un viaje de ida y vuelta hasta esa IP) y, si el nombre existe, hace el ping a la IP resultante. El simulador conoce `google.com` y `www.google.com` (142.250.79.46), `dns.google` (8.8.8.8) y `one.one.one.one` (1.1.1.1).
 
 El router de 8 puertos replica un equipo de oficina (por ejemplo, un MikroTik): **cada puerto es una interfaz ruteada** que puede tener su propia subred, como cuando en RouterOS se saca un puerto del bridge y se le asigna una dirección. No se simula el bridge entre puertos.
 
@@ -235,7 +241,7 @@ Autotest.correr()   // -> { total, pasadas, resultados: [{ n, criterio, pasa, de
 
 ---
 
-## 6. Catálogo de diagnósticos D01–D23
+## 6. Catálogo de diagnósticos D01–D26
 
 Lo implementa la capa 2 en `Motor.CATALOGO` y lo usan todas las demás. Cada entrada tiene **título corto, explicación de una o dos líneas en lenguaje de aula, y sugerencia concreta de qué revisar**.
 
@@ -264,6 +270,9 @@ Lo implementa la capa 2 en `Motor.CATALOGO` y lo usan todas las demás. Cada ent
 | D21 | El destino es la dirección de broadcast de la subred del origen |
 | D22 | Hay ruta, pero el siguiente salto no es alcanzable |
 | D23 | Se agotó el TTL: bucle de enrutamiento (la explicación incluye el recorrido real) |
+| D24 | El destino es un nombre y el equipo no tiene servidor DNS configurado |
+| D25 | El DNS respondió, pero el nombre no existe |
+| D26 | El servidor DNS no responde (la explicación incluye la causa de la consulta fallida) |
 
 `D06`, `D07`, `D09`, `D14` y `D15` se detectan **también al momento de configurar**, vía `Motor.advertenciasDe`, sin necesidad de hacer ping.
 
