@@ -10,7 +10,7 @@
 
 Dos cosas:
 
-1. **`simulador.html`** — el archivo final, autocontenido, que incluye las cuatro capas y arranca la aplicación.
+1. **`index.html`** — el archivo final, autocontenido, que incluye las cuatro capas y arranca la aplicación.
 2. **`Autotest`** — el objeto que corre los criterios de aceptación y muestra el informe.
 
 ---
@@ -98,6 +98,6 @@ Recorré esta lista vos mismo antes de entregar:
 
 1. Tres o cuatro líneas: qué ensamblaste y si detectaste algún problema en las capas anteriores.
 2. El bloque de la capa 5 (`Autotest` y arranque), completo.
-3. El `simulador.html` final, completo, si entra; si no entra, la instrucción exacta de armado.
+3. El `index.html` final, completo, si entra; si no entra, la instrucción exacta de armado.
 4. La salida esperada de `Autotest.correr()` con todo funcionando.
 5. Una lista de lo que quedó fuera respecto de la especificación, y por qué.

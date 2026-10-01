@@ -14,7 +14,7 @@ El BASE trae el contexto, el modelo de datos y —lo importante— la **API púb
 | 2 | BASE + `02-capa2-motor.md` | `capa2-motor.js` |
 | 3 | BASE + `03-capa3-escenarios.md` | `capa3-escenarios.js` |
 | 4 | BASE + `04-capa4-ui.md` | `capa4-ui.js` |
-| 5 | BASE + `05-capa5-ensamblado.md` | `simulador.html` |
+| 5 | BASE + `05-capa5-ensamblado.md` | `index.html` |
 
 Cada capa termina con su propia función de autopruebas. **Antes de pasar al turno siguiente, corré la del turno actual.** Es un archivo `.js` suelto: abrilo en la consola del navegador (o con `node`) y llamá a `Red.autopruebas()`. Si hay fallos, corregilos antes de seguir; si arrastrás un error de la capa 1 hasta la 4, encontrarlo después cuesta mucho más.
 
@@ -40,7 +40,7 @@ La capa 1 es además el mejor termómetro posible: si un modelo no clava `cantid
 
 ## Reensamblar el archivo final
 
-El archivo final, `index.html` (antes `simulador.html`), es un derivado: cada bloque `<script>` lleva exactamente el código de una capa. **Nunca se edita el HTML a mano**: se corrige el `.js` de la capa y se reensambla.
+El archivo final, `index.html`, es un derivado: cada bloque `<script>` lleva exactamente el código de una capa. **Nunca se edita el HTML a mano**: se corrige el `.js` de la capa y se reensambla.
 
 ```
 python3 herramientas/ensamblar.py              # reescribe index.html

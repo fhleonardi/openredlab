@@ -14,11 +14,8 @@ import os
 import sys
 
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-# El archivo final se llama index.html (para publicarlo como sitio); si no
-# existe, se usa el nombre anterior, simulador.html.
+# El archivo final se llama index.html para poder publicarlo como sitio.
 HTML = os.path.join(RAIZ, "index.html")
-if not os.path.exists(HTML):
-    HTML = os.path.join(RAIZ, "simulador.html")
 NOMBRE = os.path.basename(HTML)
 CAPAS = ["capa1-red.js", "capa2-motor.js", "capa3-escenarios.js", "capa4-ui.js", "capa5-autotest.js"]
 

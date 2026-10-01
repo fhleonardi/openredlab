@@ -31,7 +31,7 @@ El producto final es **un único archivo `.html` autocontenido**, pero no se gen
 | 2 | `capa2-motor.js` | `Motor` | `Red` |
 | 3 | `capa3-escenarios.js` | `Escenarios` | `Red`, `Motor` |
 | 4 | `capa4-ui.js` | `UI` | las tres anteriores |
-| 5 | `simulador.html` | ensamblado + `Autotest` | todas |
+| 5 | `index.html` | ensamblado + `Autotest` | todas |
 
 **Cada capa se genera en su propio turno y nunca reescribe el código de otra.** Por eso los contratos de §4 son obligatorios: una capa llama a la anterior sin haber visto su implementación. Si te falta una función que creés que debería existir, **no la inventes en tu capa**: usá las del contrato y señalá el faltante al final de tu respuesta.
 
