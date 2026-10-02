@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="img/openredlab-blanco.png">
+    <img src="img/openredlab.png" alt="OpenRedLab" width="320">
+  </picture>
+</p>
+
 # OpenRedLab
 
 **Simulador de redes para aprender direccionamiento IP, subredes y diagnóstico.** Armás una red en el navegador, configurás direcciones, máscaras, puertas de enlace y rutas, y al hacer ping ves el recorrido del paquete paso a paso. Si falla, el simulador te dice en qué paso se cortó y por qué.
@@ -70,6 +77,7 @@ Para probar, abrí `index.html` en el navegador. El botón **Autotest** muestra 
 | [`docs/`](docs/) | Las guías para alumnos y docentes |
 | [`escenarios/`](escenarios/) | Laboratorios y desafíos para importar |
 | [`herramientas/`](herramientas/) | El ensamblador de `index.html` |
+| [`img/`](img/) | Logo (color y blanco), marca y favicons |
 
 ## Simplificaciones
 
