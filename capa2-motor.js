@@ -293,6 +293,23 @@ var Motor = (function () {
       },
       sugerencia: "Hacé ping a la IP del DNS para ver dónde se corta: el problema está en el camino hasta el DNS, no en el nombre."
     },
+    D27: {
+      titulo: "Una regla de filtrado bloqueó el paquete",
+      explicacion: function (ctx) {
+        ctx = ctx || {};
+        var regla = "una regla que bloquea el tráfico de " + (ctx.reglaOrigen || "?") + " hacia " + (ctx.reglaDestino || "?");
+        if (ctx.enLaVuelta) {
+          return "El paquete llegó a " + (ctx.destinoNombre || "destino") + ", pero la respuesta (de " +
+            (ctx.ipOrigen || "?") + " hacia " + (ctx.ipDestino || "?") + ") pasa por " + (ctx.router || "un router") +
+            ", que tiene " + regla + ", y la descarta. Este simulador revisa cada paquete por separado: " +
+            "un firewall real recuerda las conexiones y puede dejar pasar la respuesta de una que ya permitió.";
+        }
+        return (ctx.router || "El router") + " tiene " + regla + ". El paquete de " + (ctx.ipOrigen || "?") +
+          " hacia " + (ctx.ipDestino || "?") + " coincide con ella y el router lo descarta: " +
+          "la ruta existe, pero una regla prohíbe que pase.";
+      },
+      sugerencia: "Si ese bloqueo es el que buscabas, el aislamiento funciona. Si no, revisá la pestaña Filtrado del router: las reglas se leen en orden y gana la primera que coincide."
+    },
     D23: {
       titulo: "Se agotó el TTL: bucle de enrutamiento",
       explicacion: function (ctx) {
@@ -476,6 +493,38 @@ var Motor = (function () {
 
   // La nube "internet" representa todas las direcciones públicas: es dueña
   // de cualquier destino público que no esté en sus propias redes.
+  // Filtrado mínimo y sin estado: cada regla tiene una acción (bloquear o
+  // permitir) y dos redes en formato CIDR. Las reglas se leen en orden, gana
+  // la primera que coincide con origen y destino del paquete, y lo que no
+  // coincide con ninguna pasa.
+  function parsearCidr(texto) {
+    var partes = String(texto === undefined || texto === null ? "" : texto).trim().split("/");
+    if (partes.length !== 2 || !/^\d{1,2}$/.test(partes[1])) {
+      return null;
+    }
+    var prefijo = parseInt(partes[1], 10);
+    if (!Red.esIpValida(partes[0]) || prefijo < 0 || prefijo > 32) {
+      return null;
+    }
+    return { red: Red.direccionDeRed(partes[0], prefijo), prefijo: prefijo };
+  }
+
+  function reglaQueAplica(router, ipOrigen, ipDestino) {
+    var reglas = Array.isArray(router.reglas) ? router.reglas : [];
+    for (var i = 0; i < reglas.length; i++) {
+      var regla = reglas[i];
+      var o = regla && parsearCidr(regla.origen);
+      var d = regla && parsearCidr(regla.destino);
+      if (!o || !d) {
+        continue;
+      }
+      if (Red.mismaRed(ipOrigen, o.red, o.prefijo) && Red.mismaRed(ipDestino, d.red, d.prefijo)) {
+        return { indice: i, regla: regla, origen: o.red + "/" + o.prefijo, destino: d.red + "/" + d.prefijo };
+      }
+    }
+    return null;
+  }
+
   function esInternet(dispositivo) {
     return !!dispositivo && dispositivo.tipo === "internet";
   }
@@ -1265,6 +1314,60 @@ var Motor = (function () {
     var ttl = TTL_INICIAL;
     var msTotal = 0;
     var recorrido = [];
+    var filtrados = {};
+
+    // Reglas de filtrado de un router que el paquete atraviesa (no las del
+    // equipo que lo genera). Cada router se revisa una sola vez por ping.
+    function revisarFiltro(router) {
+      if (router.id === origen.id || filtrados[router.id] || !Array.isArray(router.reglas) || router.reglas.length === 0) {
+        return null;
+      }
+      filtrados[router.id] = true;
+      var nombreRouter = router.nombre || router.id;
+      var aplica = reglaQueAplica(router, ipOrigen, destinoIp);
+      if (!aplica) {
+        agregarPaso("Revisar las reglas de filtrado de " + nombreRouter,
+          "Ninguna regla coincide con un paquete de " + ipOrigen + " hacia " + destinoIp + ": pasa.", true);
+        return null;
+      }
+      if (aplica.regla.accion === "permitir") {
+        agregarPaso("Revisar las reglas de filtrado de " + nombreRouter,
+          "La regla " + (aplica.indice + 1) + " permite el tráfico de " + aplica.origen + " hacia " + aplica.destino + ": pasa.", true);
+        return null;
+      }
+      agregarPaso("Revisar las reglas de filtrado de " + nombreRouter,
+        "La regla " + (aplica.indice + 1) + " bloquea el tráfico de " + aplica.origen + " hacia " + aplica.destino +
+        ", y el paquete de " + ipOrigen + " hacia " + destinoIp + " coincide: " + nombreRouter + " lo descarta.", false);
+      var ctxFiltro = {
+        router: nombreRouter, reglaOrigen: aplica.origen, reglaDestino: aplica.destino,
+        ipOrigen: ipOrigen, ipDestino: destinoIp
+      };
+      return {
+        exito: false,
+        pasos: pasos,
+        saltos: saltos,
+        diagnostico: diagnosticoDe("D27", ctxFiltro),
+        filtro: ctxFiltro,
+        respuestas: []
+      };
+    }
+
+    // Una vuelta bloqueada por una regla se informa como D27, no como D12:
+    // el alumno tiene que saber que fue un filtro y no una ruta faltante.
+    function diagnosticoVuelta(vuelta, nombreDestino) {
+      if (vuelta.filtro) {
+        var ctxVuelta = {};
+        for (var k in vuelta.filtro) { ctxVuelta[k] = vuelta.filtro[k]; }
+        ctxVuelta.enLaVuelta = true;
+        ctxVuelta.destinoNombre = nombreDestino;
+        return diagnosticoDe("D27", ctxVuelta);
+      }
+      return diagnosticoDe("D12", {
+        origen: origen.id,
+        destino: nombreDestino,
+        detalleVuelta: "la vuelta falla con " + (vuelta.diagnostico ? vuelta.diagnostico.codigo : "?")
+      });
+    }
 
     // Llegada a la nube Internet. Con destino público, responde ahí; con un
     // destino privado que no es de sus redes, lo descarta (internet no enruta
@@ -1304,11 +1407,7 @@ var Motor = (function () {
               return { n: pasos.length + pv.n, titulo: "Vuelta: " + pv.titulo, detalle: pv.detalle, ok: pv.ok };
             })),
             saltos: saltos,
-            diagnostico: diagnosticoDe("D12", {
-              origen: origen.id,
-              destino: dispositivo.nombre || dispositivo.id,
-              detalleVuelta: "la vuelta falla con " + (vueltaNube.diagnostico ? vueltaNube.diagnostico.codigo : "?")
-            }),
+            diagnostico: diagnosticoVuelta(vueltaNube, dispositivo.nombre || dispositivo.id),
             respuestas: []
           };
         }
@@ -1352,6 +1451,10 @@ var Motor = (function () {
         true);
 
       if (misma) {
+        if (esRouter(dispActual)) {
+          var filtroEntrega = revisarFiltro(dispActual);
+          if (filtroEntrega) { return filtroEntrega; }
+        }
         // Paso 5: entrega directa por ARP dentro del segmento.
         var respond = respondedoresArp(estado, actualId, actualIface.id, destinoIp);
         var todosDuenos = configuradosConIp(estado, destinoIp);
@@ -1497,7 +1600,6 @@ var Motor = (function () {
             }
           }
           if (!esAPropiaIp && !vuelta.exito) {
-            var codigoVuelta = vuelta.diagnostico ? vuelta.diagnostico.codigo : "?";
             return {
               exito: false,
               pasos: pasos.concat(vuelta.pasos.map(function (p) {
@@ -1509,11 +1611,7 @@ var Motor = (function () {
                 };
               })),
               saltos: saltos,
-              diagnostico: diagnosticoDe("D12", {
-                origen: origen.id,
-                destino: destPar.dispositivo.id,
-                detalleVuelta: "la vuelta falla con " + codigoVuelta
-              }),
+              diagnostico: diagnosticoVuelta(vuelta, destPar.dispositivo.nombre || destPar.dispositivo.id),
               respuestas: []
             };
           }
@@ -1638,6 +1736,8 @@ var Motor = (function () {
         : "Ruta " + ruta.destino + "/" + ruta.prefijo + " vía " +
           (ruta.siguienteSalto || "directa") + " (prefijo más largo).";
       agregarPaso("Buscar ruta en " + router.id, textoRuta, true);
+      var filtroRuta = revisarFiltro(router);
+      if (filtroRuta) { return filtroRuta; }
 
       // Paso 10: avanzar al siguiente salto.
       var egreso = null;
@@ -2930,6 +3030,46 @@ var Motor = (function () {
       comparar("IP privada inexistente: D11 en internet, no D23", rPriv.diagnostico.codigo, "D11");
       comparar("D11 de internet explica la dirección privada",
         rPriv.diagnostico.explicacion.indexOf("dirección privada") >= 0, true);
+    })();
+
+    // 45. Reglas de filtrado: huéspedes — r1 — servidores, y r1 — r2 — srv2.
+    function conFiltro(reglasR1, reglasR2) {
+      var r1 = fabRouter("r1", [
+        { id: "g0/0", ip: "10.0.1.1", prefijo: 24 },
+        { id: "g0/1", ip: "10.0.2.1", prefijo: 24 },
+        { id: "g0/2", ip: "10.0.9.1", prefijo: 30 }
+      ], [{ destino: "10.0.3.0", prefijo: 24, siguienteSalto: "10.0.9.2" }]);
+      r1.reglas = reglasR1 || [];
+      var r2 = fabRouter("r2", [
+        { id: "g0/0", ip: "10.0.9.2", prefijo: 30 },
+        { id: "g0/1", ip: "10.0.3.1", prefijo: 24 }
+      ], [{ destino: "0.0.0.0", prefijo: 0, siguienteSalto: "10.0.9.1" }]);
+      r2.reglas = reglasR2 || [];
+      return fabTopo(
+        [fabPc("h1", "10.0.1.10", 24, "10.0.1.1"), fabPc("s1", "10.0.2.10", 24, "10.0.2.1"),
+         fabPc("t3", "10.0.3.10", 24, "10.0.3.1"), r1, r2],
+        [fabEnlace("l1", "h1", "eth0", "r1", "g0/0"), fabEnlace("l2", "s1", "eth0", "r1", "g0/1"),
+         fabEnlace("l3", "r1", "g0/2", "r2", "g0/0"), fabEnlace("l4", "t3", "eth0", "r2", "g0/1")]);
+    }
+    (function () {
+      var bloqueo = [{ accion: "bloquear", origen: "10.0.1.0/24", destino: "10.0.0.0/16" }];
+      var rIda = ping(crearEstado(conFiltro(bloqueo)), "h1", "10.0.2.10");
+      comparar("filtro: el huésped no llega al servidor (D27)", rIda.diagnostico && rIda.diagnostico.codigo, "D27");
+      comparar("D27 nombra la regla", rIda.diagnostico.explicacion.indexOf("10.0.1.0/24 hacia 10.0.0.0/16") >= 0, true);
+      comparar("filtro: el paso de reglas figura en el recorrido",
+        rIda.pasos.some(function (p) { return p.titulo === "Revisar las reglas de filtrado de r1" && !p.ok; }), true);
+      var rVuelta = ping(crearEstado(conFiltro(bloqueo)), "s1", "10.0.1.10");
+      comparar("filtro: la respuesta bloqueada es D27, no D12", rVuelta.diagnostico && rVuelta.diagnostico.codigo, "D27");
+      comparar("D27 de la vuelta lo explica", rVuelta.diagnostico.explicacion.indexOf("la respuesta") >= 0, true);
+      comparar("filtro: lo que no coincide pasa", ping(crearEstado(conFiltro(bloqueo)), "s1", "10.0.3.10").exito, true);
+      var conExcepcion = [{ accion: "permitir", origen: "10.0.1.0/24", destino: "10.0.2.0/24" }].concat(bloqueo);
+      comparar("filtro: gana la primera regla que coincide", ping(crearEstado(conFiltro(conExcepcion)), "h1", "10.0.2.10").exito, true);
+      var rLejos = ping(crearEstado(conFiltro([], [{ accion: "bloquear", origen: "10.0.1.0/24", destino: "10.0.3.0/24" }])), "h1", "10.0.3.10");
+      comparar("filtro: un router intermedio con entrega directa también filtra", rLejos.diagnostico && rLejos.diagnostico.codigo, "D27");
+      var desdeRouter = conFiltro([{ accion: "bloquear", origen: "0.0.0.0/0", destino: "0.0.0.0/0" }]);
+      comparar("filtro: no se aplica al tráfico que genera el propio router",
+        ping(crearEstado(desdeRouter), "r1", "10.0.2.10").exito, true);
+      comparar("filtro: sin reglas todo pasa", ping(crearEstado(conFiltro()), "h1", "10.0.2.10").exito, true);
     })();
 
     // 36. Un destino mal escrito no es un diagnóstico de red.

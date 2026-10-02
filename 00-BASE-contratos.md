@@ -83,6 +83,7 @@ Todas las capas operan sobre este objeto. El JSON exportado es exactamente este 
       "gateway": "10.45.7.65",         // en un router: ruta por defecto de último recurso
       "dns": "8.8.8.8",
       "rutas": [],                     // sólo router: [{destino, prefijo, siguienteSalto}]
+      "reglas": [],                    // opcional, sólo router: [{accion: "bloquear"|"permitir", origen: "10.45.7.0/26", destino: "10.45.7.0/24"}]
       "dhcp": null                     // sólo router: {habilitado, desde, hasta, prefijo, gateway}
     }
   ],
@@ -116,6 +117,7 @@ Reglas:
 
   Un router con su `wlan0` en modo `ap` es un router inalámbrico: la celda es una red más del router. El alcance inalámbrico (D17) se evalúa por enlace.
 - **Gateway de un router.** Cada router reenvía por su propia tabla de rutas (prefijo más largo). Si ninguna entrada coincide y el campo `gateway` tiene una dirección que cae en alguna de sus redes conectadas, se usa como ruta por defecto. Una ruta `0.0.0.0/0` explícita le gana.
+- **Reglas de filtrado de un router** (`reglas`, opcional). Es un filtrado mínimo y **sin estado**: cada regla tiene una acción (`bloquear` o `permitir`) y dos redes en CIDR (`0.0.0.0/0` es cualquiera). Se aplica sólo al tráfico que el router **reenvía**, no al que genera él mismo. Las reglas se leen en orden, gana la primera que coincide con el origen y el destino del paquete, y lo que no coincide con ninguna pasa. Como no hay estado, la respuesta de un ping también se revisa: si la bloquea una regla, el diagnóstico es D27 (no D12), con la aclaración de que un firewall real recuerda las conexiones.
 
 **Interfaces por defecto según el tipo de dispositivo**, creadas automáticamente al agregarlo:
 
@@ -214,7 +216,9 @@ Escenarios.importar(texto)          // -> { ok, topologia|null, errores: [...] }
 Escenarios.aplicarFallas(topologia) // -> copia con escenario.fallas aplicadas
 Escenarios.exportarParaAlumno(topologia)  // fallas aplicadas + array fallas eliminado
 Escenarios.verificarObjetivos(estado, objetivos)
-// -> [{ objetivo, cumple, codigo|null }]  en el mismo orden del JSON
+// -> [{ objetivo, cumple, codigo|null, titulo|null }]  en el mismo orden del JSON
+// Un objetivo {esperado: "falla", codigo: "D27"} sólo cumple si falla por esa causa.
+// `descripcion` (opcional) es un texto para el alumno que se muestra debajo del objetivo.
 Escenarios.verificarDesafio(topologia, escenario)
 // -> { resumen: { errores, advertencias }, porSector: [{ sector, ok, hallazgos: [...] }] }
 Escenarios.autopruebas()
@@ -241,7 +245,7 @@ Autotest.correr()   // -> { total, pasadas, resultados: [{ n, criterio, pasa, de
 
 ---
 
-## 6. Catálogo de diagnósticos D01–D26
+## 6. Catálogo de diagnósticos D01–D27
 
 Lo implementa la capa 2 en `Motor.CATALOGO` y lo usan todas las demás. Cada entrada tiene **título corto, explicación de una o dos líneas en lenguaje de aula, y sugerencia concreta de qué revisar**.
 
@@ -273,6 +277,7 @@ Lo implementa la capa 2 en `Motor.CATALOGO` y lo usan todas las demás. Cada ent
 | D24 | El destino es un nombre y el equipo no tiene servidor DNS configurado |
 | D25 | El DNS respondió, pero el nombre no existe |
 | D26 | El servidor DNS no responde (la explicación incluye la causa de la consulta fallida) |
+| D27 | Una regla de filtrado del router bloqueó el paquete, a la ida o en la respuesta (la explicación nombra la regla) |
 
 `D06`, `D07`, `D09`, `D14` y `D15` se detectan **también al momento de configurar**, vía `Motor.advertenciasDe`, sin necesidad de hacer ping.
 

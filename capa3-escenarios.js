@@ -384,6 +384,30 @@ var Escenarios = (function () {
         }
       }
 
+      // Reglas de filtrado de los routers: acción y dos redes en formato CIDR.
+      if (d.reglas !== undefined && d.reglas !== null) {
+        if (!Array.isArray(d.reglas)) {
+          anotar(etiqueta + ".reglas", "Las reglas de filtrado de \"" + d.id + "\" deben ser una lista.");
+        } else {
+          if (d.reglas.length > 0 && d.tipo !== "router") {
+            anotar(etiqueta + ".reglas", "Sólo los routers tienen reglas de filtrado (\"" + d.id + "\" es " + d.tipo + ").");
+          }
+          for (var g = 0; g < d.reglas.length; g++) {
+            var regla = d.reglas[g];
+            var campoRegla = etiqueta + ".reglas[" + g + "]";
+            if (!regla || (regla.accion !== "bloquear" && regla.accion !== "permitir")) {
+              anotar(campoRegla, "La regla " + (g + 1) + " de \"" + d.id + "\" tiene que decir si bloquea o permite.");
+            }
+            if (!regla || typeof regla.origen !== "string" || !parsearBloque(regla.origen)) {
+              anotar(campoRegla, "La regla " + (g + 1) + " de \"" + d.id + "\" tiene un origen inválido: va una red como 10.45.7.0/26 (0.0.0.0/0 es cualquiera).");
+            }
+            if (!regla || typeof regla.destino !== "string" || !parsearBloque(regla.destino)) {
+              anotar(campoRegla, "La regla " + (g + 1) + " de \"" + d.id + "\" tiene un destino inválido: va una red como 10.45.7.0/24 (0.0.0.0/0 es cualquiera).");
+            }
+          }
+        }
+      }
+
       // Servidor DHCP, cuando está configurado.
       if (d.dhcp !== undefined && d.dhcp !== null) {
         var cfg = d.dhcp;
@@ -675,14 +699,18 @@ var Escenarios = (function () {
         continue;
       }
       var res = Motor.ping(estado, obj.origen, obj.destino);
+      var codigo = res.exito ? null : (res.diagnostico ? res.diagnostico.codigo : null);
       var cumple;
       if (obj.esperado === "falla") {
-        cumple = !res.exito;
+        // Un objetivo puede exigir la causa: fallar por otra razón no cumple.
+        cumple = !res.exito && (!obj.codigo || codigo === obj.codigo);
       } else {
         cumple = !!res.exito;
       }
-      var codigo = res.exito ? null : (res.diagnostico ? res.diagnostico.codigo : null);
-      resultados.push({ objetivo: obj, cumple: cumple, codigo: codigo });
+      resultados.push({
+        objetivo: obj, cumple: cumple, codigo: codigo,
+        titulo: res.exito || !res.diagnostico ? null : res.diagnostico.titulo
+      });
     }
     return resultados;
   }
@@ -1550,6 +1578,28 @@ var Escenarios = (function () {
       var primero = res[0];
       comparar("objetivos roto primero no cumple", primero.cumple, false);
       comparar("objetivos roto primero con codigo", typeof primero.codigo === "string" && primero.codigo.length > 0, true);
+    })();
+
+    // Objetivos que exigen la causa de la falla, y validación de reglas.
+    (function () {
+      var t = JSON.parse(JSON.stringify(complejo));
+      var r1 = buscarDispositivo(t, "r1");
+      r1.reglas = [{ accion: "bloquear", origen: "10.45.7.0/26", destino: "10.45.7.96/27" }];
+      var objetivos = [
+        { tipo: "ping", origen: "pc-wifi", destino: "10.45.7.122", esperado: "falla", codigo: "D27" },
+        { tipo: "ping", origen: "pc-wifi", destino: "10.45.7.122", esperado: "falla", codigo: "D11" },
+        { tipo: "ping", origen: "pc-admin", destino: "10.45.7.122", esperado: "exito" }
+      ];
+      var res = verificarObjetivos(Motor.crearEstado(t), objetivos);
+      comparar("objetivo con código: cumple con la causa pedida", res[0].cumple, true);
+      comparar("objetivo con código: otra causa no cumple", res[1].cumple, false);
+      comparar("objetivo con código: informa el título", typeof res[1].titulo === "string", true);
+      comparar("objetivo de éxito con reglas cargadas", res[2].cumple, true);
+      comparar("reglas válidas: la topología valida", validarTopologia(t).ok, true);
+      r1.reglas.push({ accion: "tirar", origen: "10.45.7.0", destino: "cualquiera" });
+      comparar("reglas inválidas: tres errores", validarTopologia(t).errores.filter(function (e) {
+        return e.campo.indexOf(".reglas[1]") >= 0;
+      }).length, 3);
     })();
 
     // verificarObjetivos sobre el complejo sano: todos cumplidos.

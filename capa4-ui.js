@@ -1888,9 +1888,9 @@ var UI = (function () {
     var tabs = el("div", "tabs");
     tabs.setAttribute("role", "tablist");
     tabs.setAttribute("aria-label", "Propiedades de " + (d.nombre || d.id));
-    var nombres = [["config", "Configuración"], ["ifs", "Interfaces"], ["rutas", "Rutas"], ["dhcp", "DHCP"], ["estado", "Estado"]];
+    var nombres = [["config", "Configuración"], ["ifs", "Interfaces"], ["rutas", "Rutas"], ["filtrado", "Filtrado"], ["dhcp", "DHCP"], ["estado", "Estado"]];
     if (d.tipo !== "router") {
-      nombres = nombres.filter(function (p) { return p[0] !== "rutas" && p[0] !== "dhcp"; });
+      nombres = nombres.filter(function (p) { return p[0] !== "rutas" && p[0] !== "filtrado" && p[0] !== "dhcp"; });
     }
     if (!nombres.some(function (p) { return p[0] === S.pestañaProps; })) { S.pestañaProps = "config"; }
     nombres.forEach(function (p) {
@@ -1907,6 +1907,7 @@ var UI = (function () {
     if (S.pestañaProps === "config") { panelConfig(c, d); }
     else if (S.pestañaProps === "ifs") { panelInterfaces(c, d); }
     else if (S.pestañaProps === "rutas") { panelRutas(c, d); }
+    else if (S.pestañaProps === "filtrado") { panelFiltrado(c, d); }
     else if (S.pestañaProps === "dhcp") { panelDhcp(c, d); }
     else { panelEstado(c, d); }
 
@@ -2084,6 +2085,68 @@ var UI = (function () {
         r.siguienteSalto = v.trim() === "" ? null : v.trim(); reconstruirEstado();
       }, function (v) { return v.trim() === "" || Red.esIpValida(v.trim()); }, true);
     });
+  }
+
+  function esCidr(texto) {
+    var m = /^(.+)\/(\d{1,2})$/.exec(String(texto || "").trim());
+    return !!m && Red.esIpValida(m[1]) && parseInt(m[2], 10) <= 32;
+  }
+
+  // Reglas de filtrado del router: una lista en orden; gana la primera que
+  // coincide y lo que no coincide con ninguna pasa.
+  function panelFiltrado(c, d) {
+    if (!Array.isArray(d.reglas)) { d.reglas = []; }
+    c.appendChild(el("p", "",
+      "<span style='font-size:13px'>El router revisa cada paquete que reenvía contra estas reglas, en orden: gana la primera que coincide con su origen y su destino. " +
+      "Lo que no coincide con ninguna pasa. Escribí redes como 10.45.7.0/26; 0.0.0.0/0 quiere decir cualquiera.</span>"));
+    if (d.reglas.length === 0) {
+      c.appendChild(el("p", "", "Sin reglas: el router deja pasar todo lo que sabe enrutar."));
+    }
+    d.reglas.forEach(function (r, i) {
+      var completa = esCidr(r.origen) && esCidr(r.destino);
+      var texto = (i + 1) + ". " + (r.accion === "permitir" ? "Permitir" : "Bloquear") + " " +
+        (r.origen || "?") + " → " + (r.destino || "?") + (completa ? "" : " (incompleta: no se aplica)");
+      var fila = el("div", "filaif", "<span class='datos'>" + escapar(texto) + "</span>");
+      if (i > 0) {
+        var bSubir = boton("Subir");
+        bSubir.setAttribute("aria-label", "Subir la regla " + (i + 1));
+        bSubir.addEventListener("click", function () {
+          empujarHistorial();
+          var mov = d.reglas.splice(i, 1)[0];
+          d.reglas.splice(i - 1, 0, mov);
+          reconstruirEstado(); renderPropiedades();
+        });
+        fila.appendChild(bSubir);
+      }
+      var bQuitar = boton("Quitar");
+      bQuitar.setAttribute("aria-label", "Quitar la regla " + (i + 1));
+      bQuitar.addEventListener("click", function () { empujarHistorial(); d.reglas.splice(i, 1); reconstruirEstado(); renderPropiedades(); });
+      fila.appendChild(bQuitar);
+      c.appendChild(fila);
+      var sel = document.createElement("select");
+      [["bloquear", "Bloquear"], ["permitir", "Permitir"]].forEach(function (op) {
+        var o = document.createElement("option");
+        o.value = op[0]; o.textContent = op[1];
+        if ((r.accion || "bloquear") === op[0]) { o.selected = true; }
+        sel.appendChild(o);
+      });
+      sel.addEventListener("change", function () { empujarHistorial(); r.accion = sel.value; reconstruirEstado(); renderPropiedades(); });
+      c.appendChild(etiqueta("Regla " + (i + 1) + ": acción", sel));
+      c.appendChild(sel);
+      campoTexto(c, "Regla " + (i + 1) + ": red de origen", r.origen, function (v) {
+        empujarHistorialSuave(); r.origen = v.trim(); reconstruirEstado();
+      }, esCidr, true);
+      campoTexto(c, "Regla " + (i + 1) + ": red de destino", r.destino, function (v) {
+        empujarHistorialSuave(); r.destino = v.trim(); reconstruirEstado();
+      }, esCidr, true);
+    });
+    var bAgregar = boton("Agregar regla");
+    bAgregar.addEventListener("click", function () {
+      empujarHistorial();
+      d.reglas.push({ accion: "bloquear", origen: "", destino: "" });
+      reconstruirEstado(); renderPropiedades();
+    });
+    c.appendChild(bAgregar);
   }
 
   function panelDhcp(c, d) {
@@ -2481,10 +2544,18 @@ var UI = (function () {
       cab.appendChild(el("span", cumplidos === v.res.length ? "ok" : "mal", cumplidos + " de " + v.res.length + " cumplidos"));
       v.res.forEach(function (r) {
         var o = r.objetivo;
+        var espera = o.esperado === "falla"
+          ? (o.codigo && Motor.CATALOGO[o.codigo]
+            ? "se espera que no llegue: " + Motor.CATALOGO[o.codigo].titulo.toLowerCase() + ", " + o.codigo
+            : "se espera que no llegue")
+          : "se espera que llegue";
+        var obtenido = r.cumple ? " — cumple"
+          : (r.codigo ? " — no cumple: " + r.titulo + " (" + r.codigo + ")"
+            : (o.esperado === "falla" ? " — no cumple: el ping llegó" : " — no cumple"));
         lista.appendChild(el("div", r.cumple ? "linpaso" : "pasofallo",
           "<span class='marca' aria-hidden='true'>" + (r.cumple ? "✓" : "✗") + "</span><b>" +
-          escapar(nombreDe(o.origen) + " → " + o.destino) + "</b> (se espera " + escapar(o.esperado || "exito") + ")" +
-          (r.cumple ? " — cumple" : " — no cumple" + (r.codigo ? ": " + escapar(r.codigo) : ""))));
+          escapar(nombreDe(o.origen) + " → " + o.destino) + "</b> (" + escapar(espera) + ")" + escapar(obtenido) +
+          (o.descripcion ? "<br><small>" + escapar(o.descripcion) + "</small>" : "")));
       });
     }
     caja.insertBefore(cab, caja.firstChild);

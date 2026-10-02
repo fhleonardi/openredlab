@@ -241,7 +241,14 @@
       "gateway": "10.45.7.130",
       "dns": null,
       "rutas": [],
-      "dhcp": null
+      "dhcp": null,
+      "reglas": [
+        {
+          "accion": "bloquear",
+          "origen": "10.45.7.0/26",
+          "destino": "10.45.7.0/24"
+        }
+      ]
     },
     {
       "id": "sw-huesp",
@@ -1168,24 +1175,36 @@
         "tipo": "ping",
         "origen": "celular",
         "destino": "10.45.7.122",
-        "esperado": "exito"
-      },
-      {
-        "tipo": "ping",
-        "origen": "pc-recepcion",
-        "destino": "10.45.7.122",
-        "esperado": "exito"
-      },
-      {
-        "tipo": "ping",
-        "origen": "terminal-resto",
-        "destino": "10.45.7.130",
-        "esperado": "exito"
+        "esperado": "falla",
+        "codigo": "D27",
+        "descripcion": "Un huésped no tiene que llegar al servidor de reservas: lo frena una regla en R-Central, no la subred."
       },
       {
         "tipo": "ping",
         "origen": "camara-hall",
         "destino": "10.45.7.10",
+        "esperado": "falla",
+        "codigo": "D27",
+        "descripcion": "La cámara llega al celular, pero la respuesta del huésped hacia la red interna se bloquea."
+      },
+      {
+        "tipo": "ping",
+        "origen": "celular",
+        "destino": "google.com",
+        "esperado": "exito",
+        "descripcion": "Aislado no es incomunicado: el huésped sigue saliendo a internet."
+      },
+      {
+        "tipo": "ping",
+        "origen": "pc-recepcion",
+        "destino": "10.45.7.122",
+        "esperado": "exito",
+        "descripcion": "Administración sí llega a los servidores: la regla sólo afecta a los huéspedes."
+      },
+      {
+        "tipo": "ping",
+        "origen": "terminal-resto",
+        "destino": "10.45.7.130",
         "esperado": "exito"
       },
       {
