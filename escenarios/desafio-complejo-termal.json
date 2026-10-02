@@ -80,11 +80,10 @@
           "id": "wlan0",
           "nombre": "wlan0",
           "medio": "wireless",
-          "habilitada": true,
+          "habilitada": false,
           "modo": "estatico",
-          "ip": "10.45.7.1",
-          "prefijo": 26,
-          "modoRadio": "ap"
+          "ip": null,
+          "prefijo": 24
         }
       ],
       "gateway": "",

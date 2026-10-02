@@ -56,7 +56,8 @@ var UI = (function () {
     abajo: null,
     ultimo: null,
     ultimaVerif: null,
-    ultimoAutotest: null,
+    dhcpSel: null,
+    ultimoDhcp: null,
     panelRes: "ping",
     verTodos: false,
     consolaAbierta: false,
@@ -76,10 +77,11 @@ var UI = (function () {
     { tipo: "switch-l2", etiqueta: "Switch" },
     { tipo: "camara", etiqueta: "Cámara" },
     { tipo: "iot", etiqueta: "IoT" },
-    { tipo: "ap", etiqueta: "Punto de acceso" }
+    { tipo: "ap", etiqueta: "Punto de acceso" },
+    { tipo: "internet", etiqueta: "Internet" }
   ];
 
-  var PREFIJOS_NOMBRES = { pc: "PC-", router: "R", "switch-l2": "SW", camara: "CAM", iot: "IOT", ap: "AP-" };
+  var PREFIJOS_NOMBRES = { pc: "PC-", router: "R", "switch-l2": "SW", camara: "CAM", iot: "IOT", ap: "AP-", internet: "Internet-" };
 
   /* ---------------- Utilidades ---------------- */
 
@@ -167,7 +169,7 @@ var UI = (function () {
     return lineas;
   }
 
-  var NOMBRES_TIPO = { pc: "PC", router: "router", "router-8": "router de 8 puertos", "switch-l2": "switch", camara: "cámara", iot: "IoT", ap: "punto de acceso" };
+  var NOMBRES_TIPO = { pc: "PC", router: "router", "router-8": "router de 8 puertos", internet: "internet", "switch-l2": "switch", camara: "cámara", iot: "IoT", ap: "punto de acceso" };
 
   // Clave de paleta e ícono: el tipo, salvo el router de 8 puertos, que es
   // tipo "router" con modelo "8-puertos".
@@ -230,6 +232,9 @@ var UI = (function () {
       return [iface("g0/0", "ethernet", true), iface("g0/1", "ethernet", true),
         iface("fib0", "fibra", true), iface("wlan0", "wireless", false)];
     }
+    if (tipo === "internet") {
+      return [iface("eth0", "ethernet", true)];
+    }
     if (tipo === "router-8") {
       // Como un equipo de oficina tipo MikroTik: cada puerto es ruteado y
       // puede tener su propia subred.
@@ -290,7 +295,7 @@ var UI = (function () {
     ".simbarra .espacio{flex:1;}",
     ".simbarra .enpres{display:none;font-size:13px;opacity:.85;}",
     ".simcuerpo{flex:1;display:flex;min-height:0;}",
-    ".simpaleta{width:180px;flex:0 0 180px;background:var(--sim-panel);border-right:1px solid var(--sim-borde);padding:8px;overflow:auto;box-sizing:border-box;}",
+    ".simpaleta{width:200px;flex:0 0 200px;background:var(--sim-panel);border-right:1px solid var(--sim-borde);padding:8px;overflow:auto;box-sizing:border-box;}",
     ".simpaleta.colapsada{width:60px;flex-basis:60px;}",
     ".simpaleta.colapsada .etiqueta,.simpaleta.colapsada .titulopal,.simpaleta.colapsada .leyenda,.simpaleta.colapsada select,.simpaleta.colapsada label{display:none;}",
     ".simpaleta h2{font-size:12px;letter-spacing:.02em;color:var(--sim-tenue);margin:4px 0 8px;}",
@@ -298,10 +303,22 @@ var UI = (function () {
     ".simraiz .palitem{touch-action:none;}",
     ".palitem.armado{outline:2px solid var(--sim-acento);outline-offset:1px;}",
     ".palitem svg{width:28px;height:28px;flex:0 0 28px;}",
+    ".palgrid{display:grid;grid-template-columns:1fr 1fr;grid-auto-rows:1fr;gap:4px;margin-bottom:4px;}",
+    ".palgrid .palitem{gap:4px;padding:3px 5px;margin:0;}",
+    ".palcab{display:flex;align-items:center;justify-content:space-between;gap:4px;margin:2px 0 6px;}",
+    ".palcab h2{margin:0;}",
+    ".palcab button{font-size:11px;padding:1px 6px;}",
+    ".palgrid .palitem svg{width:20px;height:20px;flex-basis:20px;}",
+    ".palgrid .palitem .etiqueta{font-size:11.5px;line-height:1.15;overflow-wrap:normal;}",
+    ".simpaleta.colapsada .palgrid .palitem{justify-content:center;}",
+    ".simpaleta.colapsada .palgrid{grid-template-columns:1fr;}",
     ".palitem .etiqueta{font-size:13px;line-height:1.15;overflow-wrap:anywhere;}",
+    ".simraiz .sololector{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0;}",
     ".simpaleta label{display:block;font-size:12px;color:var(--sim-tenue);margin:4px 0 2px;}",
     ".simpaleta select,.simpaleta .herramienta{width:100%;box-sizing:border-box;margin-bottom:6px;}",
-    ".simpaleta .leyenda{font-size:11px;color:var(--sim-tenue);line-height:1.5;margin:4px 0 8px;}",
+    ".simpaleta .herramienta{font-size:12px;padding:4px 6px;}",
+    ".simpaleta .leyenda{font-size:11px;color:var(--sim-tenue);line-height:1.4;margin:2px 0 6px;}",
+    ".simpaleta .palgrid + h2{margin-top:8px;}",
     ".simlienzo{flex:1;position:relative;min-width:0;background:var(--sim-fondo);}",
     ".simlienzo svg.lienzo{width:100%;height:100%;display:block;touch-action:none;}",
     ".simtools{position:absolute;top:8px;left:8px;display:flex;gap:4px;background:var(--sim-panel);border:1px solid var(--sim-borde);border-radius:8px;padding:4px;}",
@@ -355,7 +372,7 @@ var UI = (function () {
     ".banda-ok b{font-size:16px;color:var(--sim-ok);}",
     ".banda-ok .ruta{font-family:ui-monospace,Consolas,monospace;font-size:13px;margin-top:2px;}",
     ".diagnostico{border:1px solid var(--sim-mal);border-left:6px solid var(--sim-mal);background:var(--sim-malfondo);border-radius:8px;padding:8px 12px;font-size:13px;line-height:1.45;flex:0 0 auto;}",
-    ".diagnostico .cod{display:inline-block;background:var(--sim-mal);color:#fff;font-family:ui-monospace,Consolas,monospace;font-weight:700;border-radius:4px;padding:1px 6px;margin-right:6px;}",
+    ".diagnostico .cod{display:inline-block;color:var(--sim-tenue);border:1px solid var(--sim-borde);font-family:ui-monospace,Consolas,monospace;font-size:11px;border-radius:4px;padding:0 5px;margin-left:8px;vertical-align:middle;}",
     ".diagnostico .tit{font-weight:700;font-size:15px;color:var(--sim-mal);}",
     ".diagnostico .rev{border-top:1px solid var(--sim-borde);margin-top:6px;padding-top:6px;}",
     ".advertencia{border:1px solid var(--sim-aviso);border-radius:8px;padding:6px;margin:6px 0;font-size:12px;}",
@@ -402,7 +419,7 @@ var UI = (function () {
     ".simaviso{position:absolute;left:50%;top:10px;transform:translateX(-50%);background:var(--sim-acento);color:#fff;border-radius:10px;padding:6px 12px;font-size:13px;z-index:6;pointer-events:none;max-width:90%;text-align:center;}",
     ".pista{position:absolute;left:10px;bottom:10px;background:var(--sim-panel);border:1px solid var(--sim-borde);border-radius:8px;padding:6px 10px;font-size:13px;color:var(--sim-tenue);}",
     ".diagnostico .irconfig{margin-top:8px;border-color:var(--sim-mal);color:var(--sim-mal);}",
-    "@media (max-width:900px){.simpaleta{width:140px;flex-basis:140px;}.simprop{width:240px;flex-basis:240px;}.simbarra{gap:5px;padding:5px 6px;}.simbarra button{padding:4px 7px;}}",
+    "@media (max-width:900px){.simpaleta{width:140px;flex-basis:140px;}.palgrid{grid-template-columns:1fr;}.simprop{width:240px;flex-basis:240px;}.simbarra{gap:5px;padding:5px 6px;}.simbarra button{padding:4px 7px;}}",
     "@media (max-width:640px){" +
       ".simraiz{min-height:0;}" +
       ".simbarra{flex-wrap:nowrap;padding:8px 10px;gap:8px;}" +
@@ -448,6 +465,10 @@ var UI = (function () {
   /* ---------------- Iconos SVG dibujados a mano ---------------- */
 
   function icono(tipo) {
+    if (tipo === "internet") {
+      return "<path d='M-14 9 C-23 9 -23 -3 -14 -3 C-14 -12 -2 -15 3 -8 C8 -14 19 -10 17 -1 C25 0 24 9 16 9 Z' " +
+        "fill='#dbe9f7' stroke='#1a5fb4' stroke-width='2' stroke-linejoin='round'/>";
+    }
     if (tipo === "router-8") {
       return "<rect x='-26' y='-11' width='52' height='22' rx='4' fill='#f6d186' stroke='#8a5a00' stroke-width='2'/>" +
         "<path d='M-9 -5 L9 5 M-9 5 L9 -5' stroke='#8a5a00' stroke-width='2'/>" +
@@ -608,7 +629,10 @@ var UI = (function () {
     var cuerpo = el("div", "simcuerpo");
     var pal = el("div", "simpaleta");
     pal.setAttribute("aria-label", "Paleta de dispositivos");
-    pal.appendChild(el("h2", "titulopal", "Dispositivos"));
+    var cab = el("div", "palcab");
+    cab.appendChild(el("h2", "titulopal", "Dispositivos"));
+    pal.appendChild(cab);
+    var grilla = el("div", "palgrid");
     TIPOS.forEach(function (t) {
       var item = boton("", "palitem");
       item.setAttribute("data-tipo", t.tipo);
@@ -622,17 +646,22 @@ var UI = (function () {
         if (ev.detail === 0) { colocarEnCentro(t.tipo); return; }
         armarColocacion(t.tipo, item);
       });
-      pal.appendChild(item);
+      grilla.appendChild(item);
     });
+    pal.appendChild(grilla);
     pal.appendChild(el("h2", "titulopal", "Cable"));
     var selCable = document.createElement("select");
     selCable.id = idCampo("tipo-cable");
     selCable.innerHTML = "<option value='ethernet'>ethernet (cobre)</option><option value='fibra'>fibra</option><option value='wireless'>wireless</option>";
     selCable.addEventListener("change", function () { S.cableTipo = selCable.value; S.herramientaCable = true; renderLienzo(); });
     S.selectCable = selCable;
-    pal.appendChild(etiqueta("Tipo de cable", selCable));
+    // El título "Cable" ya lo nombra a la vista; el rótulo queda para lectores de pantalla.
+    var labCable = etiqueta("Tipo de cable", selCable);
+    labCable.className = "sololector";
+    pal.appendChild(labCable);
     pal.appendChild(selCable);
-    var bCable = boton("Cable: clic en dos puertos (Esc cancela)", "herramienta");
+    var bCable = boton("Conectar con un cable", "herramienta");
+    bCable.title = "Hacé clic en dos puertos para unirlos (Esc cancela)";
     bCable.setAttribute("aria-pressed", "false");
     bCable.addEventListener("click", function () {
       S.herramientaCable = !S.herramientaCable; S.cableOrigen = null;
@@ -647,10 +676,13 @@ var UI = (function () {
     bCol.setAttribute("aria-expanded", "true");
     bCol.addEventListener("click", function () {
       var colapsada = pal.classList.toggle("colapsada");
-      bCol.textContent = colapsada ? "Expandir" : "Colapsar";
+      // Colapsada mide 60 px: "Expandir" no entra, va el símbolo con su nombre accesible.
+      bCol.textContent = colapsada ? "»" : "Colapsar";
+      bCol.title = colapsada ? "Expandir la paleta" : "";
+      bCol.setAttribute("aria-label", colapsada ? "Expandir la paleta" : "Colapsar la paleta");
       bCol.setAttribute("aria-expanded", String(!colapsada));
     });
-    pal.appendChild(bCol);
+    cab.appendChild(bCol);
     cuerpo.appendChild(pal);
     S.paleta = pal;
 
@@ -838,7 +870,7 @@ var UI = (function () {
 
   function posicionPuerto(disp, indice, total) {
     var h = 52;
-    if (total === 1) { return { x: disp.x, y: disp.y - h / 2 }; }
+    if (total === 1) { return { x: disp.x, y: disp.y + (disp.tipo === "internet" ? h / 2 : -h / 2) }; }
     var dp = disposicionPuertos(disp, total);
     if (indice < dp.arriba) {
       return { x: disp.x - dp.anchoArriba / 2 + (indice + 0.5) * (dp.anchoArriba / dp.arriba), y: disp.y - h / 2 };
@@ -877,8 +909,9 @@ var UI = (function () {
       g.setAttribute("class", "enlace");
       g.setAttribute("tabindex", "0");
       g.setAttribute("role", "button");
-      g.setAttribute("aria-label", "Enlace " + e.id + ", " + e.tipo + ", " + (e.estado === "up" ? "activo" : "caído") +
-        ", entre " + e.a.dispositivo + ":" + e.a.interfaz + " y " + e.b.dispositivo + ":" + e.b.interfaz);
+      g.setAttribute("aria-label", mayus(cableTexto(e)) + ", " + palabraCable(e.tipo) + ", " + (e.estado === "up" ? "activo" : "caído") +
+        ", del " + puertoTexto(e.a.dispositivo, e.a.interfaz).replace(/^el /, "") +
+        " al " + puertoTexto(e.b.dispositivo, e.b.interfaz).replace(/^el /, ""));
       var pa = puntoPuerto(a, e.a.interfaz);
       var pb = puntoPuerto(b, e.b.interfaz);
       var x1 = pa.x, y1 = pa.y, x2 = pb.x, y2 = pb.y;
@@ -1193,8 +1226,8 @@ var UI = (function () {
 
   function mostrarTipPuerto(ev, d, iface) {
     var enl = enlaceEnPuerto(d.id, iface.id);
-    S.tooltip.innerHTML = "<b>" + escapar(d.id + ":" + iface.id) + "</b><br>medio " +
-      escapar(iface.medio) + "<br>" + (enl ? "enlace " + escapar(enl.id) : "puerto libre");
+    S.tooltip.innerHTML = "<b>" + escapar((d.nombre || d.id) + " · " + iface.id) + "</b><br>puerto " +
+      escapar(palabraCable(iface.medio)) + "<br>" + (enl ? escapar("conectado a " + nombreDe(enl.a.dispositivo === d.id && enl.a.interfaz === iface.id ? enl.b.dispositivo : enl.a.dispositivo)) : "libre");
     S.tooltip.style.display = "block";
     posicionarTip(ev);
   }
@@ -1387,7 +1420,8 @@ var UI = (function () {
       S.hojaCuerpo.appendChild(el("p", "", "<small>Verde: activo; rojo y cortado: caído. La forma del trazo indica el medio.</small>"));
     } else if (tipo === "configurar") {
       var d = S.seleccionado ? buscarDisp(S.seleccionado) : null;
-      S.hojaTitulo.textContent = d ? (d.nombre || d.id) : (S.enlaceSel ? "Enlace " + S.enlaceSel : "Configurar");
+      var eHoja = !d && S.enlaceSel ? buscarEnlace(S.enlaceSel) : null;
+      S.hojaTitulo.textContent = d ? (d.nombre || d.id) : (eHoja ? mayus(cableTexto(eHoja)) : "Configurar");
       S.hojaCuerpo.appendChild(S.prop);
       renderPropiedades();
     } else {
@@ -1422,7 +1456,7 @@ var UI = (function () {
     var todos = S.paleta ? S.paleta.querySelectorAll(".palitem") : [];
     for (var i = 0; i < todos.length; i++) { todos[i].classList.remove("armado"); }
     renderLienzo();
-    avisar("Cancelado");
+    avisar("Listo, se canceló.");
   }
 
   // Mensaje breve sobre el lienzo; también se anuncia al lector de pantalla.
@@ -1497,14 +1531,15 @@ var UI = (function () {
       return "Las dos puntas del cable no pueden ir al mismo puerto.";
     }
     if (iface.medio !== e.tipo) {
-      return "El cable " + e.id + " es " + e.tipo + " y " + d.id + ":" + iface.id + " es un puerto " + iface.medio + ".";
+      return "Ese cable es " + palabraCable(e.tipo) + " y " + puertoTexto(d.id, iface.id) + " es " + palabraCable(iface.medio) +
+        ": cada puerto acepta un solo tipo de cable.";
     }
     if (!iface.habilitada) {
-      return "La interfaz " + d.id + ":" + iface.id + " está deshabilitada: habilitala primero.";
+      return mayus(puertoTexto(d.id, iface.id)) + " está deshabilitado: habilitalo primero en la pestaña Interfaces.";
     }
     var otros = enlacesEnPuerto(d.id, iface.id).filter(function (x) { return x.id !== e.id; });
     if (otros.length && !puertoAdmiteMultiplesEnlaces(d, iface)) {
-      return "El puerto " + d.id + ":" + iface.id + " ya tiene el cable " + otros[0].id + ".";
+      return mayus(puertoTexto(d.id, iface.id)) + " ya tiene " + cableTexto(otros[0]) + ".";
     }
     return null;
   }
@@ -1513,7 +1548,7 @@ var UI = (function () {
     S.moviendoExtremo = { enlace: idEnlace, lado: lado };
     S.herramientaCable = false; S.cableOrigen = null; S.colocando = null;
     renderLienzo();
-    avisar("Elegí el puerto nuevo para esta punta del cable · Esc cancela");
+    avisar("Hacé clic en el puerto nuevo para esta punta del cable (Esc cancela).");
   }
 
   function cancelarMovimiento() {
@@ -1531,7 +1566,7 @@ var UI = (function () {
     S.lineaTemporal = null;
     reconstruirEstado(); renderTodo();
     registrar("cable", "Cable " + e.id + ": la punta pasó de " + antes + " a " + idDisp + ":" + idIf + ".");
-    avisar("Cable " + e.id + " conectado en " + idDisp + ":" + idIf);
+    avisar("Cable movido: ahora llega a " + nombreDe(idDisp) + " por " + idIf + ".");
   }
 
   function moverExtremo(d, iface) {
@@ -1595,7 +1630,7 @@ var UI = (function () {
       asa.setAttribute("stroke-width", 3);
       asa.setAttribute("tabindex", "0");
       asa.setAttribute("role", "button");
-      asa.setAttribute("aria-label", "Mover la punta del cable " + e.id + " que está en " + punta.dispositivo + ":" + punta.interfaz);
+      asa.setAttribute("aria-label", "Mover la punta de " + cableTexto(e) + " que está en " + puertoTexto(punta.dispositivo, punta.interfaz));
       var tit = document.createElementNS(svgNS, "title");
       tit.textContent = "Mover esta punta: clic acá y después en el puerto nuevo";
       asa.appendChild(tit);
@@ -1623,7 +1658,7 @@ var UI = (function () {
     if (S.moviendoExtremo) { moverExtremo(d, iface); return; }
     if (!S.herramientaCable && !S.cableOrigen) { return; }
     if (!iface.habilitada) {
-      avisoCable("D01", "La interfaz " + d.id + ":" + iface.id + " está deshabilitada: habilitala en la pestaña Interfaces.");
+      avisoCable("D01", mayus(puertoTexto(d.id, iface.id)) + " está deshabilitado: habilitalo en la pestaña Interfaces.");
       S.cableOrigen = null;
       renderLienzo();
       return;
@@ -1637,8 +1672,8 @@ var UI = (function () {
         if (S.selectCable) { S.selectCable.value = iface.medio; }
       }
       S.cableOrigen = { dispositivo: d.id, interfaz: iface.id };
-      avisoCable("cable", "Cable " + S.cableTipo + " desde " + d.id + ":" + iface.id +
-        (ajustado ? " (el tipo se ajustó al puerto)" : "") + ". Elegí el puerto destino.");
+      avisoCable("cable", "Cable " + palabraCable(S.cableTipo) + " desde " + (d.nombre || d.id) + " (" + iface.id + "): elegí el otro puerto." +
+        (ajustado ? " El tipo de cable se ajustó a ese puerto." : ""));
       renderLienzo();
       return;
     }
@@ -1650,15 +1685,17 @@ var UI = (function () {
     var origenComparte = puertoAdmiteMultiplesEnlaces(od, oi);
     var destinoComparte = puertoAdmiteMultiplesEnlaces(d, iface);
     if (enlaceEnPuerto(d.id, iface.id) && !destinoComparte) {
-      avisoCable("D02", "El puerto " + d.id + ":" + iface.id + " ya tiene cable. Elegí un puerto libre.");
+      avisoCable("D02", mayus(puertoTexto(d.id, iface.id)) + " ya tiene un cable. Elegí uno libre.");
       S.cableOrigen = null; renderLienzo(); return;
     }
     if (enlaceEnPuerto(o.dispositivo, o.interfaz) && !origenComparte) {
-      avisoCable("D02", "El puerto " + o.dispositivo + ":" + o.interfaz + " ya tiene cable. Elegí un puerto libre.");
+      avisoCable("D02", mayus(puertoTexto(o.dispositivo, o.interfaz)) + " ya tiene un cable. Elegí uno libre.");
       S.cableOrigen = null; renderLienzo(); return;
     }
     if (oi.medio !== S.cableTipo || iface.medio !== S.cableTipo) {
-      avisoCable("D03", "Medios incompatibles: el cable es " + S.cableTipo + " y une " + oi.medio + " con " + iface.medio + ".");
+      avisoCable("D03", "Ese cable no va: " + (oi.medio === iface.medio
+        ? "los dos puertos son " + palabraCable(oi.medio) + " y el cable es " + palabraCable(S.cableTipo) + "."
+        : "un puerto es " + palabraCable(oi.medio) + " y el otro " + palabraCable(iface.medio) + ". Cada puerto acepta un solo tipo de cable."));
       S.cableOrigen = null; renderLienzo(); return;
     }
     empujarHistorial();
@@ -1678,9 +1715,10 @@ var UI = (function () {
     if (nuevo.tipo === "wireless") {
       var dist = Math.round(Math.sqrt(Math.pow(od.x - d.x, 2) + Math.pow(od.y - d.y, 2)));
       var umbral = (S.estado && S.estado.umbralWireless) || 250;
-      if (dist > umbral) { extra = " Ojo: están a " + dist + " de distancia y el alcance es " + umbral + "; el ping va a fallar con D17."; }
+      if (dist > umbral) { extra = " Ojo: están a " + dist + " m y el alcance es de " + umbral + " m, así que la señal no va a llegar."; }
     }
-    avisoCable("cable", "Enlace " + nuevo.id + " creado entre " + o.dispositivo + ":" + o.interfaz + " y " + d.id + ":" + iface.id + "." + extra);
+    avisoCable("cable", "Cable " + palabraCable(nuevo.tipo) + " conectado entre " + nombreDe(o.dispositivo) + " (" + o.interfaz + ") y " +
+      (d.nombre || d.id) + " (" + iface.id + ")." + extra);
   }
 
   function idUnicoEnlace(base) {
@@ -1825,9 +1863,9 @@ var UI = (function () {
       var e = buscarEnlace(S.enlaceSel);
       if (!e) { S.enlaceSel = null; }
       else {
-        c.appendChild(el("h2", "", "Enlace " + escapar(e.id)));
+        c.appendChild(el("h2", "", escapar(mayus(cableTexto(e)))));
         var sel = document.createElement("select");
-        sel.innerHTML = "<option value='up'>activo (up)</option><option value='down'>caído (down)</option>";
+        sel.innerHTML = "<option value='up'>activo</option><option value='down'>caído</option>";
         sel.value = e.estado;
         sel.addEventListener("change", function () { empujarHistorial(); e.estado = sel.value; reconstruirEstado(); renderLienzo(); });
         c.appendChild(etiqueta("Estado", sel)); c.appendChild(sel);
@@ -1860,13 +1898,14 @@ var UI = (function () {
           if (da && db) {
             var dist = Math.round(Math.sqrt(Math.pow(da.x - db.x, 2) + Math.pow(da.y - db.y, 2)));
             var umbral = (S.estado && S.estado.umbralWireless) || 250;
-            extra = "<br>Distancia: " + dist + " de " + umbral + " como máximo" + (dist > umbral ? " (fuera de alcance)" : "");
+            extra = "<br>Distancia: " + dist + " m (máximo " + umbral + " m)" + (dist > umbral ? ": fuera de alcance" : "");
           }
         }
-        c.appendChild(el("p", "", escapar(e.a.dispositivo + ":" + e.a.interfaz) + " — " + escapar(e.b.dispositivo + ":" + e.b.interfaz) +
-          "<br>Tipo: " + escapar(e.tipo) + "<br>Velocidad: " + escapar(String(e.velocidadMbps)) + " Mbps<br>Retardo: " +
+        c.appendChild(el("p", "", escapar(nombreDe(e.a.dispositivo) + " (" + e.a.interfaz + ")") + " — " +
+          escapar(nombreDe(e.b.dispositivo) + " (" + e.b.interfaz + ")") +
+          "<br>Tipo: " + escapar(palabraCable(e.tipo)) + "<br>Velocidad: " + escapar(String(e.velocidadMbps)) + " Mbps<br>Retardo: " +
           escapar(String(e.retardoMs)) + " ms" + extra));
-        var bB = boton("Borrar enlace (Supr)", "borrar");
+        var bB = boton("Borrar cable (Supr)", "borrar");
         bB.addEventListener("click", borrarSeleccion);
         c.appendChild(bB);
         return;
@@ -1874,15 +1913,15 @@ var UI = (function () {
     }
     var d = S.seleccionado ? buscarDisp(S.seleccionado) : null;
     if (!d) {
-      c.innerHTML = "<h2>Propiedades</h2><p style='font-size:13px'>Seleccioná un dispositivo o un enlace del lienzo para configurarlo. Con el teclado: Tab hasta el equipo y Enter.</p>";
+      c.innerHTML = "<h2>Propiedades</h2><p style='font-size:13px'>Seleccioná un equipo o un cable del lienzo para configurarlo. Con el teclado: Tab hasta el equipo y Enter.</p>";
       return;
     }
     var tabs = el("div", "tabs");
     tabs.setAttribute("role", "tablist");
     tabs.setAttribute("aria-label", "Propiedades de " + (d.nombre || d.id));
-    var nombres = [["config", "Configuración"], ["ifs", "Interfaces"], ["rutas", "Rutas"], ["dhcp", "DHCP"], ["estado", "Estado"]];
+    var nombres = [["config", "Configuración"], ["ifs", "Interfaces"], ["rutas", "Rutas"], ["filtrado", "Filtrado"], ["dhcp", "DHCP"], ["estado", "Estado"]];
     if (d.tipo !== "router") {
-      nombres = nombres.filter(function (p) { return p[0] !== "rutas" && p[0] !== "dhcp"; });
+      nombres = nombres.filter(function (p) { return p[0] !== "rutas" && p[0] !== "filtrado" && p[0] !== "dhcp"; });
     }
     if (!nombres.some(function (p) { return p[0] === S.pestañaProps; })) { S.pestañaProps = "config"; }
     nombres.forEach(function (p) {
@@ -1899,6 +1938,7 @@ var UI = (function () {
     if (S.pestañaProps === "config") { panelConfig(c, d); }
     else if (S.pestañaProps === "ifs") { panelInterfaces(c, d); }
     else if (S.pestañaProps === "rutas") { panelRutas(c, d); }
+    else if (S.pestañaProps === "filtrado") { panelFiltrado(c, d); }
     else if (S.pestañaProps === "dhcp") { panelDhcp(c, d); }
     else { panelEstado(c, d); }
 
@@ -1951,8 +1991,9 @@ var UI = (function () {
     selModo.innerHTML = "<option value='estatico'>estática</option><option value='dhcp'>DHCP</option>";
     selModo.value = editada.modo || "estatico";
     selModo.addEventListener("change", function () {
+      // Pedir por DHCP ya guarda el historial y vuelve a dibujar todo.
+      if (selModo.value === "dhcp") { solicitarDhcp(d.id, editada.id); return; }
       empujarHistorial(); editada.modo = selModo.value;
-      if (selModo.value === "dhcp") { solicitarDhcp(d.id, editada.id); }
       reconstruirEstado(); renderTodo();
     });
     c.appendChild(etiqueta("Modo", selModo)); c.appendChild(selModo);
@@ -2007,8 +2048,9 @@ var UI = (function () {
     (d.interfaces || []).forEach(function (f) {
       var fila = el("div", "filaif");
       var enl = enlaceEnPuerto(d.id, f.id);
-      fila.appendChild(el("span", "datos", "<b>" + escapar(f.id) + "</b> · " + escapar(f.medio) +
-        "<br>" + (f.ip ? escapar(f.ip + "/" + f.prefijo) + " · " : "") + (enl ? "enlace " + escapar(enl.id) : "sin enlace")));
+      var vecinoIf = enl ? (enl.a.dispositivo === d.id && enl.a.interfaz === f.id ? enl.b.dispositivo : enl.a.dispositivo) : null;
+      fila.appendChild(el("span", "datos", "<b>" + escapar(f.id) + "</b> · " + escapar(palabraCable(f.medio)) +
+        "<br>" + (f.ip ? escapar(f.ip + "/" + f.prefijo) + " · " : "") + (enl ? "conectado a " + escapar(nombreDe(vecinoIf)) : "sin cable")));
       if (f.medio === "wireless") {
         // Modo de radio (Parche 1): ap sostiene la celda, cliente se asocia a
         // un ap, bridge une dos puntos.
@@ -2078,6 +2120,68 @@ var UI = (function () {
     });
   }
 
+  function esCidr(texto) {
+    var m = /^(.+)\/(\d{1,2})$/.exec(String(texto || "").trim());
+    return !!m && Red.esIpValida(m[1]) && parseInt(m[2], 10) <= 32;
+  }
+
+  // Reglas de filtrado del router: una lista en orden; gana la primera que
+  // coincide y lo que no coincide con ninguna pasa.
+  function panelFiltrado(c, d) {
+    if (!Array.isArray(d.reglas)) { d.reglas = []; }
+    c.appendChild(el("p", "",
+      "<span style='font-size:13px'>El router revisa cada paquete que reenvía contra estas reglas, en orden: gana la primera que coincide con su origen y su destino. " +
+      "Lo que no coincide con ninguna pasa. Escribí redes como 10.45.7.0/26; 0.0.0.0/0 quiere decir cualquiera.</span>"));
+    if (d.reglas.length === 0) {
+      c.appendChild(el("p", "", "Sin reglas: el router deja pasar todo lo que sabe enrutar."));
+    }
+    d.reglas.forEach(function (r, i) {
+      var completa = esCidr(r.origen) && esCidr(r.destino);
+      var texto = (i + 1) + ". " + (r.accion === "permitir" ? "Permitir" : "Bloquear") + " " +
+        (r.origen || "?") + " → " + (r.destino || "?") + (completa ? "" : " (incompleta: no se aplica)");
+      var fila = el("div", "filaif", "<span class='datos'>" + escapar(texto) + "</span>");
+      if (i > 0) {
+        var bSubir = boton("Subir");
+        bSubir.setAttribute("aria-label", "Subir la regla " + (i + 1));
+        bSubir.addEventListener("click", function () {
+          empujarHistorial();
+          var mov = d.reglas.splice(i, 1)[0];
+          d.reglas.splice(i - 1, 0, mov);
+          reconstruirEstado(); renderPropiedades();
+        });
+        fila.appendChild(bSubir);
+      }
+      var bQuitar = boton("Quitar");
+      bQuitar.setAttribute("aria-label", "Quitar la regla " + (i + 1));
+      bQuitar.addEventListener("click", function () { empujarHistorial(); d.reglas.splice(i, 1); reconstruirEstado(); renderPropiedades(); });
+      fila.appendChild(bQuitar);
+      c.appendChild(fila);
+      var sel = document.createElement("select");
+      [["bloquear", "Bloquear"], ["permitir", "Permitir"]].forEach(function (op) {
+        var o = document.createElement("option");
+        o.value = op[0]; o.textContent = op[1];
+        if ((r.accion || "bloquear") === op[0]) { o.selected = true; }
+        sel.appendChild(o);
+      });
+      sel.addEventListener("change", function () { empujarHistorial(); r.accion = sel.value; reconstruirEstado(); renderPropiedades(); });
+      c.appendChild(etiqueta("Regla " + (i + 1) + ": acción", sel));
+      c.appendChild(sel);
+      campoTexto(c, "Regla " + (i + 1) + ": red de origen", r.origen, function (v) {
+        empujarHistorialSuave(); r.origen = v.trim(); reconstruirEstado();
+      }, esCidr, true);
+      campoTexto(c, "Regla " + (i + 1) + ": red de destino", r.destino, function (v) {
+        empujarHistorialSuave(); r.destino = v.trim(); reconstruirEstado();
+      }, esCidr, true);
+    });
+    var bAgregar = boton("Agregar regla");
+    bAgregar.addEventListener("click", function () {
+      empujarHistorial();
+      d.reglas.push({ accion: "bloquear", origen: "", destino: "" });
+      reconstruirEstado(); renderPropiedades();
+    });
+    c.appendChild(bAgregar);
+  }
+
   function panelDhcp(c, d) {
     if (d.tipo !== "router") { c.appendChild(el("p", "", "Sólo los routers son servidores DHCP.")); return; }
     var cfg = d.dhcp || { habilitado: false, desde: "", hasta: "", prefijo: 24, gateway: "" };
@@ -2090,7 +2194,7 @@ var UI = (function () {
     });
     lab.appendChild(chk); lab.appendChild(document.createTextNode("Servidor DHCP habilitado"));
     c.appendChild(lab);
-    [["desde", "Desde"], ["hasta", "Hasta"], ["gateway", "Gateway que entrega"]].forEach(function (par) {
+    [["desde", "Desde"], ["hasta", "Hasta"], ["gateway", "Puerta de enlace que entrega"]].forEach(function (par) {
       campoTexto(c, par[1], cfg[par[0]] || "", function (v) {
         cfg[par[0]] = v.trim(); d.dhcp = cfg; reconstruirEstado();
       }, function (v) { return v.trim() === "" || Red.esIpValida(v.trim()); }, true);
@@ -2099,9 +2203,16 @@ var UI = (function () {
       var n = parseInt(v, 10);
       if (!isNaN(n) && n >= 0 && n <= 32) { cfg.prefijo = n; d.dhcp = cfg; reconstruirEstado(); }
     });
+    if (S.estado) {
+      Motor.avisosDhcp(S.estado, d.id).forEach(function (a) {
+        c.appendChild(el("div", "advertencia", escapar(a)));
+      });
+    }
     var conc = (S.estado && S.estado.concesiones && S.estado.concesiones[d.id]) || {};
     var claves = Object.keys(conc);
-    c.appendChild(el("p", "", "<b>Concesiones otorgadas:</b> " + (claves.length ? escapar(claves.join(", ")) : "ninguna")));
+    c.appendChild(el("p", "", "<b>Concesiones otorgadas:</b> " + (claves.length
+      ? claves.map(function (ip) { return escapar(ip + " → " + nombreDe(conc[ip].cliente)); }).join(", ")
+      : "ninguna")));
   }
 
   function panelEstado(c, d) {
@@ -2126,10 +2237,10 @@ var UI = (function () {
         avisos = Motor.advertenciasDe(S.estado, d.id, S.modo === "docente" ? { modoDocente: true } : undefined) || [];
       } catch (e) { avisos = []; }
       if (S.modo === "docente") {
-        c.appendChild(el("p", "", "Advertencias preventivas apagadas en modo docente: el alumno debe descubrir el problema."));
+        c.appendChild(el("p", "", "En modo Docente no se muestran avisos: encontrar el problema es parte del ejercicio."));
       } else if (avisos.length) {
         avisos.forEach(function (a) {
-          c.appendChild(el("div", "advertencia", "<b>" + escapar(a.codigo + " · " + a.titulo) + "</b><br>" +
+          c.appendChild(el("div", "advertencia", "<b>" + escapar(a.titulo) + "</b> <small>" + escapar(a.codigo) + "</small><br>" +
             escapar(a.explicacion) + "<br><i>" + escapar(a.sugerencia) + "</i>"));
         });
       } else {
@@ -2217,6 +2328,25 @@ var UI = (function () {
     return d ? (d.nombre || d.id) : id;
   }
 
+  var PALABRA_CABLE = { ethernet: "de cobre", fibra: "de fibra", wireless: "inalámbrico" };
+
+  function palabraCable(medio) {
+    return PALABRA_CABLE[medio] || medio;
+  }
+
+  // "el puerto fa0/2 de SW-Admin"
+  function puertoTexto(idDisp, idIf) {
+    return "el puerto " + idIf + " de " + nombreDe(idDisp);
+  }
+
+  // "el cable entre PC-Admin y SW-Admin"
+  function cableTexto(e) {
+    return (e.tipo === "wireless" ? "el enlace inalámbrico entre " : "el cable entre ") +
+      nombreDe(e.a.dispositivo) + " y " + nombreDe(e.b.dispositivo);
+  }
+
+  function mayus(t) { return t.charAt(0).toUpperCase() + t.slice(1); }
+
   // Recorrido del paquete por nombre de equipo, sin repeticiones seguidas.
   function rutaNombres(res) {
     var nombres = [];
@@ -2235,7 +2365,7 @@ var UI = (function () {
     (S.topologia.dispositivos || []).forEach(function (d) {
       if (excluirSwitches && d.tipo === "switch-l2") { return; }
       var op = document.createElement("option");
-      op.value = d.id; op.textContent = (d.nombre || d.id) + " (" + d.id + ")";
+      op.value = d.id; op.textContent = d.nombre || d.id;
       sel.appendChild(op);
     });
   }
@@ -2251,7 +2381,8 @@ var UI = (function () {
     var selD = document.createElement("input");
     selD.type = "text";
     campoDireccion(selD, "destino");
-    selD.placeholder = "p. ej. 10.45.7.122…";
+    selD.setAttribute("inputmode", "url");
+    selD.placeholder = "p. ej. 10.45.7.122 o google.com…";
     selD.value = S.ultimoDestino || "";
     var bPing = boton("Ping", "primario");
     ctrl.appendChild(etiqueta("Origen", selO)); ctrl.appendChild(selO);
@@ -2263,15 +2394,15 @@ var UI = (function () {
     // deshabilitados en lugar de desaparecer.
     var esc = S.topologia.escenario;
     var bVer = boton("Verificar");
-    bVer.disabled = !(esc && esc.objetivos && esc.objetivos.length);
-    if (bVer.disabled) { bVer.title = "Esta topología no trae objetivos para verificar"; }
-    var hayResultado = !!(S.ultimo || S.ultimaVerif || S.ultimoAutotest);
+    bVer.disabled = !(esc && esc.objetivos && esc.objetivos.length) && !esDesafioActual();
+    if (bVer.disabled) { bVer.title = "Esta red no tiene objetivos ni un desafío para verificar"; }
+    else if (esDesafioActual()) { bVer.title = "Verifica el diseño VLSM" + (esc && esc.objetivos && esc.objetivos.length ? " y los objetivos" : ""); }
+    var hayResultado = !!(S.ultimo || S.ultimaVerif);
     var bCopiar = boton("Copiar registro");
     var bExp = boton("Exportar registro");
     bCopiar.disabled = !hayResultado;
     bExp.disabled = !hayResultado;
-    var bAuto = boton("Autotest");
-    [bVer, bCopiar, bExp, bAuto].forEach(function (b) { ctrl.appendChild(b); });
+    [bVer, bCopiar, bExp].forEach(function (b) { ctrl.appendChild(b); });
     c.appendChild(ctrl);
     c.appendChild(renderResultado());
 
@@ -2313,20 +2444,6 @@ var UI = (function () {
       } catch (e) { registrar("registro", "No se pudo exportar el registro."); }
     });
     bVer.addEventListener("click", verificarActual);
-    bAuto.addEventListener("click", function () {
-      var r1 = Red.autopruebas(), r2 = Motor.autopruebas(), r3 = Escenarios.autopruebas();
-      var fallos = r1.fallos.concat(r2.fallos).concat(r3.fallos);
-      S.ultimoAutotest = {
-        total: r1.total + r2.total + r3.total,
-        pasadas: r1.pasadas + r2.pasadas + r3.pasadas,
-        fallos: fallos
-      };
-      consolaAgregar("Autotest: " + S.ultimoAutotest.pasadas + "/" + S.ultimoAutotest.total + " pruebas pasadas.", fallos.length > 0);
-      fallos.slice(0, 10).forEach(function (f) { consolaAgregar("- " + f.nombre, true); });
-      S.panelRes = "autotest";
-      renderInferior();
-      anunciar("Autotest: " + S.ultimoAutotest.pasadas + " de " + S.ultimoAutotest.total + " pruebas pasadas.");
-    });
     if (S.enfocarPing) {
       S.enfocarPing = false;
       try { bPing.focus(); } catch (e) { /* sin foco: se sigue igual */ }
@@ -2348,7 +2465,6 @@ var UI = (function () {
   function renderResultado() {
     var cont = el("div", "simres");
     if (S.panelRes === "verificacion" && S.ultimaVerif) { return renderVerificacion(cont); }
-    if (S.panelRes === "autotest" && S.ultimoAutotest) { return renderAutotest(cont); }
     if (!S.ultimo) {
       cont.appendChild(el("div", "vacio",
         "<b>Elegí un origen y un destino, y apretá Ping</b>" +
@@ -2379,7 +2495,8 @@ var UI = (function () {
   function renderDiagnostico(dg) {
     if (!dg) { return el("div", "diagnostico", "<span class='tit'>El ping falló sin diagnóstico.</span>"); }
     var caja = el("div", "diagnostico",
-      "<span class='cod'>" + escapar(dg.codigo) + "</span><span class='tit'>" + escapar(dg.titulo) + "</span>" +
+      "<span class='tit'>" + escapar(dg.titulo) + "</span>" +
+      (dg.codigo && dg.codigo !== "ENTRADA" ? "<span class='cod' title='Código del diagnóstico'>" + escapar(dg.codigo) + "</span>" : "") +
       "<div>" + escapar(dg.explicacion) + "</div>" +
       "<div class='rev'><b>Sugerencia:</b> " + escapar(dg.sugerencia) + "</div>");
     var origen = S.ultimo && S.ultimo.origen;
@@ -2401,7 +2518,7 @@ var UI = (function () {
     return lineas.length ? lineas[lineas.length - 1].trim() : "";
   }
 
-  var PASOS_CLAVE = /^(Comparar redes|Buscar ruta|Verificar que el destino)/;
+  var PASOS_CLAVE = /^(Averiguar la IP de|Decidir si el destino|Buscar ruta|Llegar a internet|Comprobar que la respuesta)/;
 
   function renderRecorrido(res) {
     var caja = el("div", "recorrido");
@@ -2438,10 +2555,10 @@ var UI = (function () {
         var f = el("div", "pasofallo",
           "<span class='marca' aria-hidden='true'>✗</span><b>" + p.n + ". " + escapar(p.titulo) + "</b>");
         var pre = document.createElement("pre");
-        // En el resumen van las dos primeras líneas del detalle (la cuenta
-        // que falló); el detalle completo, con los binarios, en "Ver los pasos".
+        // En el resumen van la primera línea del detalle (la cuenta) y la
+        // última (la conclusión); los binarios, en "Ver los pasos".
         var det = String(p.detalle || "").split("\n");
-        pre.textContent = (S.verTodos ? det : det.slice(0, 2)).join("\n");
+        pre.textContent = (S.verTodos || det.length <= 2 ? det : [det[0], det[det.length - 1]]).join("\n");
         f.appendChild(pre);
         lista.appendChild(f);
       }
@@ -2463,43 +2580,46 @@ var UI = (function () {
   function renderVerificacion(cont) {
     var v = S.ultimaVerif;
     var caja = el("div", "recorrido");
-    var cab = el("div", "cab", "<span>Objetivos del escenario</span>");
+    var titulo = v.vlsm && v.res ? "Diseño VLSM y objetivos" : (v.vlsm ? "Diseño VLSM" : "Objetivos del escenario");
+    var cab = el("div", "cab", "<span>" + titulo + "</span>");
     var lista = el("div", "pasos");
     if (v.error) {
       lista.appendChild(el("p", "", escapar(v.error)));
-    } else {
+    }
+    if (v.vlsm) {
+      var errores = v.vlsm.resumen.errores, advertencias = v.vlsm.resumen.advertencias;
+      var estado = (errores ? errores + (errores === 1 ? " error" : " errores") : "sin errores") +
+        (advertencias ? ", " + advertencias + (advertencias === 1 ? " advertencia" : " advertencias") : "");
+      if (v.res) { lista.appendChild(el("div", "", "<b>Diseño VLSM</b> — " + escapar(estado))); }
+      else { cab.appendChild(el("span", errores ? "mal" : "ok", estado)); }
+      v.vlsm.porSector.forEach(function (sec) {
+        lista.appendChild(el("div", sec.ok ? "linpaso" : "pasofallo",
+          "<span class='marca' aria-hidden='true'>" + (sec.ok ? "✓" : "✗") + "</span><b>" + escapar(sec.sector) + "</b>" +
+          sec.hallazgos.map(function (h) { return "<br><small>" + escapar(h.nivel + ": " + h.mensaje) + "</small>"; }).join("")));
+      });
+    }
+    if (v.res) {
       var cumplidos = v.res.filter(function (r) { return r.cumple; }).length;
-      cab.appendChild(el("span", cumplidos === v.res.length ? "ok" : "mal", cumplidos + " de " + v.res.length + " cumplidos"));
+      var estadoObj = cumplidos + " de " + v.res.length + " cumplidos";
+      if (v.vlsm) { lista.appendChild(el("div", "", "<b>Objetivos</b> — " + escapar(estadoObj))); }
+      else { cab.appendChild(el("span", cumplidos === v.res.length ? "ok" : "mal", estadoObj)); }
       v.res.forEach(function (r) {
         var o = r.objetivo;
+        var espera = o.esperado === "falla"
+          ? (o.codigo && Motor.CATALOGO[o.codigo]
+            ? "se espera que no llegue: " + Motor.CATALOGO[o.codigo].titulo.toLowerCase() + ", " + o.codigo
+            : "se espera que no llegue")
+          : "se espera que llegue";
+        var obtenido = r.cumple ? " — cumple"
+          : (r.codigo ? " — no cumple: " + r.titulo + " (" + r.codigo + ")"
+            : (o.esperado === "falla" ? " — no cumple: el ping llegó" : " — no cumple"));
         lista.appendChild(el("div", r.cumple ? "linpaso" : "pasofallo",
           "<span class='marca' aria-hidden='true'>" + (r.cumple ? "✓" : "✗") + "</span><b>" +
-          escapar(nombreDe(o.origen) + " → " + o.destino) + "</b> (se espera " + escapar(o.esperado || "exito") + ")" +
-          (r.cumple ? " — cumple" : " — no cumple" + (r.codigo ? ": " + escapar(r.codigo) : ""))));
+          escapar(nombreDe(o.origen) + " → " + o.destino) + "</b> (" + escapar(espera) + ")" + escapar(obtenido) +
+          (o.descripcion ? "<br><small>" + escapar(o.descripcion) + "</small>" : "")));
       });
     }
     caja.insertBefore(cab, caja.firstChild);
-    caja.appendChild(lista);
-    cont.appendChild(caja);
-    var lado = el("div", "lado");
-    lado.appendChild(renderConsola());
-    cont.appendChild(lado);
-    return cont;
-  }
-
-  function renderAutotest(cont) {
-    var a = S.ultimoAutotest;
-    var caja = el("div", "recorrido");
-    var cab = el("div", "cab", "<span>Autotest de las capas 1 a 3</span>");
-    cab.appendChild(el("span", a.fallos.length ? "mal" : "ok", a.pasadas + " de " + a.total + " pruebas pasadas"));
-    caja.appendChild(cab);
-    var lista = el("div", "pasos");
-    if (!a.fallos.length) {
-      lista.appendChild(el("div", "linpaso", "<span class='marca' aria-hidden='true'>✓</span>Todas las pruebas pasaron."));
-    }
-    a.fallos.forEach(function (f) {
-      lista.appendChild(el("div", "pasofallo", "<span class='marca' aria-hidden='true'>✗</span>" + escapar(f.nombre)));
-    });
     caja.appendChild(lista);
     cont.appendChild(caja);
     var lado = el("div", "lado");
@@ -2557,15 +2677,16 @@ var UI = (function () {
     S.consolaAbierta = false;
     if (res.exito) {
       var r = res.respuestas[0] || { ttl: 64, ms: 1 };
-      consolaAgregar("Respuesta desde " + destino + ": bytes=32 tiempo=" + r.ms + "ms TTL=" + r.ttl);
+      if (res.ipResuelta) { consolaAgregar("Haciendo ping a " + destino + " [" + res.ipResuelta + "]"); }
+      consolaAgregar("Respuesta desde " + (res.ipResuelta || destino) + ": bytes=32 tiempo=" + r.ms + "ms TTL=" + r.ttl);
       consolaAgregar("Estadísticas: 1 enviados, 1 recibidos, 0 perdidos.");
       anunciar("Ping a " + destino + ": el eco volvió en " + r.ms + " milisegundos.");
     } else {
-      consolaAgregar("El ping de " + origen + " a " + destino + " falló.", true);
+      consolaAgregar("El ping de " + nombreDe(origen) + " a " + destino + " falló.", true);
       if (res.diagnostico) {
-        consolaAgregar(res.diagnostico.codigo + " · " + res.diagnostico.titulo, true);
+        consolaAgregar(res.diagnostico.titulo + " (" + res.diagnostico.codigo + ")", true);
       }
-      anunciar("Ping a " + destino + " falló" + (res.diagnostico ? ": " + res.diagnostico.codigo + ", " + res.diagnostico.titulo : "") + ".");
+      anunciar("Ping a " + destino + " falló" + (res.diagnostico ? ": " + res.diagnostico.titulo : "") + ".");
     }
     registrar("resultado",
       "Ping " + origen + " → " + destino + ": " + (res.exito ? "éxito." : ("falla " + (res.diagnostico ? res.diagnostico.codigo : "") + ".")));
@@ -2574,23 +2695,56 @@ var UI = (function () {
     renderLienzo(); renderPropiedades();
   }
 
+  // Hay un diseño VLSM para verificar cuando el escenario declara sus
+  // sectores; el modo elegido en la barra no alcanza: sin sectores no hay
+  // contra qué comparar.
+  function esDesafioActual() {
+    var esc = S.topologia.escenario;
+    return !!(esc && (esc.sectores || esc.requerimientos));
+  }
+
+  // Verifica lo que el escenario pida: el diseño VLSM si es un desafío, los
+  // objetivos de ping si los trae, o las dos cosas.
   function verificarActual() {
     var esc = S.topologia.escenario;
-    if (!esc || !esc.objetivos) {
-      S.ultimaVerif = { error: "Esta topología no trae objetivos. Cargá el ejemplo docente para practicar." };
-    } else {
+    var conObjetivos = !!(esc && esc.objetivos && esc.objetivos.length);
+    var desafio = esDesafioActual();
+    S.ultimaVerif = {};
+    if (!conObjetivos && !desafio) {
+      S.ultimaVerif.error = "Esta red no tiene objetivos para verificar. Los traen los laboratorios y el ejemplo \"Complejo roto\".";
+    }
+    if (desafio) {
+      try { S.ultimaVerif.vlsm = Escenarios.verificarDesafio(S.topologia, esc || {}); }
+      catch (e) { S.ultimaVerif.error = "No se pudo verificar el diseño: " + e.message; }
+    }
+    if (conObjetivos) {
       if (!S.estado) { reconstruirEstado(); }
-      try { S.ultimaVerif = { res: Escenarios.verificarObjetivos(S.estado, esc.objetivos) }; }
-      catch (e) { S.ultimaVerif = { error: "No se pudo verificar: " + e.message }; }
+      try { S.ultimaVerif.res = Escenarios.verificarObjetivos(S.estado, esc.objetivos); }
+      catch (e) { S.ultimaVerif.error = "No se pudo verificar: " + e.message; }
+      // Cada objetivo es un ping: queda en la consola como si se hubiera hecho a mano.
+      if (S.ultimaVerif.res) {
+        var n = S.ultimaVerif.res.length;
+        consolaAgregar("Verificando " + n + (n === 1 ? " objetivo" : " objetivos") + " del escenario:");
+        S.ultimaVerif.res.forEach(function (r) {
+          var o = r.objetivo;
+          if (!o || o.tipo !== "ping") { return; }
+          consolaAgregar((r.cumple ? "✓ " : "✗ ") + "ping " + nombreDe(o.origen) + " → " + o.destino + ": " +
+            (r.codigo ? "no llegó — " + r.titulo + " (" + r.codigo + ")" : "llegó"), !r.cumple);
+        });
+      }
     }
     S.panelRes = "verificacion";
     renderInferior();
+    var partes = [];
+    if (S.ultimaVerif.vlsm) {
+      var errores = S.ultimaVerif.vlsm.resumen.errores;
+      partes.push("diseño VLSM " + (errores ? "con " + errores + (errores === 1 ? " error" : " errores") : "sin errores"));
+    }
     if (S.ultimaVerif.res) {
       var ok = S.ultimaVerif.res.filter(function (r) { return r.cumple; }).length;
-      anunciar("Verificación: " + ok + " de " + S.ultimaVerif.res.length + " objetivos cumplidos.");
-    } else {
-      anunciar(S.ultimaVerif.error);
+      partes.push(ok + " de " + S.ultimaVerif.res.length + " objetivos cumplidos");
     }
+    anunciar(S.ultimaVerif.error || ("Verificación: " + partes.join(", ") + "."));
   }
 
   /* Cálculo de subred atado al seleccionado, con binario en dos colores. */
@@ -2655,37 +2809,64 @@ var UI = (function () {
     html += "<span>Cantidad de hosts</span><span>" + escapar(String(det.cantidadHosts)) + "</span>";
     html += "</div>";
     if (det.advertencia) { html += "<div class='advertencia'>" + escapar(det.advertencia) + "</div>"; }
-    html += "<p><b>¿Tu gateway está en tu subred?</b><br>";
+    // El AND de la propia IP se muestra siempre; la comparación con el
+    // gateway, sólo si el equipo tiene uno.
+    html += "<p><b>¿Tu puerta de enlace (gateway) está en tu red?</b><br>";
+    html += "Tu IP " + escapar(det.ip) + " AND máscara → " + escapar((det.gateway && det.gateway.andIp) || det.direccionDeRed) + "<br>";
     if (det.gateway) {
-      html += "IP&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;" + escapar(det.ip) + " AND máscara → " + escapar(det.gateway.andIp || "?") + "<br>";
-      html += "Gateway " + escapar(det.gateway.ip) + " AND máscara → " + escapar(det.gateway.andGateway || "?") + "<br>";
+      html += "Puerta de enlace " + escapar(det.gateway.ip) + " AND máscara → " + escapar(det.gateway.andGateway || "?") + "<br>";
       html += escapar(det.gateway.veredicto) + "</p>";
-    } else { html += "Sin gateway configurado.</p>"; }
+    } else if (d.tipo === "internet") {
+      html += "Internet no usa puerta de enlace: responde por las direcciones públicas.</p>";
+    } else if (d.tipo === "router") {
+      html += "Un router no usa puerta de enlace para sus propias redes: para las demás decide con su tabla de rutas.</p>";
+    } else {
+      html += "Sin puerta de enlace: este equipo solo puede comunicarse con los de su propia red.</p>";
+    }
     caja.innerHTML = html;
+  }
+
+  // Sólo los hosts piden dirección: routers, switches, AP y la nube no.
+  function esClienteDhcp(d) {
+    return !!d && ["router", "switch-l2", "ap", "internet"].indexOf(d.tipo) < 0;
   }
 
   function panelDhcpInf(c) {
     c.innerHTML = "";
-    c.appendChild(el("p", "", "<b>DHCP</b> <span style='font-size:12px'>— la animación DORA ocurre sobre la topología del lienzo.</span>"));
+    c.appendChild(el("p", "", "<b>DHCP</b> <span style='font-size:12px'>— la animación DORA recorre los cables del lienzo.</span>"));
+    var clientes = (S.topologia.dispositivos || []).filter(esClienteDhcp);
+    if (!clientes.length) {
+      c.appendChild(el("p", "", "Agregá una PC (u otro equipo final) para pedir una dirección por DHCP."));
+      return;
+    }
+    var sel = S.dhcpSel || {};
+    var inicial = buscarDisp(sel.equipo) || buscarDisp(S.seleccionado);
+    if (!esClienteDhcp(inicial)) { inicial = clientes[0]; }
     var selC = document.createElement("select");
-    (S.topologia.dispositivos || []).forEach(function (d) {
+    clientes.forEach(function (d) {
       var op = document.createElement("option");
       op.value = d.id; op.textContent = (d.nombre || d.id);
       selC.appendChild(op);
     });
-    if (S.seleccionado) { selC.value = S.seleccionado; }
+    selC.value = inicial.id;
     var selI = document.createElement("select");
-    function cargarIfaces() {
+    function cargarIfaces(preferida) {
       selI.innerHTML = "";
       var d = buscarDisp(selC.value);
-      ((d && d.interfaces) || []).forEach(function (f) {
+      var lista = (d && d.interfaces) || [];
+      lista.forEach(function (f) {
         var op = document.createElement("option");
-        op.value = f.id; op.textContent = f.id;
+        op.value = f.id; op.textContent = f.id + (enlaceEnPuerto(d.id, f.id) ? "" : " (sin cable)");
         selI.appendChild(op);
       });
+      var conCable = lista.filter(function (f) { return enlaceEnPuerto(d.id, f.id); })[0];
+      if (preferida && buscarIface(d, preferida)) { selI.value = preferida; }
+      else if (conCable) { selI.value = conCable.id; }
     }
-    cargarIfaces();
-    selC.addEventListener("change", cargarIfaces);
+    cargarIfaces(sel.equipo === inicial.id ? sel.interfaz : null);
+    function recordar() { S.dhcpSel = { equipo: selC.value, interfaz: selI.value }; }
+    selC.addEventListener("change", function () { cargarIfaces(null); recordar(); });
+    selI.addEventListener("change", recordar);
     var b = boton("Solicitar dirección (DORA)", "primario");
     var out = el("div", "");
     out.setAttribute("aria-live", "polite");
@@ -2694,40 +2875,99 @@ var UI = (function () {
     fila.appendChild(etiqueta("Interfaz", selI)); fila.appendChild(selI);
     fila.appendChild(b);
     c.appendChild(fila); c.appendChild(out);
+    // El resultado vive en S.ultimoDhcp: renderTodo() rehace este panel y lo
+    // vuelve a mostrar.
+    var u = S.ultimoDhcp;
+    if (u && u.equipo === selC.value && u.interfaz === selI.value) {
+      out.innerHTML = htmlResultadoDhcp(u.res, u.equipo);
+    }
     b.addEventListener("click", function () {
-      if (!S.estado) { reconstruirEstado(); }
-      var res;
-      try { res = Motor.dhcpSolicitar(S.estado, selC.value, selI.value); }
-      catch (e) { out.textContent = "Error: " + e.message; return; }
-      S.topologia = clonar(S.estado.topologia);
-      reconstruirEstado();
-      var orden = { discover: 0, offer: 1, request: 2, ack: 3 };
-      var msgs = (res.mensajes || []).slice().sort(function (a, b2) { return (orden[a.tipo] || 0) - (orden[b2.tipo] || 0); });
-      out.innerHTML = msgs.map(function (m) {
-        return "<div class='paso ok'><b>" + escapar(m.tipo) + "</b> " + escapar(m.origen) + " → " + escapar(m.destino) + "</div>";
-      }).join("") + (res.exito
-        ? "<p>Dirección otorgada: <b>" + escapar(res.ip + "/" + res.prefijo) + "</b> gateway " + escapar(res.gateway || "—") + ".</p>"
-        : "<div class='diagnostico'><b>" + escapar(res.diagnostico ? res.diagnostico.codigo : "D16") + "</b> " +
-          escapar(res.diagnostico ? res.diagnostico.explicacion : "") + "</div>");
-      renderTodo();
-      animarDhcp(res);
+      recordar();
+      pedirDhcp(selC.value, selI.value);
     });
+  }
+
+  // Pide una dirección, guarda el resultado y anima el DORA. Lo usan el
+  // panel inferior y el selector de modo del panel de propiedades.
+  function pedirDhcp(idDisp, idIf) {
+    if (!S.estado) { reconstruirEstado(); }
+    if (!S.estado) { avisar("La topología tiene errores: no se puede simular DHCP."); return null; }
+    var res;
+    try { res = Motor.dhcpSolicitar(S.estado, idDisp, idIf); }
+    catch (e) { registrar("D16", "DHCP falló: " + e.message); avisar("DHCP falló: " + e.message); return null; }
+    empujarHistorial();
+    S.topologia = clonar(S.estado.topologia);
+    reconstruirEstado();
+    S.dhcpSel = { equipo: idDisp, interfaz: idIf };
+    S.ultimoDhcp = { equipo: idDisp, interfaz: idIf, res: res };
+    renderTodo();
+    avisar(res.exito
+      ? nombreDe(idDisp) + " obtuvo " + res.ip + "/" + res.prefijo + " por DHCP."
+      : nombreDe(idDisp) + " no obtuvo dirección por DHCP" + (res.ip ? " (quedó en " + res.ip + ")" : "") + ".");
+    animarDhcp(res);
+    return res;
+  }
+
+  function textoMensajeDhcp(m, res) {
+    var o = escapar(nombreDe(m.origen));
+    var d = escapar(nombreDe(m.destino));
+    if (m.tipo === "discover") {
+      return "<b>DISCOVER</b> — " + o + " pregunta en difusión a toda su red: ¿hay algún servidor DHCP?";
+    }
+    if (m.tipo === "offer") {
+      var aceptada = res.exito && res.servidor === m.origen;
+      return "<b>OFFER</b> — " + o + " le ofrece <b>" + escapar(m.ip) + "</b> a " + d +
+        " (en difusión: " + d + " todavía no tiene IP)" +
+        (res.mensajes.filter(function (x) { return x.tipo === "offer"; }).length > 1
+          ? (aceptada ? " · <b>aceptada</b>" : " · descartada") : "");
+    }
+    if (m.tipo === "request") {
+      return "<b>REQUEST</b> — " + o + " anuncia en difusión que acepta la oferta de " +
+        escapar(nombreDe(m.servidor)) + " (" + escapar(m.ip) + ")";
+    }
+    if (m.tipo === "ack") {
+      return "<b>ACK</b> — " + o + " confirma: " + escapar(m.ip + "/" + res.prefijo) + " queda concedida a " + d;
+    }
+    return "<b>" + escapar(String(m.tipo).toUpperCase()) + "</b> " + o + " → " + d;
+  }
+
+  function htmlResultadoDhcp(res, idDisp) {
+    var html = (res.mensajes || []).map(function (m) {
+      var descartada = m.tipo === "offer" && res.exito && res.servidor !== m.origen;
+      return "<div class='paso " + (descartada ? "" : "ok") + "'>" + textoMensajeDhcp(m, res) + "</div>";
+    }).join("");
+    if (res.exito) {
+      html += "<p>Dirección otorgada a " + escapar(nombreDe(idDisp)) + ": <b>" + escapar(res.ip + "/" + res.prefijo) +
+        "</b>, puerta de enlace " + escapar(res.gateway || "—") + ".</p>";
+    } else {
+      var dg = res.diagnostico;
+      html += "<div class='diagnostico'><span class='tit'>" + escapar(dg ? dg.titulo : "No se obtuvo una IP por DHCP") + "</span>" +
+        (dg ? "<span class='cod' title='Código del diagnóstico'>" + escapar(dg.codigo) + "</span>" : "") +
+        "<div>" + escapar(dg ? dg.explicacion : "") + "</div>" +
+        (dg && dg.sugerencia ? "<div class='rev'><b>Sugerencia:</b> " + escapar(dg.sugerencia) + "</div>" : "") + "</div>";
+    }
+    (res.avisos || []).forEach(function (a) {
+      html += "<div class='advertencia'>" + escapar(a) + "</div>";
+    });
+    return html;
   }
 
   function panelAyuda(c) {
     c.innerHTML = "<b>Ayuda</b>" +
-      "<p><b>Ideas clave:</b> el sistema operativo decide con IP AND máscara; el gateway debe estar en tu subred; " +
+      "<p><b>Ideas clave:</b> el sistema operativo decide con IP AND máscara; la puerta de enlace tiene que estar en tu red; " +
       "el switch no mira IP y no enruta; la vuelta del ping también necesita camino; el prefijo es la fuente de verdad.</p>" +
       "<p><b>Simplificaciones declaradas:</b> sin STP ni bucles reales, sin enrutamiento dinámico (OSPF, BGP, RIP), " +
       "sin VLAN ni switch L3, sin NAT, sin HTTP, sin fragmentación, sin IPv6, sin TCP real, sin cifrado ni TLS, " +
-      "sin QoS real, sin 802.1X y sin radiofrecuencia: el wireless es una abstracción por distancia.</p>" +
+      "sin QoS real, sin 802.1X y sin radiofrecuencia: el wireless es una abstracción por distancia. " +
+      "La nube Internet responde por cualquier dirección pública y devuelve la respuesta por el mismo enlace: " +
+      "en una red real, el firewall o router de salida haría NAT. El DNS conoce google.com, www.google.com, " +
+      "dns.google y one.one.one.one.</p>" +
       "<p><b>Atajos:</b> Ctrl+Z deshacer, Ctrl+Y rehacer, Supr borra, Esc cancela, F presenta. " +
       "Paneo: arrastrar el fondo, o flechas con el foco en el lienzo. Con el foco en un equipo, las flechas lo mueven. " +
       "Desde el teclado, Enter sobre un dispositivo de la paleta lo agrega en el centro de la vista. " +
       "Para cambiar un cable de puerto: seleccionalo, hacé clic en el asa redonda de la punta que querés mover " +
       "y después en el puerto nuevo (también desde las listas Punta A y Punta B del panel).</p>";
-    var escD = S.topologia.escenario;
-    if (S.modo === "desafio" || (escD && (escD.modo === "desafio" || escD.sectores || escD.requerimientos))) {
+    if (esDesafioActual()) {
       var b = boton("Verificar diseño VLSM", "primario");
       var out = el("div", "");
       out.setAttribute("aria-live", "polite");
@@ -2826,64 +3066,136 @@ var UI = (function () {
     registrar("animacion", "Animación del ping sobre " + resultado.saltos.length + " saltos (" + S.velocidad + ", cancelable con Esc o nuevo ping).");
   }
 
+  // Extremos de un enlace en el lienzo, en el sentido desde→hacia: la misma
+  // geometría con la que renderLienzo dibuja el cable.
+  function tramoEnlace(e, idDesde) {
+    var a = buscarDisp(e.a.dispositivo), b = buscarDisp(e.b.dispositivo);
+    if (!a || !b) { return null; }
+    var pa = puntoPuerto(a, e.a.interfaz), pb = puntoPuerto(b, e.b.interfaz);
+    return e.a.dispositivo === idDesde ? { de: pa, a: pb } : { de: pb, a: pa };
+  }
+
+  // Ondas de una trama que inunda: los enlaces se ordenan por distancia (en
+  // saltos) al equipo que la emite, y cada onda avanza un enlace más.
+  function ondasDifusion(idOrigen, idsEnlaces) {
+    var pendientes = idsEnlaces.map(buscarEnlace).filter(Boolean);
+    var alcanzados = {}; alcanzados[idOrigen] = true;
+    var ondas = [];
+    while (pendientes.length) {
+      var onda = [], resto = [];
+      pendientes.forEach(function (e) {
+        if (alcanzados[e.a.dispositivo]) { onda.push({ e: e, desde: e.a.dispositivo }); }
+        else if (alcanzados[e.b.dispositivo]) { onda.push({ e: e, desde: e.b.dispositivo }); }
+        else { resto.push(e); }
+      });
+      if (!onda.length) { break; }
+      onda.forEach(function (x) { alcanzados[x.e.a.dispositivo] = true; alcanzados[x.e.b.dispositivo] = true; });
+      ondas.push(onda.map(function (x) { return tramoEnlace(x.e, x.desde); }).filter(Boolean));
+      pendientes = resto;
+    }
+    return ondas;
+  }
+
+  function etiquetaDhcp(m) {
+    var t = String(m.tipo).toUpperCase();
+    if (m.ip && m.tipo !== "request") { t += " " + m.ip; }
+    return t + (m.difusion ? " (difusión)" : "");
+  }
+
   function animarDhcp(resultado) {
     var miToken = ++S.animToken;
     limpiarAnim();
     var svgNS = "http://www.w3.org/2000/svg";
     var msgs = (resultado && resultado.mensajes) || [];
     if (!msgs.length) { return; }
+    function linea(p, q, color, ancho, punteada) {
+      var l = document.createElementNS(svgNS, "line");
+      l.setAttribute("x1", p.x); l.setAttribute("y1", p.y);
+      l.setAttribute("x2", q.x); l.setAttribute("y2", q.y);
+      l.setAttribute("stroke", color); l.setAttribute("stroke-width", ancho);
+      l.setAttribute("stroke-linecap", "round");
+      if (punteada) { l.setAttribute("stroke-dasharray", "6 5"); l.setAttribute("opacity", "0.7"); }
+      S.capaAnim.appendChild(l);
+    }
+    // Dibujo fijo de un mensaje: la inundación punteada, el camino útil en
+    // trazo firme y el nombre del mensaje sobre quien lo emite.
+    function dibujarFijo(m, color) {
+      var ondas = ondasDifusion(m.origen, (m.inundados && m.inundados.length) ? m.inundados : (m.enlaces || []));
+      ondas.forEach(function (onda) { onda.forEach(function (t) { linea(t.de, t.a, color, 2, true); }); });
+      var actual = m.origen;
+      (m.enlaces || []).forEach(function (id) {
+        var e = buscarEnlace(id);
+        var t = e && tramoEnlace(e, actual);
+        if (!t) { return; }
+        linea(t.de, t.a, color, 4, false);
+        actual = e.a.dispositivo === actual ? e.b.dispositivo : e.a.dispositivo;
+      });
+      var o = buscarDisp(m.origen);
+      if (o) {
+        var tx = document.createElementNS(svgNS, "text");
+        tx.setAttribute("x", o.x + 14); tx.setAttribute("y", o.y - 38);
+        tx.setAttribute("font-size", "14"); tx.setAttribute("font-weight", "700");
+        tx.setAttribute("fill", color); tx.setAttribute("stroke", "#fff");
+        tx.setAttribute("stroke-width", "3"); tx.setAttribute("paint-order", "stroke");
+        tx.textContent = etiquetaDhcp(m);
+        S.capaAnim.appendChild(tx);
+      }
+      return ondas;
+    }
+    function colorDe(m) {
+      if (m.tipo === "offer" && resultado.exito && resultado.servidor !== m.origen) { return "#6b7280"; }
+      // Cliente en azul, servidor en violeta: el verde ya es el de los cables en up.
+      return (m.tipo === "discover" || m.tipo === "request") ? "#0b5fa5" : "#7c3aed";
+    }
+    if (movimientoReducido()) {
+      // Sin animación: queda dibujado el último mensaje con su recorrido.
+      dibujarFijo(msgs[msgs.length - 1], colorDe(msgs[msgs.length - 1]));
+      return;
+    }
     var i = 0;
     function siguiente() {
       if (miToken !== S.animToken) { return; }
       if (i >= msgs.length) { return; }
       limpiarAnim();
       var m = msgs[i];
-      var o = buscarDisp(m.origen);
-      var dt = (m.destino === "broadcast") ? null : buscarDisp(m.destino);
-      if (m.destino === "broadcast" && o) {
-        (S.topologia.dispositivos || []).forEach(function (d) {
-          if (d.id === o.id) { return; }
-          var l = document.createElementNS(svgNS, "line");
-          l.setAttribute("x1", o.x); l.setAttribute("y1", o.y - 30);
-          l.setAttribute("x2", d.x); l.setAttribute("y2", d.y - 30);
-          l.setAttribute("stroke", "#0b5fa5"); l.setAttribute("stroke-width", 2);
-          l.setAttribute("stroke-dasharray", "5 4");
-          S.capaAnim.appendChild(l);
+      var color = colorDe(m);
+      var ondas = dibujarFijo(m, color);
+      registrar("dhcp", "DORA sobre el lienzo: " + etiquetaDhcp(m) + ", " + nombreDe(m.origen) + " → " +
+        (m.destino === "broadcast" ? "toda la red" : nombreDe(m.destino)) + ".");
+      var puntos = [];
+      var dur = msVelocidad();
+      var onda = 0, t0 = null;
+      function cuadro(t) {
+        if (miToken !== S.animToken) { return; }
+        if (t0 === null) { t0 = t; }
+        var avance = (t - t0) / dur;
+        if (avance >= 1) { onda += 1; t0 = t; avance = 0; }
+        puntos.forEach(function (p) { S.capaAnim.removeChild(p); });
+        puntos = [];
+        if (onda >= ondas.length) {
+          i += 1;
+          setTimeout(siguiente, dur);
+          return;
+        }
+        ondas[onda].forEach(function (tr) {
+          var c = document.createElementNS(svgNS, "circle");
+          c.setAttribute("r", 7); c.setAttribute("fill", color);
+          c.setAttribute("stroke", "#fff"); c.setAttribute("stroke-width", 2);
+          c.setAttribute("cx", tr.de.x + (tr.a.x - tr.de.x) * avance);
+          c.setAttribute("cy", tr.de.y + (tr.a.y - tr.de.y) * avance);
+          S.capaAnim.appendChild(c);
+          puntos.push(c);
         });
-        var t = document.createElementNS(svgNS, "text");
-        t.setAttribute("x", o.x + 12); t.setAttribute("y", o.y - 36);
-        t.setAttribute("font-size", "14"); t.textContent = m.tipo + " (difusión: así se ve un broadcast)";
-        S.capaAnim.appendChild(t);
-      } else if (o && dt) {
-        var l2 = document.createElementNS(svgNS, "line");
-        l2.setAttribute("x1", o.x); l2.setAttribute("y1", o.y - 30);
-        l2.setAttribute("x2", dt.x); l2.setAttribute("y2", dt.y - 30);
-        l2.setAttribute("stroke", "#1a7f37"); l2.setAttribute("stroke-width", 3);
-        S.capaAnim.appendChild(l2);
-        var t2 = document.createElementNS(svgNS, "text");
-        t2.setAttribute("x", (o.x + dt.x) / 2 + 8); t2.setAttribute("y", (o.y + dt.y) / 2 - 34);
-        t2.setAttribute("font-size", "14"); t2.textContent = m.tipo;
-        S.capaAnim.appendChild(t2);
+        requestAnimationFrame(cuadro);
       }
-      registrar("dhcp", "DORA sobre el lienzo: " + m.tipo + " " + m.origen + " → " + m.destino + ".");
-      i += 1;
-      setTimeout(siguiente, msVelocidad());
+      requestAnimationFrame(cuadro);
     }
-    // Con movimiento reducido se muestra sólo el último mensaje (el ACK o el
-    // último que se llegó a enviar), sin la secuencia animada.
-    if (movimientoReducido()) { i = msgs.length - 1; }
     siguiente();
   }
 
   function solicitarDhcp(idDisp, idIf) {
-    if (!S.estado) { reconstruirEstado(); }
-    var res;
-    try { res = Motor.dhcpSolicitar(S.estado, idDisp, idIf); }
-    catch (e) { registrar("D16", "DHCP falló: " + e.message); return res; }
-    S.topologia = clonar(S.estado.topologia);
-    reconstruirEstado(); renderTodo();
-    animarDhcp(res);
-    return res;
+    S.pestañaInf = "dhcp";
+    return pedirDhcp(idDisp, idIf);
   }
 
   /* ---------------- Registro, persistencia, importar/exportar ---------------- */
@@ -3008,7 +3320,7 @@ var UI = (function () {
     else { S.pestañaInf = "simulacion"; }
     renderTodo();
     registrar("modo", "Modo " + modo + ". La topología cargada no cambió." +
-      (modo === "docente" ? " Advertencias preventivas apagadas." : ""));
+      (modo === "docente" ? " No se muestran avisos de configuración." : ""));
   }
 
   return {

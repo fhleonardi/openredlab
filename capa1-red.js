@@ -366,7 +366,7 @@ var Red = (function () {
         andIp: andIp,
         andGateway: andGateway,
         coinciden: coinciden,
-        veredicto: coinciden ? "Tu gateway pertenece a tu subred." : "Tu gateway NO pertenece a tu subred."
+        veredicto: coinciden ? "Las dos dan la misma red: tu puerta de enlace está en tu red." : "Dan redes distintas: tu puerta de enlace está fuera de tu red."
       };
     }
 
@@ -457,9 +457,9 @@ var Red = (function () {
     comparar("desglose corte dentro del octeto", detalle.cortePosicion, 30);
     comparar("desglose mascara binaria", detalle.mascaraBinaria, "11111111.11111111.11111111.11100000");
     comparar("desglose gateway coincide", detalle.gateway.coinciden, true);
-    comparar("desglose veredicto gateway", detalle.gateway.veredicto, "Tu gateway pertenece a tu subred.");
+    comparar("desglose veredicto gateway", detalle.gateway.veredicto, "Las dos dan la misma red: tu puerta de enlace está en tu red.");
     var detalleAjeno = desglose("192.168.10.10", 27, "192.168.10.200");
-    comparar("desglose gateway ajeno", detalleAjeno.gateway.veredicto, "Tu gateway NO pertenece a tu subred.");
+    comparar("desglose gateway ajeno", detalleAjeno.gateway.veredicto, "Dan redes distintas: tu puerta de enlace está fuera de tu red.");
     var detalleRed = desglose("10.45.7.64", 27, null);
     comparar("desglose advierte direccion de red", detalleRed.advertencia, "Esta IP es la dirección de red de su subred");
 

@@ -62,7 +62,7 @@ Todas las capas operan sobre este objeto. El JSON exportado es exactamente este 
   "dispositivos": [
     {
       "id": "pc1",
-      "tipo": "pc",                    // pc | switch-l2 | router | camara | iot | ap
+      "tipo": "pc",                    // pc | switch-l2 | router | camara | iot | ap | internet
       // "modelo": "8-puertos",        // sólo router; si falta es el router estándar
       "nombre": "PC-Admin",
       "x": 160, "y": 240,
@@ -83,6 +83,7 @@ Todas las capas operan sobre este objeto. El JSON exportado es exactamente este 
       "gateway": "10.45.7.65",         // en un router: ruta por defecto de último recurso
       "dns": "8.8.8.8",
       "rutas": [],                     // sólo router: [{destino, prefijo, siguienteSalto}]
+      "reglas": [],                    // opcional, sólo router: [{accion: "bloquear"|"permitir", origen: "10.45.7.0/26", destino: "10.45.7.0/24"}]
       "dhcp": null                     // sólo router: {habilitado, desde, hasta, prefijo, gateway}
     }
   ],
@@ -116,6 +117,7 @@ Reglas:
 
   Un router con su `wlan0` en modo `ap` es un router inalámbrico: la celda es una red más del router. El alcance inalámbrico (D17) se evalúa por enlace.
 - **Gateway de un router.** Cada router reenvía por su propia tabla de rutas (prefijo más largo). Si ninguna entrada coincide y el campo `gateway` tiene una dirección que cae en alguna de sus redes conectadas, se usa como ruta por defecto. Una ruta `0.0.0.0/0` explícita le gana.
+- **Reglas de filtrado de un router** (`reglas`, opcional). Es un filtrado mínimo y **sin estado**: cada regla tiene una acción (`bloquear` o `permitir`) y dos redes en CIDR (`0.0.0.0/0` es cualquiera). Se aplica sólo al tráfico que el router **reenvía**, no al que genera él mismo. Las reglas se leen en orden, gana la primera que coincide con el origen y el destino del paquete, y lo que no coincide con ninguna pasa. Como no hay estado, la respuesta de un ping también se revisa: si la bloquea una regla, el diagnóstico es D27 (no D12), con la aclaración de que un firewall real recuerda las conexiones.
 
 **Interfaces por defecto según el tipo de dispositivo**, creadas automáticamente al agregarlo:
 
@@ -128,6 +130,12 @@ Reglas:
 | `iot` | 1 wireless | `wlan0` |
 | `ap` | 1 wireless (modo `ap`) + 1 ethernet | `wlan0`, `eth0` |
 | `router`, `"modelo": "8-puertos"` | 8 ethernet + 1 fibra + 1 wireless (modo `ap`, deshabilitada) | `ether1` … `ether8`, `sfp1`, `wlan1` |
+
+| `internet` | 1 ethernet | `eth0` |
+
+**Internet** es una nube que representa todas las direcciones públicas: un paquete que llega a ella con destino público se responde ahí. Para enrutar se comporta como un router, y lo que no conoce lo devuelve por su vecino. **Simplificación declarada:** no se simula NAT; en una red real, el firewall o router de salida traduciría las direcciones privadas.
+
+**Nombres.** Si el destino de un ping es un nombre, el equipo consulta al servidor DNS configurado en su campo `dns` (un viaje de ida y vuelta hasta esa IP) y, si el nombre existe, hace el ping a la IP resultante. El simulador conoce `google.com` y `www.google.com` (142.250.79.46), `dns.google` (8.8.8.8) y `one.one.one.one` (1.1.1.1).
 
 El router de 8 puertos replica un equipo de oficina (por ejemplo, un MikroTik): **cada puerto es una interfaz ruteada** que puede tener su propia subred, como cuando en RouterOS se saca un puerto del bridge y se le asigna una dirección. No se simula el bridge entre puertos.
 
@@ -187,8 +195,13 @@ Motor.ping(estado, idOrigen, destinoIp)
 Motor.diagnosticar(estado, idOrigen, destinoIp)  // mismo objeto diagnostico, sin animar
 Motor.advertenciasDe(estado, idDispositivo)      // -> [{ codigo, titulo, explicacion, sugerencia }]
 Motor.dhcpSolicitar(estado, idDispositivo, idInterfaz)
-// -> { exito, mensajes: [{ tipo:"discover"|"offer"|"request"|"ack", origen, destino }],
-//      ip, prefijo, gateway, diagnostico|null }
+// -> { exito, mensajes: [{ tipo:"discover"|"offer"|"request"|"ack", origen, destino ("broadcast" en
+//        discover y request), difusion, ip?, servidor? (sólo request), enlaces: [idsEnlace del camino
+//        origen→destino], inundados: [idsEnlace que recorre la difusión] }],
+//      ip, prefijo, gateway, servidor|null, avisos: [texto], diagnostico|null }
+//    Un OFFER por cada router del segmento cuyo rango cae en la red de la interfaz que recibió el
+//    DISCOVER; el cliente acepta el primero. Renovar conserva la IP si sigue libre.
+Motor.avisosDhcp(estado, idRouter)               // -> [texto]: rango ajeno a sus redes, gateway fuera de la red, prefijo distinto
 Motor.rutaElegida(estado, idRouter, destinoIp)   // -> ruta ganadora por prefijo más largo | null
 Motor.tablaArp(estado, idDispositivo)            // -> [{ ip, mac, vence }]
 Motor.tablaMac(estado, idSwitch)                 // -> [{ mac, puerto, vence }]
@@ -208,7 +221,9 @@ Escenarios.importar(texto)          // -> { ok, topologia|null, errores: [...] }
 Escenarios.aplicarFallas(topologia) // -> copia con escenario.fallas aplicadas
 Escenarios.exportarParaAlumno(topologia)  // fallas aplicadas + array fallas eliminado
 Escenarios.verificarObjetivos(estado, objetivos)
-// -> [{ objetivo, cumple, codigo|null }]  en el mismo orden del JSON
+// -> [{ objetivo, cumple, codigo|null, titulo|null }]  en el mismo orden del JSON
+// Un objetivo {esperado: "falla", codigo: "D27"} sólo cumple si falla por esa causa.
+// `descripcion` (opcional) es un texto para el alumno que se muestra debajo del objetivo.
 Escenarios.verificarDesafio(topologia, escenario)
 // -> { resumen: { errores, advertencias }, porSector: [{ sector, ok, hallazgos: [...] }] }
 Escenarios.autopruebas()
@@ -230,12 +245,13 @@ UI.registrar(codigo, texto)        // agrega una línea al registro de eventos
 ### Capa 5 — `Autotest`
 
 ```js
-Autotest.correr()   // -> { total, pasadas, resultados: [{ n, criterio, pasa, detalle }] }
+Autotest.correr(opciones?)   // -> { tecnico, total, pasadas, resultados: [{ n, criterio, pasa, detalle }] }
+                             //    sin opciones: criterios de redes; { tecnico: true }: todo, con capas 1–3
 ```
 
 ---
 
-## 6. Catálogo de diagnósticos D01–D23
+## 6. Catálogo de diagnósticos D01–D27
 
 Lo implementa la capa 2 en `Motor.CATALOGO` y lo usan todas las demás. Cada entrada tiene **título corto, explicación de una o dos líneas en lenguaje de aula, y sugerencia concreta de qué revisar**.
 
@@ -256,7 +272,7 @@ Lo implementa la capa 2 en `Motor.CATALOGO` y lo usan todas las demás. Cada ent
 | D13 | Destino apagado o con la interfaz deshabilitada (sólo cuando existe un equipo con esa IP) |
 | D14 | Máscaras distintas en el mismo segmento |
 | D15 | Mismo switch, subredes distintas: un switch no enruta |
-| D16 | DHCP sin servidor o sin direcciones libres |
+| D16 | DHCP sin servidor, con el rango fuera de la red de la interfaz, o sin direcciones libres |
 | D17 | Fuera del alcance del enlace inalámbrico |
 | D18 | Modos inalámbricos incompatibles (por ejemplo, cliente contra cliente) |
 | D19 | Punto de acceso apagado o con la interfaz inalámbrica caída |
@@ -264,6 +280,10 @@ Lo implementa la capa 2 en `Motor.CATALOGO` y lo usan todas las demás. Cada ent
 | D21 | El destino es la dirección de broadcast de la subred del origen |
 | D22 | Hay ruta, pero el siguiente salto no es alcanzable |
 | D23 | Se agotó el TTL: bucle de enrutamiento (la explicación incluye el recorrido real) |
+| D24 | El destino es un nombre y el equipo no tiene servidor DNS configurado |
+| D25 | El DNS respondió, pero el nombre no existe |
+| D26 | El servidor DNS no responde (la explicación incluye la causa de la consulta fallida) |
+| D27 | Una regla de filtrado del router bloqueó el paquete, a la ida o en la respuesta (la explicación nombra la regla) |
 
 `D06`, `D07`, `D09`, `D14` y `D15` se detectan **también al momento de configurar**, vía `Motor.advertenciasDe`, sin necesidad de hacer ping.
 

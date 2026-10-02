@@ -3,12 +3,35 @@
   "nombre": "Complejo Termal Río Verde — diagrama del punto 6",
   "dispositivos": [
     {
+      "id": "internet",
+      "tipo": "internet",
+      "nombre": "Internet",
+      "x": 0,
+      "y": 150,
+      "encendido": true,
+      "interfaces": [
+        {
+          "id": "eth0",
+          "nombre": "eth0",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": "200.45.7.1",
+          "prefijo": 30
+        }
+      ],
+      "gateway": null,
+      "dns": null,
+      "rutas": [],
+      "dhcp": null
+    },
+    {
       "id": "fw",
       "tipo": "router",
       "modelo": "8-puertos",
       "nombre": "FW",
-      "x": 520,
-      "y": 90,
+      "x": 330,
+      "y": 150,
       "encendido": true,
       "interfaces": [
         {
@@ -17,8 +40,8 @@
           "medio": "ethernet",
           "habilitada": true,
           "modo": "estatico",
-          "ip": null,
-          "prefijo": 24
+          "ip": "200.45.7.2",
+          "prefijo": 30
         },
         {
           "id": "ether2",
@@ -103,7 +126,7 @@
           "modoRadio": "ap"
         }
       ],
-      "gateway": null,
+      "gateway": "200.45.7.1",
       "dns": null,
       "rutas": [
         {
@@ -119,8 +142,8 @@
       "tipo": "router",
       "modelo": "8-puertos",
       "nombre": "R-Central",
-      "x": 520,
-      "y": 290,
+      "x": 760,
+      "y": 150,
       "encendido": true,
       "interfaces": [
         {
@@ -218,14 +241,21 @@
       "gateway": "10.45.7.130",
       "dns": null,
       "rutas": [],
-      "dhcp": null
+      "dhcp": null,
+      "reglas": [
+        {
+          "accion": "bloquear",
+          "origen": "10.45.7.0/26",
+          "destino": "10.45.7.0/24"
+        }
+      ]
     },
     {
       "id": "sw-huesp",
       "tipo": "switch-l2",
       "nombre": "SW-Huéspedes 10.45.7.0/26",
-      "x": 0,
-      "y": 640,
+      "x": 240,
+      "y": 560,
       "encendido": true,
       "interfaces": [
         {
@@ -319,8 +349,8 @@
       "id": "sw-admin",
       "tipo": "switch-l2",
       "nombre": "SW-Admin 10.45.7.64/27",
-      "x": 260,
-      "y": 640,
+      "x": 500,
+      "y": 560,
       "encendido": true,
       "interfaces": [
         {
@@ -414,8 +444,8 @@
       "id": "sw-cctv",
       "tipo": "switch-l2",
       "nombre": "SW-CCTV 10.45.7.96/28",
-      "x": 520,
-      "y": 640,
+      "x": 760,
+      "y": 560,
       "encendido": true,
       "interfaces": [
         {
@@ -509,8 +539,8 @@
       "id": "sw-pos",
       "tipo": "switch-l2",
       "nombre": "SW-POS 10.45.7.112/29",
-      "x": 780,
-      "y": 640,
+      "x": 1020,
+      "y": 560,
       "encendido": true,
       "interfaces": [
         {
@@ -604,8 +634,8 @@
       "id": "sw-srv",
       "tipo": "switch-l2",
       "nombre": "SW-Servidores 10.45.7.120/29",
-      "x": 1040,
-      "y": 640,
+      "x": 1280,
+      "y": 560,
       "encendido": true,
       "interfaces": [
         {
@@ -699,8 +729,8 @@
       "id": "ap-huesp",
       "tipo": "ap",
       "nombre": "AP-Huéspedes",
-      "x": 0,
-      "y": 840,
+      "x": 240,
+      "y": 760,
       "encendido": true,
       "interfaces": [
         {
@@ -732,8 +762,8 @@
       "id": "celular",
       "tipo": "pc",
       "nombre": "Celular-Huésped",
-      "x": -210,
-      "y": 840,
+      "x": 30,
+      "y": 760,
       "encendido": true,
       "interfaces": [
         {
@@ -757,7 +787,7 @@
         }
       ],
       "gateway": "10.45.7.1",
-      "dns": null,
+      "dns": "8.8.8.8",
       "rutas": [],
       "dhcp": null
     },
@@ -765,8 +795,8 @@
       "id": "pc-recepcion",
       "tipo": "pc",
       "nombre": "PC-Recepción",
-      "x": 260,
-      "y": 840,
+      "x": 500,
+      "y": 760,
       "encendido": true,
       "interfaces": [
         {
@@ -789,7 +819,7 @@
         }
       ],
       "gateway": "10.45.7.65",
-      "dns": null,
+      "dns": "8.8.8.8",
       "rutas": [],
       "dhcp": null
     },
@@ -797,8 +827,8 @@
       "id": "camara-hall",
       "tipo": "camara",
       "nombre": "Cámara-Hall",
-      "x": 520,
-      "y": 840,
+      "x": 760,
+      "y": 760,
       "encendido": true,
       "interfaces": [
         {
@@ -829,8 +859,8 @@
       "id": "terminal-resto",
       "tipo": "pc",
       "nombre": "Terminal-Restaurante",
-      "x": 780,
-      "y": 840,
+      "x": 1020,
+      "y": 760,
       "encendido": true,
       "interfaces": [
         {
@@ -853,7 +883,7 @@
         }
       ],
       "gateway": "10.45.7.113",
-      "dns": null,
+      "dns": "8.8.8.8",
       "rutas": [],
       "dhcp": null
     },
@@ -861,8 +891,8 @@
       "id": "srv-reservas",
       "tipo": "pc",
       "nombre": "Servidor-Reservas",
-      "x": 1040,
-      "y": 840,
+      "x": 1280,
+      "y": 760,
       "encendido": true,
       "interfaces": [
         {
@@ -885,12 +915,27 @@
         }
       ],
       "gateway": "10.45.7.121",
-      "dns": null,
+      "dns": "8.8.8.8",
       "rutas": [],
       "dhcp": null
     }
   ],
   "enlaces": [
+    {
+      "id": "l-fw-internet",
+      "a": {
+        "dispositivo": "fw",
+        "interfaz": "ether1"
+      },
+      "b": {
+        "dispositivo": "internet",
+        "interfaz": "eth0"
+      },
+      "tipo": "ethernet",
+      "estado": "up",
+      "velocidadMbps": 100,
+      "retardoMs": 1
+    },
     {
       "id": "l-r-fw",
       "a": {
@@ -1130,13 +1175,31 @@
         "tipo": "ping",
         "origen": "celular",
         "destino": "10.45.7.122",
-        "esperado": "exito"
+        "esperado": "falla",
+        "codigo": "D27",
+        "descripcion": "Un huésped no tiene que llegar al servidor de reservas: lo frena una regla en R-Central, no la subred."
+      },
+      {
+        "tipo": "ping",
+        "origen": "camara-hall",
+        "destino": "10.45.7.10",
+        "esperado": "falla",
+        "codigo": "D27",
+        "descripcion": "La cámara llega al celular, pero la respuesta del huésped hacia la red interna se bloquea."
+      },
+      {
+        "tipo": "ping",
+        "origen": "celular",
+        "destino": "google.com",
+        "esperado": "exito",
+        "descripcion": "Aislado no es incomunicado: el huésped sigue saliendo a internet."
       },
       {
         "tipo": "ping",
         "origen": "pc-recepcion",
         "destino": "10.45.7.122",
-        "esperado": "exito"
+        "esperado": "exito",
+        "descripcion": "Administración sí llega a los servidores: la regla sólo afecta a los huéspedes."
       },
       {
         "tipo": "ping",
@@ -1146,8 +1209,8 @@
       },
       {
         "tipo": "ping",
-        "origen": "camara-hall",
-        "destino": "10.45.7.10",
+        "origen": "pc-recepcion",
+        "destino": "google.com",
         "esperado": "exito"
       }
     ]

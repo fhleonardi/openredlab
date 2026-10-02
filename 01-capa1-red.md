@@ -52,16 +52,16 @@ Es la más importante de la capa, porque de ella depende que el simulador enseñ
     andIp: "192.168.10.0",
     andGateway: "192.168.10.0",
     coinciden: true,
-    veredicto: "Tu gateway pertenece a tu subred."
+    veredicto: "Las dos dan la misma red: tu puerta de enlace está en tu red."
   }
 }
 ```
 
 `cortePosicion` existe para que la capa 4 pueda dibujar la línea vertical entre los bits de red y los de host sin tener que recalcular nada: es el índice del carácter en `ipBinario` donde termina la porción de red, contando los puntos separadores. Verificalo con un caso de prefijo que no caiga en un límite de octeto, por ejemplo `/27`.
 
-El veredicto del gateway va en texto llano, en una de estas dos formas exactas:
-- `"Tu gateway pertenece a tu subred."`
-- `"Tu gateway NO pertenece a tu subred."`
+El veredicto de la puerta de enlace va en texto llano, en una de estas dos formas exactas:
+- `"Las dos dan la misma red: tu puerta de enlace está en tu red."`
+- `"Dan redes distintas: tu puerta de enlace está fuera de tu red."`
 
 ---
 

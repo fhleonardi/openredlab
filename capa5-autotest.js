@@ -62,8 +62,85 @@ var Autotest = (function () {
     return null;
   }
 
+  /* Cada caso de redes se cuenta en tres partes: qué se armó, qué tiene que
+   * pasar y qué hizo el simulador. Varios casos son errores puestos a
+   * propósito: ahí lo correcto es que el simulador los detecte, y el informe
+   * lo aclara para que el verde no se lea como "la red está bien". */
+  var CASOS = {
+    2: {
+      conError: false,
+      situacion: "La red del Complejo turístico tal como viene: PC-Admin (10.45.7.66/27) hace ping al Servidor " +
+        "(10.45.7.122/29), que está detrás de dos routers.",
+      esperado: "El ping responde."
+    },
+    3: {
+      conError: true,
+      situacion: "PC-Admin en 10.45.7.94 con puerta de enlace 10.45.7.65. Con /27 su red va de 10.45.7.64 a .95 y la " +
+        "puerta de enlace está adentro; si la máscara pasa a /28, la red es 10.45.7.80 – .95 y 10.45.7.65 queda afuera.",
+      esperado: "Con /27 el ping al Servidor responde; con /28 falla con D09 (la puerta de enlace está fuera de tu red)."
+    },
+    4: {
+      conError: true,
+      situacion: "Se deshabilita la interfaz g0/0 de R1, la que tiene la dirección 10.45.7.65.",
+      esperado: "R1 no puede usar esa dirección: D01 (interfaz deshabilitada)."
+    },
+    5: {
+      conError: true,
+      situacion: "Se borra de R2 la ruta hacia 10.45.7.64/27, la red de PC-Admin. La ida hacia el Servidor sigue teniendo camino.",
+      esperado: "El ping llega al Servidor, pero R2 no sabe cómo devolver la respuesta: D12 (falla la vuelta), " +
+        "no D11 (fallaría la ida)."
+    },
+    6: {
+      conError: true,
+      situacion: "PC-1 en 192.168.1.0/24 y PC-2 en 192.168.2.0/24, conectadas al mismo switch.",
+      esperado: "No se comunican: D15. El switch no mira direcciones IP y no enruta; para pasar de una subred a otra " +
+        "hace falta un router."
+    },
+    7: {
+      conError: false,
+      situacion: "Cálculo de la subred de 10.45.7.66/27, con puerta de enlace 10.45.7.65.",
+      esperado: "Máscara 255.255.255.224, red 10.45.7.64, broadcast 10.45.7.95, hosts de 10.45.7.65 a 10.45.7.94 " +
+        "(30 hosts), y la puerta de enlace dentro de la subred."
+    },
+    8: {
+      conError: false,
+      situacion: "R-DHCP reparte el rango 192.168.1.50 – .60; una PC conectada al switch pide dirección.",
+      esperado: "La PC recibe una dirección del rango tras los cuatro mensajes: DISCOVER, OFFER, REQUEST y ACK."
+    },
+    12: {
+      conError: true,
+      situacion: "En el desafío VLSM, el sector Cámaras se arma con el router en 10.45.7.41/28, al lado del Wi-Fi " +
+        "en 10.45.7.0/26 (.0 – .63).",
+      esperado: "El verificador marca dos errores de diseño: una /28 empieza en múltiplos de 16, así que una subred " +
+        "pensada desde .40 no está alineada; y .41/28 pertenece a 10.45.7.32/28, que cae adentro del Wi-Fi."
+    }
+  };
+
   function fila(n, criterio, pasa, detalle) {
-    return { n: n, criterio: criterio, pasa: !!pasa, detalle: detalle || "" };
+    var r = { n: n, criterio: criterio, pasa: !!pasa, detalle: detalle || "" };
+    var caso = CASOS[n];
+    if (caso) {
+      r.conError = caso.conError;
+      r.situacion = caso.situacion;
+      r.esperado = caso.esperado;
+    }
+    return r;
+  }
+
+  // Recorrido de un ping con los nombres visibles, sin repeticiones seguidas.
+  function recorridoPorNombre(topo, res) {
+    var nombres = [];
+    (res.saltos || []).forEach(function (s) {
+      var d = dispEn(topo, s.dispositivo);
+      var n = d ? (d.nombre || d.id) : s.dispositivo;
+      if (nombres[nombres.length - 1] !== n) { nombres.push(n); }
+    });
+    return nombres.join(" → ");
+  }
+
+  function diagnosticoTexto(res) {
+    var dg = res && res.diagnostico;
+    return dg ? dg.codigo + " (" + dg.titulo + ")" : "sin diagnóstico";
   }
 
   function modoActualDom() {
@@ -138,26 +215,25 @@ var Autotest = (function () {
   }
 
   function crit02() {
-    var nombre = "La topología complejo permite un ping exitoso de punta a punta";
+    var nombre = "Ping de punta a punta: PC-Admin llega al Servidor atravesando dos routers";
     try {
       var ej = ejemploPorId("complejo");
       if (!ej) {
-        return fila(2, nombre, false, "No se encontró el ejemplo de id complejo en Escenarios.EJEMPLOS.");
+        return fila(2, nombre, false, "No se encontró el ejemplo «Complejo turístico».");
       }
-      var estado = Motor.crearEstado(clonar(ej.topologia));
-      var res = Motor.ping(estado, "pc-admin", "10.45.7.122");
+      var topo = clonar(ej.topologia);
+      var res = Motor.ping(Motor.crearEstado(topo), "pc-admin", "10.45.7.122");
       if (res.exito) {
-        return fila(2, nombre, true, "Ping de pc-admin a 10.45.7.122 con exito true y " + res.saltos.length + " saltos.");
+        return fila(2, nombre, true, "Responde, recorriendo " + recorridoPorNombre(topo, res) + ".");
       }
-      var cod = res.diagnostico ? res.diagnostico.codigo : "sin diagnóstico";
-      return fila(2, nombre, false, "Se esperaba exito true y se obtuvo falla con código " + cod + ".");
+      return fila(2, nombre, false, "No respondió: " + diagnosticoTexto(res) + ".");
     } catch (e) {
       return fila(2, nombre, false, "Excepción: " + e.message);
     }
   }
 
   function crit03() {
-    var nombre = "Cambiar la máscara de un PC de /27 a /28 rompe el ping al gateway con D09";
+    var nombre = "Una máscara mal elegida deja la puerta de enlace fuera de la subred (D09)";
     try {
       var ej = ejemploPorId("complejo");
       var topo = clonar(ej.topologia);
@@ -174,25 +250,21 @@ var Autotest = (function () {
       eth.prefijo = 28;
       var roto = Motor.ping(Motor.crearEstado(topo), "pc-admin", "10.45.7.122");
       var cod = roto.diagnostico ? roto.diagnostico.codigo : "sin diagnóstico";
-      var aclara = "Se partió de 10.45.7.94/27 (última del rango 65–94): con /27 el ping al servidor anda; con /28 cae. " +
-        "El destino verificado es el servidor y no el propio gateway porque el Motor antepone el chequeo de máscaras " +
-        "del segmento (D14) cuando se pinguea al gateway en forma directa; el D09 aparece contra destino externo. ";
       if (!sano.exito) {
-        return fila(3, nombre, false, aclara + "El caso sano ya fallaba con " +
-          (sano.diagnostico ? sano.diagnostico.codigo : "?") + "; revisar la topología base.");
+        return fila(3, nombre, false, "Con /27 el ping ya fallaba: " + diagnosticoTexto(sano) + ".");
       }
       if (!roto.exito && cod === "D09") {
-        return fila(3, nombre, true, aclara + "Con /28 el ping falla con D09 como se esperaba.");
+        return fila(3, nombre, true, "Con /27 respondió y con /28 falló con " + diagnosticoTexto(roto) + ".");
       }
-      return fila(3, nombre, false, aclara + "Se esperaba falla D09 y se obtuvo " +
-        (roto.exito ? "exito true" : "código " + cod) + ".");
+      return fila(3, nombre, false, "Con /28 " +
+        (roto.exito ? "el ping respondió igual" : "el diagnóstico fue " + diagnosticoTexto(roto)) + ".");
     } catch (e) {
       return fila(3, nombre, false, "Excepción: " + e.message);
     }
   }
 
   function crit04() {
-    var nombre = "Deshabilitar una interfaz del router produce D01";
+    var nombre = "Una interfaz del router deshabilitada no envía ni recibe (D01)";
     try {
       var ej = ejemploPorId("complejo");
       var topo = clonar(ej.topologia);
@@ -204,17 +276,16 @@ var Autotest = (function () {
       var res = Motor.ping(Motor.crearEstado(topo), "r1", "10.45.7.65");
       var cod = res.diagnostico ? res.diagnostico.codigo : "sin diagnóstico";
       if (!res.exito && cod === "D01") {
-        return fila(4, nombre, true, "Se deshabilitó r1:g0/0 y el ping desde r1 a su propia 10.45.7.65 falla con D01.");
+        return fila(4, nombre, true, "Diagnosticó " + diagnosticoTexto(res) + ".");
       }
-      return fila(4, nombre, false, "Se esperaba falla D01 y se obtuvo " +
-        (res.exito ? "exito true" : "código " + cod) + ".");
+      return fila(4, nombre, false, res.exito ? "El ping respondió igual." : "Diagnosticó " + diagnosticoTexto(res) + ".");
     } catch (e) {
       return fila(4, nombre, false, "Excepción: " + e.message);
     }
   }
 
   function crit05() {
-    var nombre = "Borrar una ruta de retorno produce D12, no D11";
+    var nombre = "Sin ruta de vuelta, el pedido llega pero la respuesta no vuelve (D12, no D11)";
     try {
       var ej = ejemploPorId("complejo");
       var topo = clonar(ej.topologia);
@@ -225,17 +296,16 @@ var Autotest = (function () {
       var res = Motor.ping(Motor.crearEstado(topo), "pc-admin", "10.45.7.122");
       var cod = res.diagnostico ? res.diagnostico.codigo : "sin diagnóstico";
       if (!res.exito && cod === "D12") {
-        return fila(5, nombre, true, "Sin la ruta 10.45.7.64/27 en r2 la ida llega y la vuelta no: D12.");
+        return fila(5, nombre, true, "Diagnosticó " + diagnosticoTexto(res) + ".");
       }
-      return fila(5, nombre, false, "Se esperaba D12 (y distinto de D11) y se obtuvo " +
-        (res.exito ? "exito true" : "código " + cod) + ".");
+      return fila(5, nombre, false, res.exito ? "El ping respondió igual." : "Diagnosticó " + diagnosticoTexto(res) + ".");
     } catch (e) {
       return fila(5, nombre, false, "Excepción: " + e.message);
     }
   }
 
   function crit06() {
-    var nombre = "Dos PC en el mismo switch con subredes distintas producen D15";
+    var nombre = "Dos PC en el mismo switch pero en subredes distintas no se comunican (D15)";
     try {
       var ej = ejemploPorId("basica");
       var topo = clonar(ej.topologia);
@@ -246,17 +316,16 @@ var Autotest = (function () {
       var res = Motor.ping(Motor.crearEstado(topo), "pc1", "192.168.2.20");
       var cod = res.diagnostico ? res.diagnostico.codigo : "sin diagnóstico";
       if (!res.exito && cod === "D15") {
-        return fila(6, nombre, true, "Mismo switch con 192.168.1.0/24 contra 192.168.2.0/24: D15, el switch no enruta.");
+        return fila(6, nombre, true, "Diagnosticó " + diagnosticoTexto(res) + ".");
       }
-      return fila(6, nombre, false, "Se esperaba D15 y se obtuvo " +
-        (res.exito ? "exito true" : "código " + cod) + ".");
+      return fila(6, nombre, false, res.exito ? "El ping respondió igual." : "Diagnosticó " + diagnosticoTexto(res) + ".");
     } catch (e) {
       return fila(6, nombre, false, "Excepción: " + e.message);
     }
   }
 
   function crit07() {
-    var nombre = "Red.desglose coincide con el cálculo hecho a mano";
+    var nombre = "El cálculo de subred coincide con el hecho a mano";
     try {
       var det = Red.desglose("10.45.7.66", 27, "10.45.7.65");
       var esperado = {
@@ -268,19 +337,23 @@ var Autotest = (function () {
         ultimoHost: "10.45.7.94",
         cantidadHosts: 30
       };
+      var rotulos = {
+        direccionDeRed: "dirección de red", broadcast: "broadcast", rangoTexto: "rango de hosts",
+        mascaraDecimal: "máscara", primerHost: "primer host", ultimoHost: "último host", cantidadHosts: "cantidad de hosts"
+      };
       var fallas = [];
       Object.keys(esperado).forEach(function (k) {
         if (det[k] !== esperado[k]) {
-          fallas.push(k + ": esperado " + esperado[k] + ", obtenido " + det[k]);
+          fallas.push(rotulos[k] + ": a mano da " + esperado[k] + " y el simulador dice " + det[k]);
         }
       });
       if (!det.gateway || det.gateway.coinciden !== true) {
-        fallas.push("gateway: se esperaba que 10.45.7.65 coincida con la subred");
+        fallas.push("puerta de enlace: 10.45.7.65 debería estar dentro de la subred");
       }
       if (fallas.length === 0) {
-        return fila(7, nombre, true, "Desglose de 10.45.7.66/27 con red .64, broadcast .95, rango 65–94 y máscara .224.");
+        return fila(7, nombre, true, "Coincide en todos los valores.");
       }
-      return fila(7, nombre, false, "Diferencias: " + fallas.join(" | "));
+      return fila(7, nombre, false, "Diferencias con el cálculo a mano: " + fallas.join(" | "));
     } catch (e) {
       return fila(7, nombre, false, "Excepción: " + e.message);
     }
@@ -329,7 +402,7 @@ var Autotest = (function () {
   }
 
   function crit08() {
-    var nombre = "DHCP entrega una dirección del rango configurado y devuelve los cuatro mensajes DORA";
+    var nombre = "DHCP: la PC obtiene una dirección del rango con los cuatro mensajes DORA";
     try {
       var estado = Motor.crearEstado(armarMiniDhcp());
       var res = Motor.dhcpSolicitar(estado, "c1", "eth0");
@@ -342,10 +415,10 @@ var Autotest = (function () {
         enRango = false;
       }
       if (res.exito && enRango && tipos === "discover,offer,request,ack") {
-        return fila(8, nombre, true, "Se otorgó " + res.ip + "/24 con mensajes " + tipos + ".");
+        return fila(8, nombre, true, "La PC recibió " + res.ip + "/24 tras DISCOVER, OFFER, REQUEST y ACK.");
       }
-      return fila(8, nombre, false, "Se esperaba ip entre 192.168.1.50 y .60 con discover,offer,request,ack; se obtuvo ip " +
-        res.ip + " y mensajes [" + tipos + "], exito " + res.exito + ".");
+      return fila(8, nombre, false, "La PC quedó con " + res.ip + " y los mensajes fueron " + (tipos ? tipos.toUpperCase().split(",").join(", ") : "ninguno") +
+        (res.diagnostico ? " (" + res.diagnostico.codigo + ": " + res.diagnostico.titulo + ")" : "") + ".");
     } catch (e) {
       return fila(8, nombre, false, "Excepción: " + e.message);
     }
@@ -419,7 +492,7 @@ var Autotest = (function () {
   }
 
   function crit12() {
-    var nombre = "El modo desafío detecta un solapamiento y una subred desalineada";
+    var nombre = "Desafío VLSM: se detectan una subred solapada y una desalineada";
     try {
       /* Sobre equipos realmente direccionados: el router de Cámaras en
        * .41/28 hace pensar una subred que arranca en .40 (desalineada), y la
@@ -438,14 +511,14 @@ var Autotest = (function () {
       poner("cam1", "eth0", "10.45.7.42", 28, "10.45.7.41");
       var informe = Escenarios.verificarDesafio(topo, topo.escenario);
       var texto = JSON.stringify(informe.porSector);
-      var haySolape = texto.indexOf("solapa") >= 0;
-      var hayAline = texto.indexOf("no arranca en un múltiplo") >= 0;
+      var haySolape = texto.indexOf("Se superpone") >= 0;
+      var hayAline = texto.indexOf("no está alineada") >= 0;
       if (informe.porSector.length === 5 && informe.resumen.errores > 0 && haySolape && hayAline) {
-        return fila(12, nombre, true, "Cámaras con el router en 10.45.7.41/28: desalineada y solapada con el Wi-Fi; errores: " +
-          informe.resumen.errores + ".");
+        return fila(12, nombre, true, "Marcó el solapamiento y la desalineación (" + informe.resumen.errores +
+          " errores en todo el diseño, porque los demás sectores están sin direccionar).");
       }
-      return fila(12, nombre, false, "Se esperaba al menos un error de solape y uno de alineación; se obtuvo " +
-        JSON.stringify(informe.resumen) + " y hallazgos " + texto + ".");
+      return fila(12, nombre, false, "No marcó " + (haySolape ? "la desalineación" : hayAline ? "el solapamiento" : "ninguno de los dos") +
+        " (" + informe.resumen.errores + " errores y " + informe.resumen.advertencias + " advertencias en total).");
     } catch (e) {
       return fila(12, nombre, false, "Excepción: " + e.message);
     }
@@ -456,6 +529,14 @@ var Autotest = (function () {
       var topo = UI.topologiaActual();
       var lista = topo.dispositivos || [];
       var i;
+      // Preferencia: un equipo con IP y gateway, que es el caso que el panel
+      // tiene que mostrar completo (los routers y la nube no usan gateway).
+      for (i = 0; i < lista.length; i++) {
+        var conIp = (lista[i].interfaces || []).some(function (f) { return f.ip && Red.esIpValida(String(f.ip)); });
+        if (conIp && lista[i].gateway && Red.esIpValida(String(lista[i].gateway))) {
+          return lista[i].id;
+        }
+      }
       for (i = 0; i < lista.length; i++) {
         var ifaces = lista[i].interfaces || [];
         for (var j = 0; j < ifaces.length; j++) {
@@ -463,9 +544,6 @@ var Autotest = (function () {
             return lista[i].id;
           }
         }
-      }
-      if (lista.length) {
-        return lista[0].id;
       }
     } catch (e) {
       /* se informa abajo */
@@ -479,7 +557,14 @@ var Autotest = (function () {
     try {
       var id = dispositivoConIp();
       if (!id) {
-        return fila(13, nombre, false, "No hay ningún dispositivo para seleccionar.");
+        /* La red abierta puede no tener direcciones todavía (un desafío
+         * recién cargado): se usa el ejemplo Complejo. Al terminar, correr()
+         * restaura la topología del usuario. */
+        UI.cargarTopologia(clonar(ejemploPorId("complejo").topologia));
+        id = dispositivoConIp();
+      }
+      if (!id) {
+        return fila(13, nombre, false, "No hay ningún dispositivo con IP para seleccionar.");
       }
       UI.setModo("subredes");
       UI.seleccionar(id);
@@ -730,6 +815,10 @@ var Autotest = (function () {
     }
   }
 
+  function escaparHtml(texto) {
+    return String(texto || "").replace(/&/g, "&amp;").replace(/</g, "&lt;");
+  }
+
   function mostrarInforme(salida) {
     try {
       var previos = document.querySelectorAll("[data-autotest-informe]");
@@ -753,8 +842,13 @@ var Autotest = (function () {
       caja.style.fontFamily = "system-ui, Arial, sans-serif";
       caja.style.fontSize = "13px";
       var titulo = document.createElement("div");
-      titulo.innerHTML = "<b>Autotest: " + salida.pasadas + "/" + salida.total + " criterios</b> " +
-        "<span>(" + salida.fallos + " fallos primero)</span>";
+      titulo.innerHTML = salida.tecnico
+        ? "<b>Autotest técnico: " + salida.pasadas + "/" + salida.total + "</b> <span>(" + salida.fallos + " fallos, primero)</span>" +
+          "<br><span>" + String(salida.detalleCapas).replace(/&/g, "&amp;").replace(/</g, "&lt;") + "</span>"
+        : "<b>El simulador resuelve bien " + salida.pasadas + " de " + salida.total + " casos de redes</b>" +
+          (salida.fallos ? " <span>(los que fallan, primero)</span>" : "") +
+          "<div style='font-size:12px;color:#4a5866;margin-top:2px'>Varios casos rompen la red a propósito: " +
+          "ahí el resultado es correcto si el simulador detecta el error.</div>";
       caja.appendChild(titulo);
       var lista = document.createElement("div");
       salida.resultados.forEach(function (r) {
@@ -764,9 +858,25 @@ var Autotest = (function () {
         div.style.borderRadius = "6px";
         div.style.padding = "4px 8px";
         div.style.margin = "6px 0";
-        var safeC = String(r.criterio).replace(/&/g, "&amp;").replace(/</g, "&lt;");
-        var safeD = String(r.detalle || "").replace(/&/g, "&amp;").replace(/</g, "&lt;");
-        div.innerHTML = "<b>" + r.n + ". " + safeC + "</b> " + (r.pasa ? "pasa" : "falla") + "<br>" + safeD;
+        var safeC = escaparHtml(r.criterio);
+        var safeD = escaparHtml(r.detalle);
+        if (r.situacion) {
+          var etiqueta = r.conError
+            ? "<span style='background:#fff4d6;color:#7a4b00;border:1px solid #d9a400;border-radius:4px;padding:0 6px;font-size:12px;white-space:nowrap;display:inline-block'>" +
+              "error puesto a propósito</span>"
+            : "<span style='background:#eef2f6;color:#3a4a5a;border:1px solid #c9d3dc;border-radius:4px;padding:0 6px;font-size:12px;white-space:nowrap;display:inline-block'>" +
+              "red bien configurada</span>";
+          var veredicto = r.pasa
+            ? (r.conError ? "Lo detectó correctamente. " : "Funcionó como debe. ")
+            : (r.conError ? "No lo detectó como debía. " : "No funcionó como debe. ");
+          div.innerHTML = "<b>" + r.n + ". " + safeC + "</b> " + etiqueta +
+            "<div style='margin-top:4px'><b>Situación:</b> " + escaparHtml(r.situacion) + "</div>" +
+            "<div><b>Qué debe pasar:</b> " + escaparHtml(r.esperado) + "</div>" +
+            "<div style='color:" + (r.pasa ? "#1a7f37" : "#b42318") + "'><b>" + (r.pasa ? "✓ " : "✗ ") + "Resultado:</b> " +
+            veredicto + safeD + "</div>";
+        } else {
+          div.innerHTML = "<b>" + (r.pasa ? "✓ " : "✗ ") + r.n + ". " + safeC + "</b><br>" + safeD;
+        }
         lista.appendChild(div);
       });
       caja.appendChild(lista);
@@ -783,7 +893,15 @@ var Autotest = (function () {
     }
   }
 
-  function correr() {
+  /* El botón muestra sólo lo que se verifica de redes: lo que la cátedra
+   * puede leer y discutir. Los criterios de la interfaz y del archivo, y las
+   * pruebas internas de las capas, quedan para quien programa:
+   * Autotest.correr({ tecnico: true }) desde la consola. */
+  var CRITERIOS_DIDACTICOS = [crit02, crit03, crit04, crit05, crit06, crit07, crit08, crit12];
+  var CRITERIOS_TECNICOS = [crit01, crit09, crit10, crit11, crit13, crit14, crit15, crit16];
+
+  function correr(opciones) {
+    var tecnico = !!(opciones && opciones.tecnico);
     if (typeof Red === "undefined" || typeof Motor === "undefined" ||
         typeof Escenarios === "undefined" || typeof UI === "undefined") {
       try {
@@ -826,37 +944,30 @@ var Autotest = (function () {
     var pasadasCapas = 0;
     var totalCapas = 0;
     var detalleCapas = "";
-    try {
-      var r1 = Red.autopruebas();
-      var r2 = Motor.autopruebas();
-      var r3 = Escenarios.autopruebas();
-      totalCapas = r1.total + r2.total + r3.total;
-      pasadasCapas = r1.pasadas + r2.pasadas + r3.pasadas;
-      var fallosCapas = r1.fallos.concat(r2.fallos).concat(r3.fallos).slice(0, 8);
-      detalleCapas = "Capas 1–3: " + pasadasCapas + "/" + totalCapas + " pruebas internas." +
-        (fallosCapas.length ? " Primeros fallos: " + fallosCapas.map(function (f) { return f.nombre; }).join(" | ") + "." : " Sin fallos internos.");
-    } catch (e) {
-      detalleCapas = "No se pudieron correr las autopruebas internas: " + e.message;
+    if (tecnico) {
+      try {
+        var r1 = Red.autopruebas();
+        var r2 = Motor.autopruebas();
+        var r3 = Escenarios.autopruebas();
+        totalCapas = r1.total + r2.total + r3.total;
+        pasadasCapas = r1.pasadas + r2.pasadas + r3.pasadas;
+        var fallosCapas = r1.fallos.concat(r2.fallos).concat(r3.fallos).slice(0, 8);
+        detalleCapas = "Capas 1–3: " + pasadasCapas + "/" + totalCapas + " pruebas internas." +
+          (fallosCapas.length ? " Primeros fallos: " + fallosCapas.map(function (f) { return f.nombre; }).join(" | ") + "." : " Sin fallos internos.");
+      } catch (e) {
+        detalleCapas = "No se pudieron correr las autopruebas internas: " + e.message;
+      }
     }
 
     try {
-      resultados.push(crit01());
-      resultados.push(crit02());
-      resultados.push(crit03());
-      resultados.push(crit04());
-      resultados.push(crit05());
-      resultados.push(crit06());
-      resultados.push(crit07());
-      resultados.push(crit08());
-      resultados.push(crit09());
-      resultados.push(crit10());
-      resultados.push(crit11());
-      resultados.push(crit12());
-      resultados.push(crit13());
-      resultados.push(crit14());
-      resultados.push(crit15());
-      resultados.push(crit16());
+      (tecnico ? CRITERIOS_DIDACTICOS.concat(CRITERIOS_TECNICOS) : CRITERIOS_DIDACTICOS).forEach(function (crit) {
+        resultados.push(crit());
+      });
     } finally {
+      if (!tecnico) {
+        /* Sin los criterios técnicos, los números del informe van corridos. */
+        resultados.forEach(function (r, i) { r.n = i + 1; });
+      }
       try {
         if (UI) {
           if (originalPing) {
@@ -893,6 +1004,7 @@ var Autotest = (function () {
       return a.pasa ? 1 : -1;
     });
     var salida = {
+      tecnico: tecnico,
       total: totalCapas + resultados.length,
       pasadas: pasadasCapas + pasadas,
       resultados: ordenados,
@@ -918,8 +1030,8 @@ var Autotest = (function () {
       }
       var b = document.createElement("button");
       b.setAttribute("data-boton-autotest5", "1");
-      b.textContent = "Autotest completo";
-      b.title = "Corre los 16 criterios de aceptación sin perder el trabajo cargado";
+      b.textContent = "Autotest";
+      b.title = "Comprueba que el simulador resuelve bien casos de la materia (máscaras, rutas, DHCP, VLSM) sin perder el trabajo cargado";
       b.addEventListener("click", function () {
         correr();
       });

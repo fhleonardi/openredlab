@@ -73,8 +73,8 @@ Un objetivo con `esperado: "falla"` se cumple cuando el ping efectivamente falla
   resumen: { errores: 2, advertencias: 1 },
   porSector: [
     { sector: "Wi-Fi de huéspedes", ok: false, hallazgos: [
-        { nivel: "error", mensaje: "La subred 10.45.7.50/27 no arranca en un múltiplo de 32." },
-        { nivel: "error", mensaje: "Se solapa con la subred de Administración." }
+        { nivel: "error", mensaje: "La subred no está alineada: … empezaría en 10.45.7.50, que no es múltiplo de 32 (el tamaño de un bloque /27)." },
+        { nivel: "error", mensaje: "Se superpone con la subred de Administración, 10.45.7.64/27: comparten direcciones." }
     ]},
     { sector: "Servidores", ok: true, hallazgos: [] }
   ]
@@ -83,6 +83,7 @@ Un objetivo con `esperado: "falla"` se cumple cuando el ping efectivamente falla
 
 Comprobaciones, en este orden:
 
+0. Un sector direccionado a medias no está resuelto: si algún integrante ya tiene IP, cada uno que todavía no la tiene es un error con su nombre (el puerto del router se nombra como la puerta de enlace del sector). Si no tiene ninguno: "Ningún equipo de este sector tiene IP todavía."
 1. Cada subred cae dentro del bloque base asignado.
 2. Ninguna subred se solapa con otra (`Red.solapan`).
 3. Cada subred arranca en un múltiplo de su propio tamaño de bloque (`Red.estaAlineada`).
@@ -91,7 +92,7 @@ Comprobaciones, en este orden:
 6. El gateway declarado para el sector está dentro de esa subred.
 7. **Advertencia, no error**, si el desperdicio supera el 60 % del bloque asignado.
 
-El informe dice **qué está mal y por qué, sin dar la respuesta correcta**. "La subred no arranca en un múltiplo de 32" enseña; "debería ser 10.45.7.64" resuelve el ejercicio por el alumno.
+El informe dice **qué está mal y por qué, sin dar la respuesta correcta**. "Empezaría en 10.45.7.50, que no es múltiplo de 32" enseña; "debería ser 10.45.7.64" resuelve el ejercicio por el alumno.
 
 ---
 
@@ -129,6 +130,7 @@ Al menos **15 aserciones**. Obligatorias:
 | `verificarDesafio` con una subred desalineada | un hallazgo de nivel error mencionando la alineación |
 | `verificarDesafio` con dos subredes solapadas | un hallazgo de error por solapamiento en ambos sectores |
 | `verificarDesafio` con un diseño correcto | `resumen.errores === 0` |
+| `verificarDesafio` con la PC direccionada y el puerto del router sin IP | error que nombra al puerto del router |
 
 ---
 

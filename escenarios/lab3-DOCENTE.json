@@ -80,11 +80,10 @@
           "id": "wlan0",
           "nombre": "wlan0",
           "medio": "wireless",
-          "habilitada": true,
+          "habilitada": false,
           "modo": "estatico",
-          "ip": "10.45.7.1",
-          "prefijo": 26,
-          "modoRadio": "ap"
+          "ip": null,
+          "prefijo": 24
         }
       ],
       "gateway": "10.45.7.65",
@@ -419,6 +418,11 @@
       "gateway": null,
       "dns": null,
       "rutas": [
+        {
+          "destino": "10.45.7.0",
+          "prefijo": 26,
+          "siguienteSalto": "10.45.7.129"
+        },
         {
           "destino": "10.45.7.64",
           "prefijo": 27,

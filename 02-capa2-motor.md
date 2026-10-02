@@ -27,14 +27,14 @@ Para un origen `A` que quiere alcanzar la IP `D`:
 5. Si `redA == redD` → entrega directa: resolver `D` por ARP dentro del segmento.
 6. Si `redA != redD` → ¿hay gateway configurado? Si no → `D08`.
 7. ¿El gateway pertenece a `redA`? Si no → `D09`. El detalle del paso muestra el mismo AND del paso 4 aplicado al gateway.
-8. Resolver el gateway por ARP. Si nadie responde → `D10`.
+8. Averiguar la MAC de la puerta de enlace por ARP. Si nadie responde → `D10`.
 9. En el router: buscar en la tabla de rutas la **coincidencia más específica** (prefijo más largo), y usar la ruta por defecto sólo si no hay otra. Si no hay ninguna → `D11`.
 10. Repetir desde el paso 4 en cada salto, decrementando TTL.
 11. Al llegar al destino, **verificar que el destino pueda responder**, repitiendo el algoritmo en sentido inverso. Si el eco llega pero la respuesta no encuentra camino de vuelta → `D12`.
 
 El paso 11 no es un detalle: `D12` es el diagnóstico más instructivo de todo el catálogo, porque explica el caso en que "el ping falla" aunque la ida esté perfecta. Asegurate de que no se confunda con `D11`: si el router de ida no tiene ruta, es `D11`; si la ida funciona y falla la vuelta, es `D12`.
 
-Cada elemento de `pasos` tiene la forma `{ n, titulo, detalle, ok }`, donde `titulo` es corto (`"Comparar redes de origen y destino"`) y `detalle` puede ser multilínea e incluir binario.
+Cada elemento de `pasos` tiene la forma `{ n, titulo, detalle, ok }`, donde `titulo` es corto y en infinitivo (`"Decidir si el destino está en la misma red"`) y `detalle` puede ser multilínea e incluir binario: la primera línea es la cuenta y la última, la conclusión. Los textos nombran a los equipos por su nombre visible, nunca por su id, y no mencionan códigos D: el código va aparte, en el diagnóstico.
 
 ---
 
@@ -46,7 +46,7 @@ Cada elemento de `pasos` tiene la forma `{ n, titulo, detalle, ok }`, donde `tit
 
 **ARP.** Tabla por dispositivo con entradas que expiran. Las peticiones son de difusión: el resultado de `ping` debe permitir a la capa 4 animarlas hacia todos los equipos del segmento, porque ver eso *es* entender qué es un dominio de broadcast.
 
-**DHCP.** `Motor.dhcpSolicitar` devuelve los cuatro mensajes DORA en orden, cada uno con origen y destino, para que la capa 4 los anime sobre la topología real. El servidor lleva registro de las concesiones otorgadas. Si el rango se agotó o no hay servidor → `D16`, y el cliente se autoasigna una dirección `169.254.x.x`.
+**DHCP.** `Motor.dhcpSolicitar` devuelve los mensajes DORA en orden, cada uno con origen, destino y los enlaces que recorre (`enlaces`: el camino al destino; `inundados`: la difusión por el segmento), para que la capa 4 los anime sobre los cables reales. Un router responde sólo si su rango pertenece a la red de la interfaz por la que le llegó el DISCOVER; con varios servidores hay un OFFER por cada uno y el cliente acepta el primero. REQUEST va en difusión y nombra al servidor elegido. Una renovación conserva la IP si sigue libre. Las concesiones se deducen de la topología en `crearEstado` (interfaces en modo DHCP con una IP del rango), así sobreviven a reconstruir el estado y pasar a estática las libera. Un gateway fuera de la red del rango se entrega igual, con un aviso en `avisos`. Si no hay servidor, el rango es de otra red o se agotó → `D16` con el motivo, y el cliente se autoasigna una dirección `169.254.x.x`.
 
 **Wireless.** Modelo simple por distancia euclidiana entre las coordenadas `x`/`y` de los dos extremos en el lienzo. Más allá de un umbral configurable (por defecto 250 unidades), el enlace se considera caído → `D17`. Sin potencia ni interferencia. Exponé la distancia calculada para que el tooltip pueda mostrar actual contra máxima.
 
@@ -98,6 +98,7 @@ Al menos **20 aserciones** que construyan topologías mínimas en memoria y veri
 | Ping válido de punta a punta entre dos subredes | `exito: true`, y `saltos.length` correcto |
 | Router con ruta específica y ruta por defecto | `rutaElegida` devuelve la específica |
 | DHCP con rango de dos direcciones, tercer cliente | `D16` |
+| DHCP con el rango en otra red que la interfaz del router | `D16` con el motivo |
 
 La distinción `D11` contra `D12` es la que más cuesta implementar bien: probala en los dos sentidos.
 
