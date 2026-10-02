@@ -348,6 +348,14 @@ var UI = (function () {
     ".siminf .tabs .espacio{flex:1;}",
     ".siminf .tabs label{font-size:12px;color:var(--sim-tenue);}",
     ".siminf .cuerpoinf{flex:1;min-height:0;overflow:auto;}",
+    ".ayuda{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:8px;padding:2px 0;font-size:12px;line-height:1.35;}",
+    ".ayuda section{background:var(--sim-fondo);border:1px solid var(--sim-borde);border-radius:10px;padding:6px 10px;min-width:0;}",
+    ".ayuda h3{margin:0 0 3px;font-size:12.5px;color:var(--sim-acento);}",
+    ".ayuda ul,.ayuda ol{margin:0;padding-left:18px;}",
+    ".ayuda li{margin:0;}",
+    ".ayuda .teclas{display:grid;grid-template-columns:auto 1fr;gap:1px 10px;align-items:baseline;}",
+    ".ayuda .teclas span:nth-child(odd){white-space:nowrap;}",
+    ".ayuda kbd{font-family:ui-monospace,Consolas,monospace;font-size:11px;background:var(--sim-panel);border:1px solid var(--sim-borde);border-bottom-width:2px;border-radius:4px;padding:0 4px;}",
     ".siminf .cuerpoinf.sim{display:flex;flex-direction:column;overflow:hidden;}",
     ".simctrl{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;}",
     ".simctrl label{font-size:12px;color:var(--sim-tenue);}",
@@ -1810,6 +1818,9 @@ var UI = (function () {
 
   function atajos(ev) {
     var mod = ev.ctrlKey || ev.metaKey;
+    var foco = document.activeElement;
+    var escribiendo = !!foco && (foco.tagName === "INPUT" || foco.tagName === "TEXTAREA");
+    if (mod && escribiendo && /^[zy]$/i.test(ev.key)) { return; }
     if (mod && ev.key.toLowerCase() === "z" && !ev.shiftKey) { ev.preventDefault(); deshacer(); return; }
     if (mod && (ev.key.toLowerCase() === "y" || (ev.key.toLowerCase() === "z" && ev.shiftKey))) { ev.preventDefault(); rehacer(); return; }
     if (ev.key === "Delete" || ev.key === "Backspace") {
@@ -2402,10 +2413,12 @@ var UI = (function () {
     // Los botones están siempre en el mismo lugar; si no aplican, quedan
     // deshabilitados en lugar de desaparecer.
     var esc = S.topologia.escenario;
-    var bVer = boton("Verificar");
+    // En un desafío el botón lo dice con todas las letras y se destaca: es
+    // la acción que el alumno busca cuando termina su diseño.
+    var bVer = esDesafioActual() ? boton("Verificar diseño VLSM", "primario") : boton("Verificar");
     bVer.disabled = !(esc && esc.objetivos && esc.objetivos.length) && !esDesafioActual();
     if (bVer.disabled) { bVer.title = "Esta red no tiene objetivos ni un desafío para verificar"; }
-    else if (esDesafioActual()) { bVer.title = "Verifica el diseño VLSM" + (esc && esc.objetivos && esc.objetivos.length ? " y los objetivos" : ""); }
+    else if (esDesafioActual() && esc.objetivos && esc.objetivos.length) { bVer.title = "Verifica el diseño VLSM y los objetivos"; }
     var hayResultado = !!(S.ultimo || S.ultimaVerif);
     var bCopiar = boton("Copiar registro");
     var bExp = boton("Exportar registro");
@@ -2961,37 +2974,48 @@ var UI = (function () {
     return html;
   }
 
+  // Ayuda en cuatro tarjetas lado a lado, para que entre en la franja sin
+  // scroll. Todo lo que dice tiene que poder hacerse en el simulador.
   function panelAyuda(c) {
-    c.innerHTML = "<b>Ayuda</b>" +
-      "<p><b>Ideas clave:</b> el sistema operativo decide con IP AND máscara; la puerta de enlace tiene que estar en tu red; " +
-      "el switch no mira IP y no enruta; la vuelta del ping también necesita camino; el prefijo es la fuente de verdad.</p>" +
-      "<p><b>Simplificaciones declaradas:</b> sin STP ni bucles reales, sin enrutamiento dinámico (OSPF, BGP, RIP), " +
-      "sin VLAN ni switch L3, sin NAT, sin HTTP, sin fragmentación, sin IPv6, sin TCP real, sin cifrado ni TLS, " +
-      "sin QoS real, sin 802.1X y sin radiofrecuencia: el wireless es una abstracción por distancia. " +
-      "La nube Internet responde por cualquier dirección pública y devuelve la respuesta por el mismo enlace: " +
-      "en una red real, el firewall o router de salida haría NAT. El DNS conoce google.com, www.google.com, " +
-      "dns.google y one.one.one.one.</p>" +
-      "<p><b>Atajos:</b> Ctrl+Z deshacer, Ctrl+Y rehacer, Supr borra, Esc cancela, F presenta. " +
-      "Paneo: arrastrar el fondo, o flechas con el foco en el lienzo. Con el foco en un equipo, las flechas lo mueven. " +
-      "Desde el teclado, Enter sobre un dispositivo de la paleta lo agrega en el centro de la vista. " +
-      "Para cambiar un cable de puerto: seleccionalo, hacé clic en el asa redonda de la punta que querés mover " +
-      "y después en el puerto nuevo (también desde las listas Punta A y Punta B del panel).</p>";
-    if (esDesafioActual()) {
-      var b = boton("Verificar diseño VLSM", "primario");
-      var out = el("div", "");
-      out.setAttribute("aria-live", "polite");
-      c.appendChild(b); c.appendChild(out);
-      b.addEventListener("click", function () {
-        var inf;
-        try { inf = Escenarios.verificarDesafio(S.topologia, S.topologia.escenario || {}); }
-        catch (e) { out.textContent = "Error: " + e.message; return; }
-        out.innerHTML = "<p>Errores: " + inf.resumen.errores + ", advertencias: " + inf.resumen.advertencias + ".</p>" +
-          inf.porSector.map(function (s) {
-            return "<div class='paso " + (s.ok ? "ok" : "mal") + "'><b>" + escapar(s.sector) + "</b> " + (s.ok ? "✓" : "✗") +
-              "<br>" + s.hallazgos.map(function (h) { return escapar(h.nivel + ": " + h.mensaje); }).join("<br>") + "</div>";
-          }).join("");
-      });
-    }
+    c.innerHTML = "";
+    var caja = el("div", "ayuda");
+    caja.appendChild(el("section", "",
+      "<h3>Cómo empezar</h3><ol>" +
+      "<li>Arrastrá equipos desde la paleta, o abrí una red con <i>Ejemplos…</i> o <i>Importar</i>.</li>" +
+      "<li>Elegí <i>Conectar con un cable</i> y hacé clic en dos puertos.</li>" +
+      "<li>Seleccioná cada equipo y cargá su IP, máscara y puerta de enlace en <i>Propiedades</i>.</li>" +
+      "<li>Probá la conexión con <i>Ping</i>. Si falla, el recorrido muestra en qué paso se cortó y por qué.</li>" +
+      "<li>Si la red trae objetivos o es un desafío VLSM, comprobala con <i>Verificar</i>, en esta misma franja.</li></ol>"));
+    caja.appendChild(el("section", "",
+      "<h3>Ideas clave</h3><ul>" +
+      "<li>Antes de enviar, el equipo aplica el operador lógico <b>«AND»</b> entre su máscara y cada IP, la suya y la del destino. " +
+      "Si dan la misma red, lo entrega directo; si no, se lo pasa a la puerta de enlace.</li>" +
+      "<li>La puerta de enlace tiene que estar <b>en la misma red</b> que el equipo.</li>" +
+      "<li>El switch no mira direcciones IP ni enruta: para pasar de una subred a otra hace falta un router.</li>" +
+      "<li>El ping va y vuelve: la <b>respuesta</b> también necesita una ruta.</li>" +
+      "<li>El prefijo y la máscara dicen lo mismo: /24 es 255.255.255.0.</li></ul>"));
+    caja.appendChild(el("section", "",
+      "<h3>Teclado y mouse</h3><div class='teclas'>" +
+      "<span><kbd>Ctrl</kbd>+<kbd>Z</kbd> · <kbd>Ctrl</kbd>+<kbd>Y</kbd></span><span>deshacer · rehacer</span>" +
+      "<span><kbd>Supr</kbd></span><span>borra el equipo o cable seleccionado</span>" +
+      "<span><kbd>Esc</kbd></span><span>cancela lo que estés haciendo</span>" +
+      "<span><kbd>F</kbd></span><span>entra y sale del modo presentación</span>" +
+      "<span>Arrastrar el fondo</span><span>mueve la vista; <kbd>+</kbd> <kbd>−</kbd> acercan y alejan</span>" +
+      "<span><kbd>Tab</kbd> y flechas</span><span>elegí un equipo con Tab; las flechas lo mueven</span>" +
+      "<span><kbd>Enter</kbd> en la paleta</span><span>agrega ese equipo en el centro</span>" +
+      "<span>Cambiar un cable de puerto</span><span>seleccionalo, clic en el círculo de la punta y en el puerto nuevo</span>" +
+      "</div>"));
+    var alcance = (Motor && Motor.UMBRAL_WIRELESS) || 250;
+    caja.appendChild(el("section", "",
+      "<h3>Qué simplifica el simulador</h3><ul>" +
+      "<li>Las rutas se cargan a mano: no hay OSPF, BGP ni RIP. Tampoco STP, VLAN, NAT ni IPv6.</li>" +
+      "<li>El único tráfico es el ping, con tiempos aproximados: no hay TCP, HTTP ni TLS.</li>" +
+      "<li>El wireless sólo mira la distancia: llega hasta " + alcance + " m.</li>" +
+      "<li>El filtrado <b>no recuerda conexiones</b>: una regla puede frenar la respuesta aunque la ida haya pasado.</li>" +
+      "<li>Cada router reparte por DHCP un solo rango, sólo a su propia red.</li>" +
+      "<li>La nube Internet responde por cualquier IP pública. El DNS conoce google.com, www.google.com, " +
+      "dns.google y one.one.one.one.</li></ul>"));
+    c.appendChild(caja);
   }
 
   /* ---------------- Animaciones sobre el lienzo ---------------- */
