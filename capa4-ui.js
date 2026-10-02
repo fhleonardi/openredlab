@@ -295,7 +295,7 @@ var UI = (function () {
     ".simbarra .espacio{flex:1;}",
     ".simbarra .enpres{display:none;font-size:13px;opacity:.85;}",
     ".simcuerpo{flex:1;display:flex;min-height:0;}",
-    ".simpaleta{width:180px;flex:0 0 180px;background:var(--sim-panel);border-right:1px solid var(--sim-borde);padding:8px;overflow:auto;box-sizing:border-box;}",
+    ".simpaleta{width:200px;flex:0 0 200px;background:var(--sim-panel);border-right:1px solid var(--sim-borde);padding:8px;overflow:auto;box-sizing:border-box;}",
     ".simpaleta.colapsada{width:60px;flex-basis:60px;}",
     ".simpaleta.colapsada .etiqueta,.simpaleta.colapsada .titulopal,.simpaleta.colapsada .leyenda,.simpaleta.colapsada select,.simpaleta.colapsada label{display:none;}",
     ".simpaleta h2{font-size:12px;letter-spacing:.02em;color:var(--sim-tenue);margin:4px 0 8px;}",
@@ -303,10 +303,22 @@ var UI = (function () {
     ".simraiz .palitem{touch-action:none;}",
     ".palitem.armado{outline:2px solid var(--sim-acento);outline-offset:1px;}",
     ".palitem svg{width:28px;height:28px;flex:0 0 28px;}",
+    ".palgrid{display:grid;grid-template-columns:1fr 1fr;grid-auto-rows:1fr;gap:4px;margin-bottom:4px;}",
+    ".palgrid .palitem{gap:4px;padding:3px 5px;margin:0;}",
+    ".palcab{display:flex;align-items:center;justify-content:space-between;gap:4px;margin:2px 0 6px;}",
+    ".palcab h2{margin:0;}",
+    ".palcab button{font-size:11px;padding:1px 6px;}",
+    ".palgrid .palitem svg{width:20px;height:20px;flex-basis:20px;}",
+    ".palgrid .palitem .etiqueta{font-size:11.5px;line-height:1.15;overflow-wrap:normal;}",
+    ".simpaleta.colapsada .palgrid .palitem{justify-content:center;}",
+    ".simpaleta.colapsada .palgrid{grid-template-columns:1fr;}",
     ".palitem .etiqueta{font-size:13px;line-height:1.15;overflow-wrap:anywhere;}",
+    ".simraiz .sololector{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0;}",
     ".simpaleta label{display:block;font-size:12px;color:var(--sim-tenue);margin:4px 0 2px;}",
     ".simpaleta select,.simpaleta .herramienta{width:100%;box-sizing:border-box;margin-bottom:6px;}",
-    ".simpaleta .leyenda{font-size:11px;color:var(--sim-tenue);line-height:1.5;margin:4px 0 8px;}",
+    ".simpaleta .herramienta{font-size:12px;padding:4px 6px;}",
+    ".simpaleta .leyenda{font-size:11px;color:var(--sim-tenue);line-height:1.4;margin:2px 0 6px;}",
+    ".simpaleta .palgrid + h2{margin-top:8px;}",
     ".simlienzo{flex:1;position:relative;min-width:0;background:var(--sim-fondo);}",
     ".simlienzo svg.lienzo{width:100%;height:100%;display:block;touch-action:none;}",
     ".simtools{position:absolute;top:8px;left:8px;display:flex;gap:4px;background:var(--sim-panel);border:1px solid var(--sim-borde);border-radius:8px;padding:4px;}",
@@ -407,7 +419,7 @@ var UI = (function () {
     ".simaviso{position:absolute;left:50%;top:10px;transform:translateX(-50%);background:var(--sim-acento);color:#fff;border-radius:10px;padding:6px 12px;font-size:13px;z-index:6;pointer-events:none;max-width:90%;text-align:center;}",
     ".pista{position:absolute;left:10px;bottom:10px;background:var(--sim-panel);border:1px solid var(--sim-borde);border-radius:8px;padding:6px 10px;font-size:13px;color:var(--sim-tenue);}",
     ".diagnostico .irconfig{margin-top:8px;border-color:var(--sim-mal);color:var(--sim-mal);}",
-    "@media (max-width:900px){.simpaleta{width:140px;flex-basis:140px;}.simprop{width:240px;flex-basis:240px;}.simbarra{gap:5px;padding:5px 6px;}.simbarra button{padding:4px 7px;}}",
+    "@media (max-width:900px){.simpaleta{width:140px;flex-basis:140px;}.palgrid{grid-template-columns:1fr;}.simprop{width:240px;flex-basis:240px;}.simbarra{gap:5px;padding:5px 6px;}.simbarra button{padding:4px 7px;}}",
     "@media (max-width:640px){" +
       ".simraiz{min-height:0;}" +
       ".simbarra{flex-wrap:nowrap;padding:8px 10px;gap:8px;}" +
@@ -617,7 +629,10 @@ var UI = (function () {
     var cuerpo = el("div", "simcuerpo");
     var pal = el("div", "simpaleta");
     pal.setAttribute("aria-label", "Paleta de dispositivos");
-    pal.appendChild(el("h2", "titulopal", "Dispositivos"));
+    var cab = el("div", "palcab");
+    cab.appendChild(el("h2", "titulopal", "Dispositivos"));
+    pal.appendChild(cab);
+    var grilla = el("div", "palgrid");
     TIPOS.forEach(function (t) {
       var item = boton("", "palitem");
       item.setAttribute("data-tipo", t.tipo);
@@ -631,15 +646,19 @@ var UI = (function () {
         if (ev.detail === 0) { colocarEnCentro(t.tipo); return; }
         armarColocacion(t.tipo, item);
       });
-      pal.appendChild(item);
+      grilla.appendChild(item);
     });
+    pal.appendChild(grilla);
     pal.appendChild(el("h2", "titulopal", "Cable"));
     var selCable = document.createElement("select");
     selCable.id = idCampo("tipo-cable");
     selCable.innerHTML = "<option value='ethernet'>ethernet (cobre)</option><option value='fibra'>fibra</option><option value='wireless'>wireless</option>";
     selCable.addEventListener("change", function () { S.cableTipo = selCable.value; S.herramientaCable = true; renderLienzo(); });
     S.selectCable = selCable;
-    pal.appendChild(etiqueta("Tipo de cable", selCable));
+    // El título "Cable" ya lo nombra a la vista; el rótulo queda para lectores de pantalla.
+    var labCable = etiqueta("Tipo de cable", selCable);
+    labCable.className = "sololector";
+    pal.appendChild(labCable);
     pal.appendChild(selCable);
     var bCable = boton("Conectar con un cable", "herramienta");
     bCable.title = "Hacé clic en dos puertos para unirlos (Esc cancela)";
@@ -657,10 +676,13 @@ var UI = (function () {
     bCol.setAttribute("aria-expanded", "true");
     bCol.addEventListener("click", function () {
       var colapsada = pal.classList.toggle("colapsada");
-      bCol.textContent = colapsada ? "Expandir" : "Colapsar";
+      // Colapsada mide 60 px: "Expandir" no entra, va el símbolo con su nombre accesible.
+      bCol.textContent = colapsada ? "»" : "Colapsar";
+      bCol.title = colapsada ? "Expandir la paleta" : "";
+      bCol.setAttribute("aria-label", colapsada ? "Expandir la paleta" : "Colapsar la paleta");
       bCol.setAttribute("aria-expanded", String(!colapsada));
     });
-    pal.appendChild(bCol);
+    cab.appendChild(bCol);
     cuerpo.appendChild(pal);
     S.paleta = pal;
 
