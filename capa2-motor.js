@@ -3468,6 +3468,8 @@ var Motor = (function () {
     advertenciasDe: advertenciasDe,
     dhcpSolicitar: dhcpSolicitar,
     avisosDhcp: avisosServidorDhcp,
+    // Puertos ("equipo:interfaz") del mismo dominio de difusión que el dado.
+    puertosDelSegmento: segmentoL2,
     rutaElegida: rutaElegida,
     tablaArp: tablaArp,
     tablaMac: tablaMac,

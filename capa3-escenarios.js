@@ -835,7 +835,8 @@ var Escenarios = (function () {
    * lo que declara el escenario: la subred de cada sector se deriva de las
    * IP y máscaras de sus interfaces. El informe dice qué está mal y por qué,
    * nunca cuál sería la dirección correcta. */
-  function verificarDesafio(topologia, escenario) {
+  function verificarDesafio(topologia, escenario, opciones) {
+    var libre = !!(opciones && opciones.libre);
     var baseCruda = escenario ? (escenario.bloqueBase || escenario.bloque || escenario.base || escenario.redBase || escenario.cidr) : null;
     var base = parsearBloque(baseCruda);
     // Compatibilidad: el escenario puede traer red y prefijo sueltos arriba.
@@ -916,7 +917,10 @@ var Escenarios = (function () {
 
       // 2. La subred cae dentro del bloque base.
       if (!base || inicioBase === null || finBase === null) {
-        hallazgo(cur, "error", "El desafío no indica el bloque de direcciones a repartir.");
+        // En el diseño libre nadie fijó un bloque: no hay contra qué comparar.
+        if (!libre) {
+          hallazgo(cur, "error", "El desafío no indica el bloque de direcciones a repartir.");
+        }
       } else {
         var ini = Red.aNumero(cur.red);
         var fin = Red.aNumero(Red.broadcast(cur.red, cur.prefijo));
@@ -930,12 +934,14 @@ var Escenarios = (function () {
       // convención de la cátedra, el gateway (la interfaz del router del
       // sector) es la primera dirección asignable: la subred que el alumno
       // pensó arranca una dirección antes.
+      // Si hay varios routers (un enlace entre dos), la referencia es el de
+      // IP más baja: es el que ocupa la primera dirección asignable.
       var referencia = null;
       for (var r = 0; r < cur.direccionados.length; r++) {
         var cand = cur.direccionados[r];
-        if (cand.esInterfazDeclarada && cand.dispositivo.tipo === "router") {
+        if (cand.esInterfazDeclarada && cand.dispositivo.tipo === "router" &&
+            (!referencia || Red.aNumero(cand.ip) < Red.aNumero(referencia.ip))) {
           referencia = cand;
-          break;
         }
       }
       if (referencia && cur.prefijo < 31) {
@@ -1038,6 +1044,80 @@ var Escenarios = (function () {
     });
 
     return { resumen: { errores: errores, advertencias: advertencias }, porSector: porSector };
+  }
+
+  /* ---------------- Diseño libre ----------------
+   * Una red armada sin enunciado también se puede verificar: cada dominio de
+   * difusión que tiene equipos es un sector. Lo único que no se deduce de la
+   * red es cuántos hosts pide cada sector y de qué bloque se reparte; el
+   * alumno puede cargarlos en escenario.diseno = { bloqueBase, hosts: {id: n} }. */
+
+  function esConmutadorEsc(d) {
+    return !!d && (d.tipo === "switch-l2" || d.tipo === "ap");
+  }
+
+  function detectarSectores(topologia) {
+    var estado = Motor.crearEstado(topologia);
+    var visto = {};
+    var sectores = [];
+    (topologia.dispositivos || []).forEach(function (dev) {
+      if (esConmutadorEsc(dev) || dev.tipo === "internet") { return; }
+      (dev.interfaces || []).forEach(function (f) {
+        var clave = dev.id + ":" + f.id;
+        if (visto[clave] || f.habilitada === false) { return; }
+        var conCable = (topologia.enlaces || []).some(function (e) {
+          return (e.a.dispositivo === dev.id && e.a.interfaz === f.id) || (e.b.dispositivo === dev.id && e.b.interfaz === f.id);
+        });
+        if (!conCable) { return; }
+        var claves = Motor.puertosDelSegmento(estado, dev.id, f.id);
+        claves.forEach(function (k) { visto[k] = true; });
+        var miembros = [], routers = [], conmutadores = [], tocaInternet = false;
+        claves.forEach(function (k) {
+          var corte = k.indexOf(":");
+          var d = buscarDispositivo(topologia, k.slice(0, corte));
+          if (!d) { return; }
+          if (d.tipo === "internet") { tocaInternet = true; return; }
+          if (esConmutadorEsc(d)) {
+            if (conmutadores.indexOf(d) < 0) { conmutadores.push(d); }
+            return;
+          }
+          miembros.push(k);
+          if (d.tipo === "router") { routers.push({ d: d, puerto: k.slice(corte + 1), clave: k }); }
+        });
+        // El tramo hacia Internet es del proveedor, no del diseño del alumno.
+        if (tocaInternet || miembros.length === 0) { return; }
+        var nombre;
+        if (routers.length >= 2 && routers.length === miembros.length && conmutadores.length === 0) {
+          nombre = "Enlace " + routers.map(function (r) { return r.d.nombre || r.d.id; }).join(" — ");
+        } else {
+          nombre = routers.length
+            ? routers.map(function (r) { return (r.d.nombre || r.d.id) + " " + r.puerto; }).join(" / ")
+            : "Red de " + (buscarDispositivo(topologia, miembros[0].split(":")[0]).nombre || miembros[0]);
+          if (conmutadores.length) { nombre += " · " + (conmutadores[0].nombre || conmutadores[0].id); }
+        }
+        var id = (routers.length ? routers.map(function (r) { return r.clave; }) : [miembros[0]]).sort().join("+");
+        sectores.push({ id: id, sector: nombre, dispositivos: miembros });
+      });
+    });
+    return sectores;
+  }
+
+  function verificarDiseno(topologia) {
+    var diseno = (topologia.escenario && topologia.escenario.diseno) || {};
+    var hosts = diseno.hosts || {};
+    var sectores = detectarSectores(topologia);
+    var informe = verificarDesafio(topologia, {
+      bloqueBase: diseno.bloqueBase || null,
+      requerimientos: sectores.map(function (s) {
+        return { sector: s.sector, hosts: hosts[s.id] || 0, dispositivos: s.dispositivos };
+      })
+    }, { libre: true });
+    informe.porSector.forEach(function (p, i) {
+      p.id = sectores[i].id;
+      p.hosts = hosts[sectores[i].id] || null;
+    });
+    informe.bloqueBase = diseno.bloqueBase || null;
+    return informe;
   }
 
   /* ---------------- Constructores de ejemplos ----------------
@@ -1766,6 +1846,43 @@ var Escenarios = (function () {
       comparar("desafío /24 para 60 hosts advierte", inf.resumen.advertencias, 1);
     })();
 
+    // Diseño libre: los sectores salen de la red, sin enunciado.
+    (function () {
+      var inf = verificarDiseno(topologiaComplejo());
+      comparar("diseño libre detecta los sectores del complejo",
+        inf.porSector.map(function (x) { return x.sector; }),
+        ["R1 wlan0", "R1 g0/0 · SW-Admin", "R1 g0/1 · SW-Cámaras", "Enlace R1 — R2", "R2 g0/0 · SW-Servidores"]);
+      comparar("diseño libre del complejo sin errores", inf.resumen.errores, 0);
+      comparar("diseño libre de una LAN sin router",
+        verificarDiseno(topologiaBasica()).porSector.map(function (x) { return x.sector; }), ["Red de PC-1 · SW1"]);
+    })();
+
+    (function () {
+      var topo = topologiaComplejo();
+      poner(topo, "r1:g0/1", "10.45.7.41", 28);
+      poner(topo, "cam1:eth0", "10.45.7.42", 28, "10.45.7.41");
+      var cam = sectorDe(verificarDiseno(topo), "R1 g0/1 · SW-Cámaras");
+      comparar("diseño libre marca la desalineada", dice(cam, "no es múltiplo de 16"), true);
+    })();
+
+    (function () {
+      // En un enlace entre routers, la referencia es la IP más baja.
+      var topo = topologiaComplejo();
+      poner(topo, "r1:fib0", "10.45.7.130", 30);
+      poner(topo, "r2:fib0", "10.45.7.129", 30);
+      comparar("diseño libre: enlace con la IP baja en el segundo router",
+        sectorDe(verificarDiseno(topo), "Enlace R1 — R2").ok, true);
+    })();
+
+    (function () {
+      var topo = topologiaComplejo();
+      comparar("diseño libre sin bloque no lo exige", dice(sectorDe(verificarDiseno(topo), "R1 wlan0"), "bloque"), false);
+      topo.escenario = { diseno: { bloqueBase: "192.168.0.0/24", hosts: { "r1:g0/0": 40 } } };
+      var inf = verificarDiseno(topo);
+      comparar("diseño libre con bloque ajeno", dice(sectorDe(inf, "R1 wlan0"), "se sale del bloque"), true);
+      comparar("diseño libre con hosts pedidos", dice(sectorDe(inf, "R1 g0/0 · SW-Admin"), "el sector necesita 40"), true);
+    })();
+
     // Router de 8 puertos: valida, enruta entre puertos y rechaza modelos raros.
     (function () {
       var r8 = topologiaRouter8();
@@ -1874,6 +1991,8 @@ var Escenarios = (function () {
     exportarParaAlumno: exportarParaAlumno,
     verificarObjetivos: verificarObjetivos,
     verificarDesafio: verificarDesafio,
+    detectarSectores: detectarSectores,
+    verificarDiseno: verificarDiseno,
     autopruebas: autopruebas
   };
 })();
