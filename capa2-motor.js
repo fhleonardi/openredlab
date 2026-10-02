@@ -22,8 +22,19 @@ var Motor = (function () {
   var VIDA_ARP_MS = 300000;
   var VIDA_MAC_MS = 300000;
 
-  // Saltos máximos antes de dar por terminado el ping (protección anti-bucles).
-  var TTL_INICIAL = 8;
+  // TTL con el que sale cada paquete, como en un equipo real. Cada router le
+  // resta uno; al llegar a 0 se descarta (y eso corta los bucles de rutas).
+  var TTL_INICIAL = 64;
+
+  // Las capas en las que ocurre cada paso del ping, en los dos modelos que
+  // usa la materia: OSI y TCP/IP de cinco capas (como Stallings).
+  var CAPAS = {
+    1: { osi: "Física", tcpip: "Física", pdu: "bits" },
+    2: { osi: "Enlace", tcpip: "Acceso a la red", pdu: "trama" },
+    3: { osi: "Red", tcpip: "Internet", pdu: "paquete" },
+    4: { osi: "Transporte", tcpip: "Transporte", pdu: "segmento" },
+    7: { osi: "Aplicación", tcpip: "Aplicación", pdu: "mensaje" }
+  };
 
   /* ---------------- Catálogo de diagnósticos ----------------
    * Cada entrada tiene un título corto, una explicación en lenguaje de aula
@@ -1086,9 +1097,73 @@ var Motor = (function () {
     return primeraHabilitada || dispositivo.interfaces[0];
   }
 
+  /* ---------------- Tramas: lo que viaja en cada tramo ----------------
+   * Entre dos equipos de capa 3, la trama cruza switches y puntos de acceso
+   * sin que cambie. Se informan esos equipos, en orden, y el medio del
+   * primer enlace (el del puerto que transmite). */
+  function tramoL2(estado, idA, ifA, idB, ifB) {
+    var visitados = recorrerSegmento(estado, idA, ifA);
+    var clave = clavePuerto(idB, ifB);
+    var atraviesa = [];
+    var enlaces = [];
+    var primerEnlace = null;
+    if (!visitados[clave]) {
+      return { atraviesa: atraviesa, medio: null, enlaces: enlaces };
+    }
+    while (clave) {
+      var paso = visitados[clave];
+      var dev = clave.split(":")[0];
+      if (dev !== idA && dev !== idB && atraviesa[0] !== dev) {
+        atraviesa.unshift(dev);
+      }
+      if (paso.enlace) {
+        primerEnlace = paso.enlace;
+        enlaces.unshift(paso.enlace);
+      }
+      clave = paso.desde;
+    }
+    // Un puerto ap puede tener varios enlaces: vale el que usó la trama.
+    var propios = enlacesDe(estado, idA, ifA);
+    var enlace = propios[0] || null;
+    for (var i = 0; i < propios.length; i++) {
+      if (propios[i].id === primerEnlace) {
+        enlace = propios[i];
+        break;
+      }
+    }
+    return { atraviesa: atraviesa, medio: enlace ? enlace.tipo : null, enlaces: enlaces };
+  }
+
+  // Las tramas de una respuesta llegan del ping de vuelta como si fueran de
+  // ida: se marcan como vuelta y llevan el echo reply.
+  function tramasDeVuelta(res) {
+    return ((res && res.tramas) || []).map(function (t) {
+      var copia = {};
+      for (var k in t) { copia[k] = t[k]; }
+      copia.sentido = "vuelta";
+      copia.mensaje = "ICMP echo reply";
+      return copia;
+    });
+  }
+
+  // TTL con el que llega la respuesta: el de la última trama de vuelta. Sin
+  // vuelta recorrida (ping a sí mismo), la cuenta de antes.
+  function ttlDeRespuesta(vueltas, saltos) {
+    return vueltas.length ? vueltas[vueltas.length - 1].ttl : Math.max(1, TTL_INICIAL - (saltos.length - 1));
+  }
+
   /* ---------------- Ping: el algoritmo de los once pasos ---------------- */
 
+  // Cada resultado lleva las tramas que el paquete llegó a recorrer, aunque
+  // el ping falle a mitad de camino.
   function ejecutarPing(estado, idOrigen, destinoIp, opciones) {
+    var tramas = [];
+    var res = recorrerPing(estado, idOrigen, destinoIp, opciones, tramas);
+    res.tramas = tramas;
+    return res;
+  }
+
+  function recorrerPing(estado, idOrigen, destinoIp, opciones, tramas) {
     opciones = opciones || {};
     var registrar = opciones.registrar !== false;
     var profundidad = opciones.profundidad || 0;
@@ -1103,14 +1178,36 @@ var Motor = (function () {
     var respuestas = [];
     var contador = 0;
 
-    function agregarPaso(titulo, detalle, ok) {
+    // capa: 1 física, 2 enlace, 3 red, 7 aplicación; null en las
+    // validaciones de configuración que no son de ninguna capa.
+    function agregarPaso(titulo, detalle, ok, capa) {
       contador += 1;
-      pasos.push({ n: contador, titulo: titulo, detalle: detalle, ok: !!ok });
+      pasos.push({ n: contador, titulo: titulo, detalle: detalle, ok: !!ok, capa: capa === undefined ? null : capa });
     }
 
-    function fallar(codigo, ctx, tituloPaso, detallePaso) {
+    // Una trama por tramo entre equipos de capa 3: las MAC son las de las
+    // interfaces de los extremos; las IP, las del paquete, que no cambian.
+    function anotarTrama(idDe, ifDe, idA, ifA, ttlTrama) {
+      var tramo = tramoL2(estado, idDe, ifDe.id, idA, ifA.id);
+      tramas.push({
+        sentido: "ida",
+        de: { dispositivo: idDe, interfaz: ifDe.id },
+        a: { dispositivo: idA, interfaz: ifA.id },
+        medio: tramo.medio,
+        macOrigen: ifDe.mac || null,
+        macDestino: ifA.mac || null,
+        ipOrigen: ipOrigen,
+        ipDestino: destinoIp,
+        ttl: ttlTrama,
+        mensaje: "ICMP echo request",
+        atraviesa: tramo.atraviesa,
+        enlaces: tramo.enlaces
+      });
+    }
+
+    function fallar(codigo, ctx, tituloPaso, detallePaso, capa) {
       if (tituloPaso) {
-        agregarPaso(tituloPaso, detallePaso || "", false);
+        agregarPaso(tituloPaso, detallePaso || "", false, capa);
       }
       return {
         exito: false,
@@ -1141,7 +1238,7 @@ var Motor = (function () {
 
     var origen = buscarDispositivo(estado, idOrigen);
     if (!origen) {
-      agregarPaso("Buscar el equipo de origen", "No hay ningún equipo con el identificador " + idOrigen + ".", false);
+      agregarPaso("Buscar el equipo de origen", "No hay ningún equipo con el identificador " + idOrigen + ".", false, null);
       return {
         exito: false,
         pasos: pasos,
@@ -1155,7 +1252,7 @@ var Motor = (function () {
     if (!srcIface) {
       return fallar("D01", { origen: nom(origen.id), interfaz: "?" },
         "Revisar el equipo de origen",
-        nom(origen.id) + " no tiene interfaces.");
+        nom(origen.id) + " no tiene interfaces.", null);
     }
     var ipOrigen = srcIface.ip;
     saltos.push({ dispositivo: origen.id, interfaz: srcIface.id });
@@ -1167,7 +1264,7 @@ var Motor = (function () {
       nom(origen.id) + (origen.encendido ? " está encendido" : " está apagado") + " y su puerto " + srcIface.id +
       (srcIface.habilitada ? " está habilitado." : " está deshabilitado."),
       encendidoOk
-    );
+    , 1);
     if (!encendidoOk) {
       return {
         exito: false,
@@ -1185,7 +1282,7 @@ var Motor = (function () {
     if (enlacesOrigen.length === 0) {
       return fallar("D02", { origen: nom(origen.id), interfaz: srcIface.id },
         "Revisar la conexión física",
-        "El puerto " + srcIface.id + " de " + nom(origen.id) + " no tiene ningún cable conectado.");
+        "El puerto " + srcIface.id + " de " + nom(origen.id) + " no tiene ningún cable conectado.", 1);
     }
     var enlaceUsable = null;
     var problemaOrigen = null;
@@ -1230,7 +1327,7 @@ var Motor = (function () {
       if (wlOrigen.aplica) {
         agregarPaso("Revisar el alcance inalámbrico",
           nom(origen.id) + " está a " + wlOrigen.distancia + " m de " + nom(otraPunta(candOrigen, origen.id)) +
-          " (alcance máximo: " + estado.umbralWireless + " m).", wlOrigen.enAlcance);
+          " (alcance máximo: " + estado.umbralWireless + " m).", wlOrigen.enAlcance, 1);
         if (!wlOrigen.enAlcance) {
           if (!problemaOrigen) {
             problemaOrigen = {
@@ -1267,7 +1364,7 @@ var Motor = (function () {
         titulo: "Revisar la conexión física",
         detalle: "Ningún cable del puerto " + srcIface.id + " está activo."
       };
-      agregarPaso(po.titulo, po.detalle, false);
+      agregarPaso(po.titulo, po.detalle, false, 1);
       return {
         exito: false,
         pasos: pasos,
@@ -1281,7 +1378,7 @@ var Motor = (function () {
       (srcIface.medio === "wireless"
         ? "un enlace inalámbrico activo (modo " + modoRadioDe(origen, srcIface) + ")"
         : "un cable " + palabraMedio(enlaceUsable.tipo) + " activo") +
-      " hacia " + nom(otraPunta(enlaceUsable, origen.id)) + ".", true);
+      " hacia " + nom(otraPunta(enlaceUsable, origen.id)) + ".", true, 1);
 
     // Un cliente sólo transmite si del otro lado hay un punto de acceso
     // usable: encendido, habilitado y dentro del alcance.
@@ -1296,7 +1393,7 @@ var Motor = (function () {
       if (!apOk) {
         return fallar("D19", { origen: nom(origen.id), destino: destinoIp, ap: devAp ? nom(devAp.id) : null },
           "Revisar la conexión al punto de acceso",
-          nom(origen.id) + " está enlazado con " + nom(otroCli.dispositivo) + ", pero ese punto de acceso no está disponible.");
+          nom(origen.id) + " está enlazado con " + nom(otroCli.dispositivo) + ", pero ese punto de acceso no está disponible.", 2);
       }
     }
 
@@ -1304,24 +1401,24 @@ var Motor = (function () {
     if (!ipOrigen || !Red.esIpValida(ipOrigen)) {
       return fallar("D04", { origen: nom(origen.id), interfaz: srcIface.id },
         "Revisar la IP y la máscara",
-        "El puerto " + srcIface.id + " de " + nom(origen.id) + " no tiene una IP configurada.");
+        "El puerto " + srcIface.id + " de " + nom(origen.id) + " no tiene una IP configurada.", 3);
     }
     if (!prefijoValido(srcIface.prefijo)) {
       return fallar("D05", { origen: nom(origen.id), interfaz: srcIface.id, prefijo: srcIface.prefijo },
         "Revisar la IP y la máscara",
-        "La máscara de " + nom(origen.id) + " no es válida (prefijo " + srcIface.prefijo + ").");
+        "La máscara de " + nom(origen.id) + " no es válida (prefijo " + srcIface.prefijo + ").", 3);
     }
     var redOrigen = Red.direccionDeRed(ipOrigen, srcIface.prefijo);
     agregarPaso("Revisar la IP y la máscara",
       nom(origen.id) + " tiene " + ipOrigen + "/" + srcIface.prefijo +
-      " (máscara " + Red.prefijoAMascara(srcIface.prefijo) + "): pertenece a la red " + redOrigen + ".", true);
+      " (máscara " + Red.prefijoAMascara(srcIface.prefijo) + "): pertenece a la red " + redOrigen + ".", true, 3);
 
     // La IP de origen no puede ser red ni broadcast (D06).
     if (Red.esDireccionDeRed(ipOrigen, srcIface.prefijo) || Red.esBroadcast(ipOrigen, srcIface.prefijo)) {
       var rolOrigen = Red.esDireccionDeRed(ipOrigen, srcIface.prefijo)
         ? "dirección de red" : "dirección de broadcast";
       agregarPaso("Comprobar que la IP se pueda asignar",
-        ipOrigen + " es la " + rolOrigen + " de " + redOrigen + "/" + srcIface.prefijo + ": no puede usarla un equipo.", false);
+        ipOrigen + " es la " + rolOrigen + " de " + redOrigen + "/" + srcIface.prefijo + ": no puede usarla un equipo.", false, 3);
       return {
         exito: false,
         pasos: pasos,
@@ -1350,7 +1447,7 @@ var Motor = (function () {
     }
     if (duplicadoOrigen) {
       agregarPaso("Comprobar que la IP no esté repetida",
-        "La IP " + ipOrigen + " también la tiene " + nom(duplicadoOrigen.dispositivo.id) + ".", false);
+        "La IP " + ipOrigen + " también la tiene " + nom(duplicadoOrigen.dispositivo.id) + ".", false, 3);
       return {
         exito: false,
         pasos: pasos,
@@ -1365,7 +1462,7 @@ var Motor = (function () {
     // D21: el broadcast de la propia subred no es un equipo.
     if (Red.esBroadcast(destinoIp, srcIface.prefijo) && Red.mismaRed(ipOrigen, destinoIp, srcIface.prefijo)) {
       agregarPaso("Revisar la dirección de destino",
-        destinoIp + " es la dirección de broadcast de " + redOrigen + "/" + srcIface.prefijo + ".", false);
+        destinoIp + " es la dirección de broadcast de " + redOrigen + "/" + srcIface.prefijo + ".", false, 3);
       return {
         exito: false,
         pasos: pasos,
@@ -1403,7 +1500,7 @@ var Motor = (function () {
         var aparato15 = aire15 ? "punto de acceso" : "switch";
         agregarPaso("Comparar las subredes de los dos equipos",
           "Están en el mismo " + aparato15 + ", pero en redes distintas (" + redA15 + "/" + srcIface.prefijo + " y " +
-          redB15 + "/" + prefD + "): el " + aparato15 + " no puede pasar de una a otra.", false);
+          redB15 + "/" + prefD + "): el " + aparato15 + " no puede pasar de una a otra.", false, 3);
         return {
           exito: false,
           pasos: pasos,
@@ -1421,7 +1518,7 @@ var Motor = (function () {
       if (srcIface.prefijo !== prefD || mismaConMia !== mismaConSuya) {
         agregarPaso("Comparar las máscaras de los dos equipos",
           nom(origen.id) + " usa /" + srcIface.prefijo + " y " + nom(parDestinoMismoSegmento.dispositivo.id) + " usa /" + prefD +
-          ": con máscaras distintas, cada uno calcula una red diferente.", false);
+          ": con máscaras distintas, cada uno calcula una red diferente.", false, 3);
         return {
           exito: false,
           pasos: pasos,
@@ -1456,7 +1553,7 @@ var Motor = (function () {
         if (porEstado && porEstado.indexOf(nombreRouter) < 0) { porEstado.push(nombreRouter); }
         agregarPaso("Revisar las reglas de filtrado de " + nombreRouter,
           nombreRouter + " es un firewall y recuerda la conversación: es la respuesta de un paquete que ya dejó pasar, " +
-          "así que pasa sin revisar las reglas.", true);
+          "así que pasa sin revisar las reglas.", true, 3);
         return null;
       }
       if (esFirewall(router)) { conexionIda[router.id] = true; }
@@ -1467,18 +1564,18 @@ var Motor = (function () {
       var aplica = reglaQueAplica(router, ipOrigen, destinoIp);
       if (!aplica) {
         agregarPaso("Revisar las reglas de filtrado de " + nombreRouter,
-          "Ninguna regla coincide con un paquete de " + ipOrigen + " hacia " + destinoIp + ": pasa.", true);
+          "Ninguna regla coincide con un paquete de " + ipOrigen + " hacia " + destinoIp + ": pasa.", true, 3);
         return null;
       }
       if (aplica.regla.accion === "permitir") {
         agregarPaso("Revisar las reglas de filtrado de " + nombreRouter,
-          "La regla " + (aplica.indice + 1) + " permite el tráfico de " + aplica.origen + " hacia " + aplica.destino + ": pasa.", true);
+          "La regla " + (aplica.indice + 1) + " permite el tráfico de " + aplica.origen + " hacia " + aplica.destino + ": pasa.", true, 3);
         return null;
       }
       delete conexionIda[router.id];
       agregarPaso("Revisar las reglas de filtrado de " + nombreRouter,
         "La regla " + (aplica.indice + 1) + " bloquea el tráfico de " + aplica.origen + " hacia " + aplica.destino +
-        ", y el paquete de " + ipOrigen + " hacia " + destinoIp + " coincide: " + nombreRouter + " lo descarta.", false);
+        ", y el paquete de " + ipOrigen + " hacia " + destinoIp + " coincide: " + nombreRouter + " lo descarta.", false, 3);
       var ctxFiltro = {
         router: nombreRouter, reglaOrigen: aplica.origen, reglaDestino: aplica.destino,
         ipOrigen: ipOrigen, ipDestino: destinoIp, esFirewall: esFirewall(router)
@@ -1526,7 +1623,7 @@ var Motor = (function () {
       if (!destinoEnInternet(dispositivo, destinoIp)) {
         agregarPaso("Llegar a internet",
           "El paquete llegó a " + (dispositivo.nombre || dispositivo.id) + " con destino " + destinoIp +
-          ", que es una dirección privada: internet no la enruta.", false);
+          ", que es una dirección privada: internet no la enruta.", false, 3);
         return {
           exito: false,
           pasos: pasos,
@@ -1537,15 +1634,18 @@ var Motor = (function () {
       }
       agregarPaso("Llegar a internet",
         "El paquete llegó a " + (dispositivo.nombre || dispositivo.id) + ": " + destinoIp + " es una dirección pública y responde. " +
-        "(En una red real, el router de salida traduciría la dirección privada del origen por una pública: NAT. El simulador no lo hace.)", true);
+        "(En una red real, el router de salida traduciría la dirección privada del origen por una pública: NAT. El simulador no lo hace.)", true, 3);
       msTotal += 20;
+      var tramasNube = null;
       if (profundidad < 1) {
         var vueltaNube = ejecutarPing(estado, dispositivo.id, ipOrigen, { registrar: false, profundidad: profundidad + 1, respuestaDe: conexionIda });
+        var tramasNube = tramasDeVuelta(vueltaNube);
+        Array.prototype.push.apply(tramas, tramasNube);
         if (!vueltaNube.exito) {
           return {
             exito: false,
             pasos: pasos.concat(vueltaNube.pasos.map(function (pv) {
-              return { n: pasos.length + pv.n, titulo: "Respuesta: " + pv.titulo, detalle: pv.detalle, ok: pv.ok };
+              return { n: pasos.length + pv.n, titulo: "Respuesta: " + pv.titulo, detalle: pv.detalle, ok: pv.ok, capa: pv.capa };
             })),
             saltos: saltos,
             diagnostico: diagnosticoVuelta(vueltaNube, dispositivo.nombre || dispositivo.id),
@@ -1553,16 +1653,21 @@ var Motor = (function () {
           };
         }
       }
-      respuestas.push({ ttl: Math.max(1, 64 - (saltos.length - 1)), ms: Math.max(1, Math.round(msTotal)) });
+      respuestas.push({ ttl: ttlDeRespuesta(tramasNube || [], saltos), ms: Math.max(1, Math.round(msTotal)) });
       return { exito: true, pasos: pasos, saltos: saltos, diagnostico: null, respuestas: respuestas };
     }
 
+    // Cuando un router ya reenvió el paquete por una red conectada, la
+    // entrega siguiente es suya y el TTL ya se descontó.
+    var reenvioPropio = false;
+
     while (true) {
       if (ttl <= 0) {
-        var textoRecorrido = recorrido.join(" → ");
+        // Con 64 routers no se listan todos: alcanza con ver que se repiten.
+        var textoRecorrido = recorrido.slice(0, 4).join(" → ");
         return fallar("D23", { saltos: recorrido.length, recorrido: textoRecorrido },
           "Controlar el tiempo de vida (TTL)",
-          "El TTL llegó a 0 después de pasar por " + recorrido.length + " routers: " + textoRecorrido + ".");
+          "El TTL llegó a 0 después de pasar por " + recorrido.length + " routers: " + textoRecorrido + "…", 3);
       }
       var dispActual = buscarDispositivo(estado, actualId);
       var enNube = revisarNube(dispActual, null);
@@ -1593,7 +1698,7 @@ var Motor = (function () {
           : (esRouter(dispActual)
             ? "Son distintas: el destino está en otra red, así que " + nom(actualId) + " busca una ruta."
             : "Son distintas: el destino está en otra red, así que el paquete va a la puerta de enlace.")),
-        true);
+        true, 3);
 
       if (misma) {
         if (esRouter(dispActual)) {
@@ -1605,7 +1710,7 @@ var Motor = (function () {
         var todosDuenos = configuradosConIp(estado, destinoIp);
         if (respond.length > 1) {
           agregarPaso("Averiguar la dirección MAC del destino (ARP)",
-            nom(actualId) + " preguntó quién tiene " + destinoIp + " y respondieron varios equipos.", false);
+            nom(actualId) + " preguntó quién tiene " + destinoIp + " y respondieron varios equipos.", false, 2);
           return {
             exito: false,
             pasos: pasos,
@@ -1647,7 +1752,7 @@ var Motor = (function () {
           }
           if (fueraAlcance) {
             agregarPaso("Averiguar la dirección MAC del destino (ARP)",
-              "El equipo con la IP " + destinoIp + " está fuera del alcance inalámbrico: no puede responder.", false);
+              "El equipo con la IP " + destinoIp + " está fuera del alcance inalámbrico: no puede responder.", false, 2);
             return {
               exito: false,
               pasos: pasos,
@@ -1674,7 +1779,7 @@ var Motor = (function () {
               nom(actualId) + " preguntó quién tiene " + destinoIp + " y nadie respondió: " + nom(apagado.dispositivo.id) +
               (apagado.dispositivo.encendido
                 ? " tiene el puerto " + apagado.interfaz.id + " deshabilitado."
-                : " está apagado."), false);
+                : " está apagado."), false, 2);
             return {
               exito: false,
               pasos: pasos,
@@ -1684,7 +1789,7 @@ var Motor = (function () {
             };
           }
           agregarPaso("Averiguar la dirección MAC del destino (ARP)",
-            nom(actualId) + " preguntó en su red quién tiene " + destinoIp + ", y nadie respondió.", false);
+            nom(actualId) + " preguntó en su red quién tiene " + destinoIp + ", y nadie respondió.", false, 2);
           return {
             exito: false,
             pasos: pasos,
@@ -1710,12 +1815,20 @@ var Motor = (function () {
           hayAp = segmentoUsaAp(estado, actualId, actualIface.id);
         }
         var nombreDestinoFinal = nom(destPar.dispositivo.id);
+        var textoTtl = "";
+        if (esRouter(dispActual) && actualId !== origen.id && !reenvioPropio) {
+          textoTtl = " El TTL baja de " + ttl + " a " + (ttl - 1) + ": cada router descuenta uno.";
+          ttl -= 1;
+        }
+        if (destPar.dispositivo.id !== actualId) {
+          anotarTrama(actualId, actualIface, destPar.dispositivo.id, destPar.interfaz, ttl);
+        }
         var textoSwitch = nom(actualId) + " averigua la MAC de " + destinoIp + " (ARP) y " + ((conmutadores.length > 0 || hayAp)
           ? (hayAp
             ? "el punto de acceso le hace llegar la trama a " + nombreDestinoFinal + ": se guía por direcciones MAC, no por IP."
             : "el switch reenvía la trama por el puerto donde está " + nombreDestinoFinal + ": un switch se guía por direcciones MAC, no por IP.")
           : "el paquete llega directo a " + nombreDestinoFinal + " por el cable.");
-        agregarPaso("Entregar el paquete al destino", textoSwitch, true);
+        agregarPaso("Entregar el paquete al destino", textoSwitch + textoTtl, true, 2);
         var enlacesFinal = enlacesDe(estado, actualId, actualIface.id);
         if (enlacesFinal.length > 0) {
           msTotal += (enlacesFinal[0].retardoMs || 0) + 1;
@@ -1728,9 +1841,10 @@ var Motor = (function () {
 
         // Paso 11: la vuelta. Sin camino de retorno, el ping falla aunque la
         // ida haya sido perfecta: ese es el D12.
+        var tramasVuelta = null;
         if (profundidad < 1) {
           agregarPaso("Comprobar que la respuesta pueda volver",
-            nombreDestinoFinal + " le responde a " + ipOrigen + ": la respuesta hace el camino inverso.", true);
+            nombreDestinoFinal + " le responde a " + ipOrigen + ": la respuesta hace el camino inverso.", true, 3);
           var firewallsConEstado = [];
           var vuelta = ejecutarPing(estado, destPar.dispositivo.id, actualIp === destinoIp && actualId === origen.id ? ipOrigen : ipOrigen, {
             registrar: false,
@@ -1738,10 +1852,12 @@ var Motor = (function () {
             respuestaDe: conexionIda,
             porEstado: firewallsConEstado
           });
+          var tramasVuelta = tramasDeVuelta(vuelta);
+          Array.prototype.push.apply(tramas, tramasVuelta);
           if (vuelta.exito && firewallsConEstado.length) {
             agregarPaso("Dejar volver la respuesta por el firewall",
               firewallsConEstado.join(" y ") + (firewallsConEstado.length > 1 ? " son firewalls y recuerdan" : " es un firewall y recuerda") +
-              " la conversación: la respuesta pasa sin revisar las reglas, porque responde a un paquete que ya dejó pasar.", true);
+              " la conversación: la respuesta pasa sin revisar las reglas, porque responde a un paquete que ya dejó pasar.", true, 3);
           }
           // Si el destino es el mismo equipo que el origen (ping a sí mismo),
           // la vuelta siempre existe.
@@ -1761,7 +1877,8 @@ var Motor = (function () {
                   n: pasos.length + p.n,
                   titulo: "Respuesta: " + p.titulo,
                   detalle: p.detalle,
-                  ok: p.ok
+                  ok: p.ok,
+                  capa: p.capa
                 };
               })),
               saltos: saltos,
@@ -1770,7 +1887,7 @@ var Motor = (function () {
             };
           }
         }
-        respuestas.push({ ttl: Math.max(1, 64 - (saltos.length - 1)), ms: Math.max(1, Math.round(msTotal)) });
+        respuestas.push({ ttl: ttlDeRespuesta(tramasVuelta || [], saltos), ms: Math.max(1, Math.round(msTotal)) });
         return { exito: true, pasos: pasos, saltos: saltos, diagnostico: null, respuestas: respuestas };
       }
 
@@ -1784,7 +1901,7 @@ var Motor = (function () {
         var gw = dispActual.gateway;
         if (!gw || !Red.esIpValida(gw)) {
           agregarPaso("Buscar la puerta de enlace",
-            nom(actualId) + " no tiene puerta de enlace para salir de su red.", false);
+            nom(actualId) + " no tiene puerta de enlace para salir de su red.", false, 3);
           return {
             exito: false,
             pasos: pasos,
@@ -1796,7 +1913,7 @@ var Motor = (function () {
           };
         }
         agregarPaso("Buscar la puerta de enlace",
-          nom(actualId) + " usa la puerta de enlace " + gw + " para salir de su red (" + redA + ").", true);
+          nom(actualId) + " usa la puerta de enlace " + gw + " para salir de su red (" + redA + ").", true, 3);
 
         // Paso 7: el gateway tiene que pertenecer a la red del que envía.
         var redGw = Red.direccionDeRed(gw, actualIface.prefijo);
@@ -1808,7 +1925,7 @@ var Motor = (function () {
             ? "Es la misma red de " + nom(actualId) + " (" + redA + "): la puede alcanzar."
             : "Es distinta de la red de " + nom(actualId) + " (" + redA + "): está fuera de su red.");
         if (redGw !== redA) {
-          agregarPaso("Comprobar que la puerta de enlace esté en la red del equipo", detalleGw, false);
+          agregarPaso("Comprobar que la puerta de enlace esté en la red del equipo", detalleGw, false, 3);
           return {
             exito: false,
             pasos: pasos,
@@ -1820,13 +1937,13 @@ var Motor = (function () {
             respuestas: []
           };
         }
-        agregarPaso("Comprobar que la puerta de enlace esté en la red del equipo", detalleGw, true);
+        agregarPaso("Comprobar que la puerta de enlace esté en la red del equipo", detalleGw, true, 3);
 
         // Paso 8: ARP al gateway.
         var respGw = respondedoresArp(estado, actualId, actualIface.id, gw);
         if (respGw.length > 1) {
           agregarPaso("Averiguar la dirección MAC de la puerta de enlace (ARP)",
-            nom(actualId) + " preguntó quién tiene " + gw + " y respondieron varios equipos.", false);
+            nom(actualId) + " preguntó quién tiene " + gw + " y respondieron varios equipos.", false, 2);
           return {
             exito: false,
             pasos: pasos,
@@ -1837,7 +1954,7 @@ var Motor = (function () {
         }
         if (respGw.length === 0) {
           agregarPaso("Averiguar la dirección MAC de la puerta de enlace (ARP)",
-            nom(actualId) + " preguntó en su red quién tiene " + gw + ", y nadie respondió.", false);
+            nom(actualId) + " preguntó en su red quién tiene " + gw + ", y nadie respondió.", false, 2);
           return {
             exito: false,
             pasos: pasos,
@@ -1849,7 +1966,8 @@ var Motor = (function () {
         agregarArp(estado, actualId, gw, respGw[0].interfaz.mac, registrar);
         agregarPaso("Averiguar la dirección MAC de la puerta de enlace (ARP)",
           nom(actualId) + " pregunta en su red quién tiene " + gw + ", y " + nom(respGw[0].dispositivo.id) +
-          " responde con su dirección MAC.", true);
+          " responde con su dirección MAC.", true, 2);
+        anotarTrama(actualId, actualIface, respGw[0].dispositivo.id, respGw[0].interfaz, ttl);
         var enlacesUsados = enlacesDe(estado, actualId, actualIface.id);
         if (enlacesUsados.length > 0) {
           msTotal += (enlacesUsados[0].retardoMs || 0) + 1;
@@ -1863,7 +1981,7 @@ var Motor = (function () {
         if (gatewayNube) { return gatewayNube; }
         if (!esRouter(router)) {
           agregarPaso("Entregar el paquete a la puerta de enlace",
-            "Quien responde por " + gw + " es " + nom(router.id) + ", que no es un router: no sabe reenviar paquetes a otra red.", false);
+            "Quien responde por " + gw + " es " + nom(router.id) + ", que no es un router: no sabe reenviar paquetes a otra red.", false, 3);
           return {
             exito: false,
             pasos: pasos,
@@ -1878,7 +1996,7 @@ var Motor = (function () {
       var ruta = rutaElegida(estado, router.id, destinoIp);
       if (!ruta) {
         agregarPaso("Buscar ruta en " + nom(router.id),
-          "Ninguna ruta de " + nom(router.id) + " cubre a " + destinoIp + ", y no tiene ruta por defecto.", false);
+          "Ninguna ruta de " + nom(router.id) + " cubre a " + destinoIp + ", y no tiene ruta por defecto.", false, 3);
         return {
           exito: false,
           pasos: pasos,
@@ -1894,7 +2012,7 @@ var Motor = (function () {
           ? "No hay una ruta específica: " + nom(router.id) + " usa la ruta por defecto, por " + (ruta.siguienteSalto || "su interfaz") + "."
           : nom(router.id) + " elige la ruta hacia " + ruta.destino + "/" + ruta.prefijo + " por " + (ruta.siguienteSalto || "su interfaz") +
             ": es la más específica que coincide con el destino (prefijo más largo).");
-      agregarPaso("Buscar ruta en " + nom(router.id), textoRuta, true);
+      agregarPaso("Buscar ruta en " + nom(router.id), textoRuta, true, 3);
       var filtroRuta = revisarFiltro(router);
       if (filtroRuta) { return filtroRuta; }
 
@@ -1916,7 +2034,7 @@ var Motor = (function () {
         if (!egreso) {
           agregarPaso("Reenviar el paquete",
             "La ruta manda los paquetes a " + ruta.siguienteSalto + ", pero esa dirección no está en ninguna red conectada a " +
-            nom(router.id) + ".", false);
+            nom(router.id) + ".", false, 3);
           return {
             exito: false,
             pasos: pasos,
@@ -1934,7 +2052,7 @@ var Motor = (function () {
       }
       if (!router.encendido || !egreso || !egreso.habilitada) {
         agregarPaso("Reenviar el paquete",
-          nom(router.id) + " está apagado o su puerto de salida está deshabilitado.", false);
+          nom(router.id) + " está apagado o su puerto de salida está deshabilitado.", false, 1);
         return {
           exito: false,
           pasos: pasos,
@@ -2017,7 +2135,7 @@ var Motor = (function () {
           ctx: { origen: nom(router.id), interfaz: egreso.id },
           detalle: "El puerto " + egreso.id + " de " + nom(router.id) + " no tiene un cable activo."
         };
-        agregarPaso("Reenviar el paquete", pe.detalle, false);
+        agregarPaso("Reenviar el paquete", pe.detalle, false, 1);
         return {
           exito: false,
           pasos: pasos,
@@ -2034,7 +2152,7 @@ var Motor = (function () {
           .filter(function (vecino) { return vecino.dispositivo.id !== router.id; });
         if (vecinos.length !== 1 || !esRouter(vecinos[0].dispositivo)) {
           agregarPaso("Averiguar la dirección MAC del siguiente router (ARP)",
-            nom(router.id) + " pregunta quién tiene " + ruta.siguienteSalto + ", y ningún router responde.", false);
+            nom(router.id) + " pregunta quién tiene " + ruta.siguienteSalto + ", y ningún router responde.", false, 2);
           return {
             exito: false,
             pasos: pasos,
@@ -2062,8 +2180,12 @@ var Motor = (function () {
       agregarPaso("Reenviar el paquete",
         nom(router.id) + " lo envía por " + egreso.id +
         (siguienteDispositivo.id !== router.id ? " hacia " + nom(siguienteDispositivo.id) : " a la red del destino") +
-        ". El TTL baja de " + ttl + " a " + (ttl - 1) + ": cada router descuenta uno.", true);
+        ". El TTL baja de " + ttl + " a " + (ttl - 1) + ": cada router descuenta uno.", true, 3);
       ttl -= 1;
+      reenvioPropio = siguienteDispositivo.id === router.id;
+      if (!reenvioPropio) {
+        anotarTrama(router.id, egreso, siguienteDispositivo.id, siguienteInterfaz, ttl);
+      }
       actualId = siguienteDispositivo.id;
       actualIface = siguienteInterfaz;
       actualIp = siguienteIp;
@@ -2100,8 +2222,8 @@ var Motor = (function () {
     if (!dns || !Red.esIpValida(dns)) {
       return {
         exito: false,
-        pasos: [{ n: 1, titulo: titulo, detalle: nombreOrigen + " no tiene servidor DNS configurado.", ok: false }],
-        saltos: [salida], diagnostico: diagnosticoDe("D24", { origen: nombreOrigen, nombre: texto }), respuestas: []
+        pasos: [{ n: 1, titulo: titulo, detalle: nombreOrigen + " no tiene servidor DNS configurado.", ok: false, capa: 7 }],
+        saltos: [salida], diagnostico: diagnosticoDe("D24", { origen: nombreOrigen, nombre: texto }), respuestas: [], tramas: []
       };
     }
     var consulta = ejecutarPing(estado, idOrigen, dns, { registrar: false, profundidad: 0 });
@@ -2110,23 +2232,24 @@ var Motor = (function () {
       return {
         exito: false,
         pasos: [{ n: 1, titulo: titulo, detalle: nombreOrigen + " le pregunta al servidor DNS " + dns + " y la consulta no llega" +
-          (dc ? ": " + dc.titulo.charAt(0).toLowerCase() + dc.titulo.slice(1) + "." : "."), ok: false }],
+          (dc ? ": " + dc.titulo.charAt(0).toLowerCase() + dc.titulo.slice(1) + "." : "."), ok: false, capa: 7 }],
         saltos: consulta.saltos,
         diagnostico: diagnosticoDe("D26", { origen: nombreOrigen, nombre: texto, dns: dns, causa: dc ? dc.explicacion : "" }),
-        respuestas: []
+        respuestas: [],
+        tramas: []
       };
     }
     var ip = NOMBRES_PUBLICOS[texto];
     if (!ip) {
       return {
         exito: false,
-        pasos: [{ n: 1, titulo: titulo, detalle: "El servidor DNS " + dns + " respondió que no conoce " + texto + ".", ok: false }],
-        saltos: [salida], diagnostico: diagnosticoDe("D25", { nombre: texto }), respuestas: []
+        pasos: [{ n: 1, titulo: titulo, detalle: "El servidor DNS " + dns + " respondió que no conoce " + texto + ".", ok: false, capa: 7 }],
+        saltos: [salida], diagnostico: diagnosticoDe("D25", { nombre: texto }), respuestas: [], tramas: []
       };
     }
     var res = ejecutarPing(estado, idOrigen, ip, opciones);
-    res.pasos = [{ n: 1, titulo: titulo, detalle: "El servidor DNS " + dns + " responde que " + texto + " es " + ip + ".", ok: true }]
-      .concat(res.pasos.map(function (pn) { return { n: pn.n + 1, titulo: pn.titulo, detalle: pn.detalle, ok: pn.ok }; }));
+    res.pasos = [{ n: 1, titulo: titulo, detalle: "El servidor DNS " + dns + " responde que " + texto + " es " + ip + ".", ok: true, capa: 7 }]
+      .concat(res.pasos.map(function (pn) { return { n: pn.n + 1, titulo: pn.titulo, detalle: pn.detalle, ok: pn.ok, capa: pn.capa }; }));
     res.nombre = texto;
     res.ipResuelta = ip;
     return res;
@@ -3539,6 +3662,65 @@ var Motor = (function () {
         /deja volver la respuesta/.test(res.diagnostico.explicacion), false);
     })();
 
+    // Capas y tramas: pc1 — sw1 — r1 === r2 — sw2 — pc2.
+    (function () {
+      var rutas1 = [{ destino: "192.168.2.0", prefijo: 24, siguienteSalto: "10.0.0.2" }];
+      var rutas2 = [{ destino: "192.168.1.0", prefijo: 24, siguienteSalto: "10.0.0.1" }];
+      var topo = dosRouters(rutas1, rutas2);
+      var est = crearEstado(topo);
+      var res = ping(est, "pc1", "192.168.2.10");
+      var ida = res.tramas.filter(function (t) { return t.sentido === "ida"; });
+      var vuelta = res.tramas.filter(function (t) { return t.sentido === "vuelta"; });
+      comparar("tramas: tres de ida y tres de vuelta", [ida.length, vuelta.length], [3, 3]);
+      var macR1 = buscarInterfaz(buscarDispositivo(est, "r1"), "g0/0").mac;
+      comparar("tramas: la primera va a la MAC de r1", [ida[0].de.dispositivo, ida[0].macDestino], ["pc1", macR1]);
+      comparar("tramas: la primera cruza sw1 sin cambiar", ida[0].atraviesa, ["sw1"]);
+      comparar("tramas: con los cables que cruza, en orden", ida[0].enlaces, ["l1", "l2"]);
+      comparar("tramas: la última de ida termina en pc2", ida[2].a.dispositivo, "pc2");
+      comparar("tramas: la IP no cambia en la ida", ida.every(function (t) {
+        return t.ipOrigen === "192.168.1.10" && t.ipDestino === "192.168.2.10" && t.mensaje === "ICMP echo request";
+      }), true);
+      comparar("tramas: en cada salto las MAC son las de ese tramo", [ida[1].macOrigen, ida[1].macDestino], [
+        buscarInterfaz(buscarDispositivo(est, "r1"), "g0/1").mac, buscarInterfaz(buscarDispositivo(est, "r2"), "g0/0").mac]);
+      comparar("tramas: el TTL baja uno por router", ida.map(function (t) { return t.ttl; }), [64, 63, 62]);
+      comparar("tramas: la vuelta invierte las IP", [vuelta[0].ipOrigen, vuelta[0].mensaje], ["192.168.2.10", "ICMP echo reply"]);
+      comparar("TTL: r1 lo baja de 64 a 63", res.pasos.some(function (p) { return /de 64 a 63/.test(p.detalle); }), true);
+      comparar("TTL: la respuesta llega con 62", res.respuestas[0].ttl, 62);
+      comparar("capas: ARP es capa 2", res.pasos.filter(function (p) { return /ARP/.test(p.titulo); })
+        .every(function (p) { return p.capa === 2; }), true);
+      comparar("capas: la conexión física es capa 1", res.pasos[1].capa, 1);
+      comparar("capas: buscar ruta es capa 3", res.pasos.filter(function (p) { return /^Buscar ruta/.test(p.titulo); })
+        .every(function (p) { return p.capa === 3; }), true);
+      comparar("capas: la tabla de capas", CAPAS[2], { osi: "Enlace", tcpip: "Acceso a la red", pdu: "trama" });
+
+      var sinVuelta = ping(crearEstado(dosRouters(rutas1, [])), "pc1", "192.168.2.10");
+      comparar("capas: los pasos de una vuelta fallida conservan la capa", sinVuelta.pasos.filter(function (p) {
+        return /^Respuesta: /.test(p.titulo);
+      }).every(function (p) { return p.capa !== undefined; }), true);
+      comparar("tramas: la vuelta fallida llega hasta donde llegó",
+        sinVuelta.tramas.filter(function (t) { return t.sentido === "vuelta"; }).length, 1);
+
+      var bucle = ping(crearEstado(dosRouters([{ destino: "192.168.9.0", prefijo: 24, siguienteSalto: "10.0.0.2" }],
+        [{ destino: "192.168.9.0", prefijo: 24, siguienteSalto: "10.0.0.1" }])), "pc1", "192.168.9.5");
+      comparar("D23: el detalle no lista los 64 routers", bucle.diagnostico.explicacion.length < 300, true);
+
+      var pcMal = fabPc("pc1", "192.168.1.10", 24, "192.168.2.1");
+      var d09 = ping(crearEstado(fabTopo([pcMal, fabSwitch("sw1")], [fabEnlace("l1", "pc1", "eth0", "sw1", "fa0/1")])), "pc1", "10.9.9.9");
+      comparar("tramas: un D09 no llega a salir", [d09.diagnostico.codigo, d09.tramas.length], ["D09", 0]);
+      comparar("tramas: un destino mal escrito tampoco", ping(est, "pc1", "1.2.3").tramas.length, 0);
+    })();
+    (function () {
+      var topo = conFiltro([{ accion: "bloquear", origen: "10.0.1.0/24", destino: "10.0.0.0/16" }]);
+      topo.dispositivos.forEach(function (d) { if (d.id === "r1") { d.modelo = "firewall"; } });
+      var res = ping(crearEstado(topo), "h1", "10.0.2.10");
+      comparar("tramas: el bloqueo corta en el firewall",
+        res.tramas.map(function (t) { return t.sentido + ":" + t.a.dispositivo; }), ["ida:r1"]);
+      var porNombre = ping(crearEstado(conInternet([{ destino: "0.0.0.0", prefijo: 0, siguienteSalto: "200.45.7.1" }], "8.8.8.8")), "pc1", "google.com");
+      comparar("capas: la consulta DNS es capa 7", [porNombre.pasos[0].capa, porNombre.pasos[1].capa], [7, 1]);
+      comparar("tramas: el ping a internet sale y vuelve",
+        porNombre.tramas.map(function (t) { return t.sentido + ":" + t.a.dispositivo; }), ["ida:r1", "ida:nube", "vuelta:r1", "vuelta:pc1"]);
+    })();
+
     // 36. Un destino mal escrito no es un diagnóstico de red.
     (function () {
       var topo = fabTopo([fabPc("pc-admin", "10.45.7.66", 27, "10.45.7.65")], []);
@@ -3558,6 +3740,7 @@ var Motor = (function () {
     dhcpSolicitar: dhcpSolicitar,
     avisosDhcp: avisosServidorDhcp,
     esFirewall: esFirewall,
+    CAPAS: CAPAS,
     // Puertos ("equipo:interfaz") del mismo dominio de difusión que el dado.
     puertosDelSegmento: segmentoL2,
     rutaElegida: rutaElegida,

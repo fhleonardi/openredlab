@@ -28,7 +28,19 @@
 
 El simulador no te dice sólo que falló. A la izquierda tenés el **recorrido paso a paso**: cada cosa que el sistema operativo verifica antes de mandar el paquete, y cuál de esos pasos se rompió, con la cuenta que dio mal. A la derecha aparece el **diagnóstico**: un título (al lado, un código chico como D09, que podés buscar en la tabla de abajo), una explicación, una sugerencia y el botón *Ir a configurar*, que te lleva al equipo. *Ver los pasos* muestra el detalle completo.
 
-Los que más te van a aparecer:
+Cada paso lleva su **capa** (por ejemplo «Capa 2 · Enlace»): pasá el mouse por encima para ver el nombre en el modelo TCP/IP y qué viaja en esa capa (bits, trama, paquete).
+
+## Cómo viaja el paquete
+
+Después de un ping, el botón **Cómo viaja el paquete** cambia los pasos por las **tramas**: lo que viaja por el cable entre dos equipos que entienden IP (PC, routers, firewalls). Una línea por tramo, de ida y de vuelta. Fijate en tres cosas:
+
+- **En cada router cambia la trama:** la MAC de origen y la de destino son las de ese tramo.
+- **El paquete IP no cambia:** la IP de origen y la de destino son las mismas de punta a punta.
+- **El TTL baja uno por router.** Sale con 64; si llega a 0, el paquete se descarta (D23).
+
+Los switches y puntos de acceso aparecen como «pasa por… sin cambiar la trama»: trabajan con la MAC y no la modifican. **Ver los encabezados** muestra cada trama con lo que lleva adentro: la trama (MAC), el paquete IP (IP y TTL) y el mensaje ICMP del ping, con lo que cambió resaltado. Al pasar el mouse por una línea se resalta su cable en el lienzo.
+
+Los diagnósticos que más te van a aparecer:
 
 | Código | Qué pasó | Por dónde empezar |
 |---|---|---|
@@ -49,7 +61,7 @@ Los que más te van a aparecer:
 
 ## La pestaña Cálculo de subred
 
-Es la que más te conviene tener abierta mientras configurás. Seleccioná un equipo y vas a ver su dirección en binario, con los bits de red en un color y los de host en otro, y la línea donde corta la máscara. Cambiás el prefijo y la línea se mueve: eso es exactamente lo que hace la máscara.
+Es la que más te conviene tener abierta mientras configurás. Seleccioná un equipo y vas a ver su dirección en binario, la **clase** de la IP (A, B o C, si es privada o pública, y qué máscara le daba el sistema de clases frente al prefijo CIDR que usás de verdad), con los bits de red en un color y los de host en otro, y la línea donde corta la máscara. Cambiás el prefijo y la línea se mueve: eso es exactamente lo que hace la máscara.
 
 A la derecha está **«¿Tu puerta de enlace (gateway) está en tu red?»**: muestra el «AND» de tu IP y el «AND» de tu puerta de enlace, uno debajo del otro. Si los dos resultados no son iguales, tu equipo no puede hablar con su propia puerta de enlace, y ahí está el problema. Ese cálculo es el mismo que hacés a mano en el TP.
 

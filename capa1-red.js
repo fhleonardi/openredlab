@@ -301,6 +301,31 @@ var Red = (function () {
     return "publica";
   }
 
+  // Clase histórica (sistema de clases, anterior a CIDR) según el primer
+  // octeto. Sólo A, B y C tenían un prefijo fijo; D es multicast y E quedó
+  // reservada.
+  var CLASES = [
+    { letra: "A", desde: 0, hasta: 127, prefijoClasico: 8 },
+    { letra: "B", desde: 128, hasta: 191, prefijoClasico: 16 },
+    { letra: "C", desde: 192, hasta: 223, prefijoClasico: 24 },
+    { letra: "D", desde: 224, hasta: 239, prefijoClasico: null },
+    { letra: "E", desde: 240, hasta: 255, prefijoClasico: null }
+  ];
+
+  function clase(ip) {
+    if (!esIpValida(ip)) {
+      return null;
+    }
+    var o1 = parseInt(String(ip).trim().split(".")[0], 10);
+    for (var i = 0; i < CLASES.length; i++) {
+      var c = CLASES[i];
+      if (o1 >= c.desde && o1 <= c.hasta) {
+        return { letra: c.letra, prefijoClasico: c.prefijoClasico, rango: c.desde + ".0.0.0 – " + c.hasta + ".255.255.255" };
+      }
+    }
+    return null;
+  }
+
   // Muestra el AND entre la IP y su máscara, con el detalle binario.
   function and(ip, prefijo) {
     var ipNum = aNumero(ip);
@@ -475,6 +500,14 @@ var Red = (function () {
     comparar("clasifica pública", clasificar("8.8.8.8"), "publica");
     comparar("ultimo host /32", ultimoHost("10.0.0.0", 32), null);
 
+    // Clases históricas.
+    comparar("clase A privada", clase("10.45.7.1"), { letra: "A", prefijoClasico: 8, rango: "0.0.0.0 – 127.255.255.255" });
+    comparar("clase B", [clase("172.16.0.1").letra, clase("172.16.0.1").prefijoClasico], ["B", 16]);
+    comparar("clase C", [clase("192.168.1.1").letra, clase("192.168.1.1").prefijoClasico], ["C", 24]);
+    comparar("clase D sin prefijo", [clase("224.0.0.5").letra, clase("224.0.0.5").prefijoClasico], ["D", null]);
+    comparar("clase E sin prefijo", [clase("240.0.0.1").letra, clase("240.0.0.1").prefijoClasico], ["E", null]);
+    comparar("clase de ip inválida", clase("300.1.1.1"), null);
+
     return { total: total, pasadas: pasadas, fallos: fallos };
   }
 
@@ -500,6 +533,7 @@ var Red = (function () {
     estaAlineada: estaAlineada,
     solapan: solapan,
     clasificar: clasificar,
+    clase: clase,
     and: and,
     desglose: desglose,
     autopruebas: autopruebas

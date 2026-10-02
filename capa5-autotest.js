@@ -107,6 +107,13 @@ var Autotest = (function () {
       situacion: "R-DHCP reparte el rango 192.168.1.50 – .60; una PC conectada al switch pide dirección.",
       esperado: "La PC recibe una dirección del rango tras los cuatro mensajes: DISCOVER, OFFER, REQUEST y ACK."
     },
+    17: {
+      conError: false,
+      situacion: "El mismo ping de PC-Admin al Servidor, mirado tramo por tramo: PC-Admin → R1 → R2 → Servidor, " +
+        "con SW-Admin y SW-Servidores en el medio.",
+      esperado: "En cada salto de router la trama cambia (MAC de origen y de destino), pero el paquete IP conserva su " +
+        "origen y su destino; el TTL baja uno por router. Los switches pasan la trama sin cambiarla."
+    },
     12: {
       conError: true,
       situacion: "En el desafío VLSM, el sector Cámaras se arma con el router en 10.45.7.41/28, al lado del Wi-Fi " +
@@ -229,6 +236,31 @@ var Autotest = (function () {
       return fila(2, nombre, false, "No respondió: " + diagnosticoTexto(res) + ".");
     } catch (e) {
       return fila(2, nombre, false, "Excepción: " + e.message);
+    }
+  }
+
+  function crit17() {
+    var nombre = "En cada salto cambia la trama, no el paquete IP";
+    try {
+      var ej = ejemploPorId("complejo");
+      var topo = clonar(ej.topologia);
+      var res = Motor.ping(Motor.crearEstado(topo), "pc-admin", "10.45.7.122");
+      var ida = (res.tramas || []).filter(function (t) { return t.sentido === "ida"; });
+      if (!res.exito || ida.length !== 3) {
+        return fila(17, nombre, false, "Se esperaban 3 tramas de ida y hubo " + ida.length + ".");
+      }
+      var ipFija = ida.every(function (t) { return t.ipOrigen === "10.45.7.66" && t.ipDestino === "10.45.7.122"; });
+      var macCambia = ida[0].macDestino !== ida[1].macDestino && ida[1].macDestino !== ida[2].macDestino;
+      var ttls = ida.map(function (t) { return t.ttl; }).join(", ");
+      var switches = ida[0].atraviesa.concat(ida[2].atraviesa).map(function (id) {
+        var d = dispEn(topo, id);
+        return d ? (d.nombre || d.id) : id;
+      });
+      var pasa = ipFija && macCambia && ttls === "64, 63, 62" && switches.length === 2;
+      return fila(17, nombre, pasa, "La MAC de destino cambia en cada tramo; la IP sigue siendo 10.45.7.66 → 10.45.7.122; " +
+        "el TTL va " + ttls + "; " + switches.join(" y ") + " pasan la trama sin cambiarla.");
+    } catch (e) {
+      return fila(17, nombre, false, "Excepción: " + e.message);
     }
   }
 
@@ -903,7 +935,7 @@ var Autotest = (function () {
    * puede leer y discutir. Los criterios de la interfaz y del archivo, y las
    * pruebas internas de las capas, quedan para quien programa:
    * Autotest.correr({ tecnico: true }) desde la consola. */
-  var CRITERIOS_DIDACTICOS = [crit02, crit03, crit04, crit05, crit06, crit07, crit08, crit12];
+  var CRITERIOS_DIDACTICOS = [crit02, crit17, crit03, crit04, crit05, crit06, crit07, crit08, crit12];
   var CRITERIOS_TECNICOS = [crit01, crit09, crit10, crit11, crit13, crit14, crit15, crit16];
 
   function correr(opciones) {

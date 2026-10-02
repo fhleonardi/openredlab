@@ -60,6 +60,8 @@ var UI = (function () {
     ultimoDhcp: null,
     panelRes: "ping",
     verTodos: false,
+    verTramas: false,
+    verEncabezados: false,
     consolaAbierta: false,
     lineasConsola: [],
     presExpandida: false,
@@ -398,6 +400,17 @@ var UI = (function () {
     ".recorrido .pasos{flex:1;min-height:0;overflow:auto;padding:4px 10px;}",
     ".recorrido .pie{display:flex;align-items:center;gap:8px;padding:4px 10px 6px;font-size:12px;color:var(--sim-tenue);font-style:italic;}",
     ".linpaso{font-size:13px;padding:2px 0;}",
+    ".capa{display:inline-block;min-width:92px;color:var(--sim-tenue);border:1px solid var(--sim-borde);font-size:11px;border-radius:4px;padding:0 5px;margin-right:6px;text-align:center;vertical-align:1px;cursor:help;}",
+    ".recorrido .nota-ttl{font-size:12px;color:var(--sim-tenue);margin:0 0 4px;}",
+    ".trama{font-size:13px;padding:2px 4px;border-radius:4px;}",
+    ".trama:hover,.trama:focus{background:var(--sim-okfondo);outline:none;}",
+    ".trama .sent{display:inline-block;min-width:64px;color:var(--sim-tenue);font-size:12px;}",
+    ".trama .cambia{color:var(--sim-mal);}",
+    ".trama .queda{color:var(--sim-ok);}",
+    ".enc{display:inline-block;border:1px solid var(--sim-borde);border-radius:4px;padding:1px 6px;margin:2px 0 2px 64px;font-family:ui-monospace,Consolas,monospace;font-size:11px;}",
+    ".enc .enc{margin:0 0 0 6px;}",
+    ".enc b{font-family:system-ui,sans-serif;font-weight:600;color:var(--sim-tenue);margin-right:4px;}",
+    ".enc mark{background:#fde68a;color:#111;border-radius:2px;padding:0 2px;}",
     ".linpaso .marca{color:var(--sim-ok);margin-right:4px;}",
     ".linpaso.pendiente{color:var(--sim-tenue);}",
     ".pasofallo{border:1px solid var(--sim-mal);background:var(--sim-malfondo);border-radius:6px;padding:6px 8px;margin:4px 0;font-size:13px;}",
@@ -2699,13 +2712,109 @@ var UI = (function () {
 
   var PASOS_CLAVE = /^(Averiguar la IP de|Decidir si el destino|Buscar ruta|Llegar a internet|Comprobar que la respuesta)/;
 
+  // «Capa 2 · Enlace», con el nombre TCP/IP y la unidad de datos al pasar
+  // el mouse. Los pasos de configuración no son de ninguna capa.
+  function etiquetaCapa(capa) {
+    var c = capa && Motor.CAPAS ? Motor.CAPAS[capa] : null;
+    if (!c) { return ""; }
+    return "<span class='capa' title='" + escapar("Modelo OSI: capa " + capa + ", " + c.osi + ". Modelo TCP/IP: " + c.tcpip +
+      ". Lo que viaja: " + c.pdu + ".") + "'>Capa " + capa + " · " + escapar(c.osi) + "</span>";
+  }
+
+  var PALABRA_MEDIO = { ethernet: "cobre", fibra: "fibra", wireless: "inalámbrico" };
+
+  // Cable resaltado mientras se señala una trama: el tramo completo, con
+  // los switches que cruza.
+  function resaltarTrama(t) {
+    quitarResalteTrama();
+    if (!S.capaAnim) { return; }
+    var svgNS = "http://www.w3.org/2000/svg";
+    var g = document.createElementNS(svgNS, "g");
+    g.setAttribute("class", "resalte-trama");
+    (t.enlaces || []).forEach(function (id) {
+      var e = buscarEnlace(id);
+      var tr = e && tramoEnlace(e, e.a.dispositivo);
+      if (!tr) { return; }
+      var l = document.createElementNS(svgNS, "line");
+      l.setAttribute("x1", tr.de.x); l.setAttribute("y1", tr.de.y);
+      l.setAttribute("x2", tr.a.x); l.setAttribute("y2", tr.a.y);
+      l.setAttribute("stroke", "#f59e0b"); l.setAttribute("stroke-width", "7");
+      l.setAttribute("stroke-linecap", "round"); l.setAttribute("opacity", "0.75");
+      g.appendChild(l);
+    });
+    S.capaAnim.appendChild(g);
+  }
+
+  function quitarResalteTrama() {
+    if (!S.capaAnim) { return; }
+    var viejos = S.capaAnim.querySelectorAll(".resalte-trama");
+    for (var i = 0; i < viejos.length; i++) { viejos[i].parentNode.removeChild(viejos[i]); }
+  }
+
+  // Una línea por trama: quién la manda, a quién, por qué medio, qué
+  // switches cruza sin cambiarla, y qué cambió respecto del salto anterior.
+  function renderTramas(res, lista) {
+    var tramas = res.tramas || [];
+    lista.appendChild(el("p", "nota-ttl", "Cada línea es una trama entre dos equipos IP; adentro va el paquete IP con el mensaje ICMP. " +
+      "TTL: cuántos routers más puede cruzar el paquete (cada router le resta uno)."));
+    var anterior = {};
+    var cuenta = { ida: 0, vuelta: 0 };
+    tramas.forEach(function (t) {
+      cuenta[t.sentido] += 1;
+      var prev = anterior[t.sentido];
+      var cambiaMac = !prev || prev.macOrigen !== t.macOrigen || prev.macDestino !== t.macDestino;
+      var cambiaIp = prev && (prev.ipOrigen !== t.ipOrigen || prev.ipDestino !== t.ipDestino);
+      var cambiaTtl = prev && prev.ttl !== t.ttl;
+      var partes = [escapar(nombreDe(t.de.dispositivo)) + " → " + escapar(nombreDe(t.a.dispositivo))];
+      if (t.medio) { partes.push("por " + (PALABRA_MEDIO[t.medio] || escapar(t.medio))); }
+      if (t.atraviesa && t.atraviesa.length) {
+        partes.push("pasa por " + t.atraviesa.map(function (id) { return escapar(nombreDe(id)); }).join(" y ") +
+          (t.atraviesa.length > 1 ? ", que no cambian" : ", que no cambia") + " la trama");
+      }
+      if (prev) {
+        var cambia = [], queda = [];
+        (cambiaMac ? cambia : queda).push("MAC");
+        (cambiaIp ? cambia : queda).push("IP");
+        (cambiaTtl ? cambia : queda).push("TTL");
+        partes.push((cambia.length ? "<span class='cambia'>cambia: " + cambia.join(" y ") + "</span>" : "") +
+          (cambia.length && queda.length ? " · " : "") +
+          (queda.length ? "<span class='queda'>se mantiene: " + queda.join(" y ") + "</span>" : ""));
+      }
+      partes.push("TTL " + t.ttl);
+      var fila = el("div", "trama",
+        "<span class='sent'>" + (t.sentido === "ida" ? "Ida " : "Vuelta ") + cuenta[t.sentido] + "</span>" + partes.join(" · "));
+      fila.tabIndex = 0;
+      fila.addEventListener("mouseenter", function () { resaltarTrama(t); });
+      fila.addEventListener("focus", function () { resaltarTrama(t); });
+      fila.addEventListener("mouseleave", quitarResalteTrama);
+      fila.addEventListener("blur", quitarResalteTrama);
+      lista.appendChild(fila);
+      if (S.verEncabezados) {
+        // Las capas anidadas: la trama contiene al paquete, que contiene al
+        // mensaje. Lo que cambió respecto de la trama anterior, resaltado.
+        function campo(texto, cambio) { return cambio ? "<mark>" + escapar(texto) + "</mark>" : escapar(texto); }
+        lista.appendChild(el("div", "",
+          "<span class='enc' title='Capa 2: trama'><b>Trama</b>MAC " + campo(t.macOrigen || "?", cambiaMac) + " → " +
+          campo(t.macDestino || "?", cambiaMac) +
+          "<span class='enc' title='Capa 3: paquete'><b>Paquete IP</b>" + campo(t.ipOrigen, cambiaIp) + " → " + campo(t.ipDestino, cambiaIp) +
+          " · TTL " + campo(String(t.ttl), cambiaTtl) +
+          "<span class='enc' title='Va dentro del paquete IP'><b>ICMP</b>" + escapar(t.mensaje.replace("ICMP ", "")) + "</span></span></span>"));
+      }
+      anterior[t.sentido] = t;
+    });
+  }
+
   function renderRecorrido(res) {
     var caja = el("div", "recorrido");
     var pasos = res.pasos || [];
     var fallo = -1;
     pasos.forEach(function (p, i) { if (!p.ok && fallo < 0) { fallo = i; } });
-    var cab = el("div", "cab", "<span>Recorrido paso a paso</span>");
-    if (res.exito) {
+    var tramas = res.tramas || [];
+    var enTramas = S.verTramas && tramas.length > 0;
+    var cab = el("div", "cab", "<span>" + (enTramas ? "Cómo viaja el paquete" : "Recorrido paso a paso") + "</span>");
+    if (enTramas) {
+      cab.appendChild(el("span", "", tramas.length + (tramas.length === 1 ? " trama" : " tramas")));
+    } else if (res.exito) {
       cab.appendChild(el("span", "ok", pasos.length + " de " + pasos.length + " verificaciones correctas"));
     } else if (fallo >= 0) {
       cab.appendChild(el("span", "mal", "se detuvo en el paso " + pasos[fallo].n));
@@ -2713,7 +2822,9 @@ var UI = (function () {
     caja.appendChild(cab);
     var lista = el("div", "pasos");
     var visibles = [];
-    if (!pasos.length) {
+    if (enTramas) {
+      renderTramas(res, lista);
+    } else if (!pasos.length) {
       lista.appendChild(el("p", "", res.diagnostico && res.diagnostico.codigo === "ENTRADA"
         ? "No se recorrió ningún paso: la dirección de destino no es válida."
         : "No se recorrió ningún paso."));
@@ -2728,11 +2839,11 @@ var UI = (function () {
       if (p.ok) {
         var resumen = resumenPaso(p);
         lista.appendChild(el("div", "linpaso",
-          "<span class='marca' aria-hidden='true'>✓</span><b>" + p.n + ".</b> " + escapar(p.titulo) +
+          "<span class='marca' aria-hidden='true'>✓</span>" + etiquetaCapa(p.capa) + "<b>" + p.n + ".</b> " + escapar(p.titulo) +
           (resumen ? " — " + escapar(resumen) : "")));
       } else {
         var f = el("div", "pasofallo",
-          "<span class='marca' aria-hidden='true'>✗</span><b>" + p.n + ". " + escapar(p.titulo) + "</b>");
+          "<span class='marca' aria-hidden='true'>✗</span>" + etiquetaCapa(p.capa) + "<b>" + p.n + ". " + escapar(p.titulo) + "</b>");
         var pre = document.createElement("pre");
         // En el resumen van la primera línea del detalle (la cuenta) y la
         // última (la conclusión); los binarios, en "Ver los pasos".
@@ -2744,10 +2855,21 @@ var UI = (function () {
     });
     caja.appendChild(lista);
     var pie = el("div", "pie");
-    if (!res.exito && fallo >= 0 && !S.verTodos) {
+    if (!res.exito && fallo >= 0 && !S.verTodos && !enTramas) {
       pie.appendChild(el("span", "", "los pasos siguientes no se llegaron a verificar"));
     }
-    if (pasos.length > visibles.length || S.verTodos) {
+    if (tramas.length) {
+      var bTramas = boton(enTramas ? "Ver los pasos" : "Cómo viaja el paquete (" + tramas.length + (tramas.length === 1 ? " trama)" : " tramas)"));
+      bTramas.addEventListener("click", function () { S.verTramas = !S.verTramas; quitarResalteTrama(); renderInferior(); });
+      pie.appendChild(bTramas);
+    }
+    if (enTramas) {
+      var bEnc = boton(S.verEncabezados ? "Ocultar los encabezados" : "Ver los encabezados");
+      bEnc.setAttribute("aria-expanded", String(!!S.verEncabezados));
+      bEnc.addEventListener("click", function () { S.verEncabezados = !S.verEncabezados; renderInferior(); });
+      pie.appendChild(bEnc);
+    }
+    if (!enTramas && (pasos.length > visibles.length || S.verTodos)) {
       var bTodos = boton(S.verTodos ? "Ver resumen" : "Ver los " + pasos.length + " pasos");
       bTodos.addEventListener("click", function () { S.verTodos = !S.verTodos; renderInferior(); });
       pie.appendChild(bTodos);
@@ -2912,6 +3034,7 @@ var UI = (function () {
     S.ultimo = { origen: origen, destino: destino, res: res };
     S.panelRes = "ping";
     S.verTodos = false;
+    S.verTramas = false;
     S.consolaAbierta = false;
     if (res.exito) {
       var r = res.respuestas[0] || { ttl: 64, ms: 1 };
@@ -3050,6 +3173,16 @@ var UI = (function () {
     html += "<section><h3>IP y máscara en binario</h3><div class='grid'>";
     html += "<span>IP</span><span class='binario'>" + escapar(det.ip) + " &nbsp; Prefijo /" + det.prefijo + "</span>";
     html += "<span>Máscara</span><span class='binario'>" + escapar(det.mascaraDecimal) + "</span>";
+    var cl = Red.clase(det.ip);
+    if (cl) {
+      var TIPO_IP = { privada: "privada", publica: "pública", cgnat: "compartida (CGNAT)", loopback: "loopback", apipa: "autoasignada (APIPA)" };
+      var tipoIp = TIPO_IP[Red.clasificar(det.ip)];
+      html += "<span>Clase</span><span>" + (cl.prefijoClasico
+        ? "<b>" + cl.letra + "</b>" + (tipoIp ? " · " + tipoIp : "") + " <span class='tenue'>(con clases usaría /" + cl.prefijoClasico +
+          "; hoy se usa CIDR: /" + det.prefijo + ")</span>"
+        : "<b>" + cl.letra + "</b> <span class='tenue'>(" + (cl.letra === "D" ? "multicast" : "reservada") + ": no se asigna a equipos)</span>") +
+        "</span>";
+    }
     html += "</div>";
     html += "<div class='binario bits'>IP&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;" + binarioColoreado(det.ipBinario, det.cortePosicion) + "<br>";
     html += "<span style='font-size:11px'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;" +
