@@ -354,6 +354,26 @@ var Motor = (function () {
       },
       sugerencia: "Si ese bloqueo es el que buscabas, el aislamiento funciona. Si no, revisá la pestaña Filtrado del router: las reglas se leen en orden y gana la primera que coincide."
     },
+    D28: {
+      titulo: "Falta NAT: la respuesta no puede volver de internet",
+      explicacion: function (ctx) {
+        ctx = ctx || {};
+        return (ctx.aviso
+          ? "Lo que salga a internet por este router sale con una IP de origen privada, como " + valor(ctx.ip, "?") + ". " +
+            "Internet no enruta direcciones privadas, así que las respuestas no van a tener cómo volver. "
+          : "El pedido llegó a internet, pero salió con la IP de origen " + valor(ctx.ip, "?") + ", que es privada. " +
+            "Internet no enruta direcciones privadas, así que la respuesta de " + valor(ctx.destino, "?") + " no tiene cómo volver. ") +
+          (ctx.router
+            ? ctx.router + " tendría que cambiar esa IP por la pública de su puerto " + valor(ctx.puerto, "?") + " antes de mandarla a internet: eso es NAT."
+            : "Hace falta un router con NAT entre la red privada e internet, que cambie la IP privada por una pública.");
+      },
+      sugerencia: function (ctx) {
+        ctx = ctx || {};
+        return ctx.router
+          ? "Seleccioná " + ctx.router + ", pestaña Interfaces, y marcá NAT en el puerto " + valor(ctx.puerto, "?") + ", el que va a internet."
+          : "Conectá la red a internet a través de un router (o firewall) con NAT en su puerto hacia internet.";
+      }
+    },
     D23: {
       titulo: "El paquete quedó dando vueltas entre routers",
       explicacion: function (ctx) {
@@ -1255,6 +1275,12 @@ var Motor = (function () {
         nom(origen.id) + " no tiene interfaces.", null);
     }
     var ipOrigen = srcIface.ip;
+    // NAT: la IP de origen del paquete puede cambiar en el router de salida.
+    // traduccion queda anotada para reconocer la respuesta; natInverso es la
+    // que trae el ping de vuelta para deshacerla al llegar a ese router.
+    var traduccion = null;
+    var natInverso = opciones.natInverso || null;
+    var ultimoRouter = null;
     saltos.push({ dispositivo: origen.id, interfaz: srcIface.id });
 
     // Paso 1: encendido y habilitada.
@@ -1537,6 +1563,9 @@ var Motor = (function () {
     var actualIface = srcIface;
     var actualIp = ipOrigen;
     var ttl = TTL_INICIAL;
+    // La respuesta de internet sale de la IP que se pingueó, no de la nube:
+    // cambia el origen del paquete, no la interfaz con la que decide.
+    if (opciones.ipRespuesta) { ipOrigen = opciones.ipRespuesta; }
     var msTotal = 0;
     var recorrido = [];
     var filtrados = {};
@@ -1632,13 +1661,34 @@ var Motor = (function () {
           respuestas: []
         };
       }
+      var nombreNube = dispositivo.nombre || dispositivo.id;
+      if (Red.clasificar(ipOrigen) !== "publica") {
+        agregarPaso("Llegar a internet",
+          "El paquete llegó a " + nombreNube + ": " + destinoIp + " es una dirección pública y recibe el pedido.", true, 3);
+        agregarPaso("Comprobar que la respuesta pueda volver",
+          destinoIp + " le respondería a " + ipOrigen + ", que es una dirección privada: internet no la enruta y la respuesta no vuelve." +
+          (ultimoRouter ? " " + nom(ultimoRouter.id) + " la mandó sin traducir: falta NAT en su puerto " + ultimoRouter.puerto + "." : ""), false, 3);
+        return {
+          exito: false,
+          pasos: pasos,
+          saltos: saltos,
+          diagnostico: diagnosticoDe("D28", {
+            ip: ipOrigen, destino: destinoIp,
+            router: ultimoRouter ? nom(ultimoRouter.id) : null, puerto: ultimoRouter ? ultimoRouter.puerto : null
+          }),
+          respuestas: []
+        };
+      }
       agregarPaso("Llegar a internet",
-        "El paquete llegó a " + (dispositivo.nombre || dispositivo.id) + ": " + destinoIp + " es una dirección pública y responde. " +
-        "(En una red real, el router de salida traduciría la dirección privada del origen por una pública: NAT. El simulador no lo hace.)", true, 3);
+        "El paquete llegó a " + nombreNube + ": " + destinoIp + " es una dirección pública y responde a " + ipOrigen +
+        (traduccion ? ", la IP pública de " + nom(traduccion.router) + "." : "."), true, 3);
       msTotal += 20;
       var tramasNube = null;
       if (profundidad < 1) {
-        var vueltaNube = ejecutarPing(estado, dispositivo.id, ipOrigen, { registrar: false, profundidad: profundidad + 1, respuestaDe: conexionIda });
+        var vueltaNube = ejecutarPing(estado, dispositivo.id, ipOrigen, {
+          registrar: false, profundidad: profundidad + 1, respuestaDe: conexionIda,
+          ipRespuesta: destinoIp, natInverso: traduccion
+        });
         var tramasNube = tramasDeVuelta(vueltaNube);
         Array.prototype.push.apply(tramas, tramasNube);
         if (!vueltaNube.exito) {
@@ -1839,6 +1889,21 @@ var Motor = (function () {
           saltos.push({ dispositivo: destPar.dispositivo.id, interfaz: destPar.interfaz.id });
         }
 
+        // La respuesta llegó a la IP pública de un router con NAT: la
+        // traduce de vuelta a la IP privada y sigue desde ahí.
+        if (natInverso && destPar.dispositivo.id === natInverso.router && destinoIp === natInverso.ipPublica) {
+          agregarPaso("Deshacer la traducción (NAT)",
+            "La respuesta llega a " + destinoIp + ": " + nombreDestinoFinal + " recuerda la traducción, la cambia por " +
+            natInverso.ipPrivada + " y la reenvía.", true, 3);
+          destinoIp = natInverso.ipPrivada;
+          natInverso = null;
+          actualId = destPar.dispositivo.id;
+          actualIface = destPar.interfaz;
+          actualIp = destPar.interfaz.ip;
+          reenvioPropio = false;
+          continue;
+        }
+
         // Paso 11: la vuelta. Sin camino de retorno, el ping falla aunque la
         // ida haya sido perfecta: ese es el D12.
         var tramasVuelta = null;
@@ -1850,7 +1915,8 @@ var Motor = (function () {
             registrar: false,
             profundidad: profundidad + 1,
             respuestaDe: conexionIda,
-            porEstado: firewallsConEstado
+            porEstado: firewallsConEstado,
+            natInverso: traduccion
           });
           var tramasVuelta = tramasDeVuelta(vuelta);
           Array.prototype.push.apply(tramas, tramasVuelta);
@@ -2172,6 +2238,16 @@ var Motor = (function () {
         agregarArp(estado, router.id, ruta.siguienteSalto, vecinos[0].interfaz.mac, registrar);
         agregarArp(estado, vecinos[0].dispositivo.id, egreso.ip, egreso.mac, registrar);
       }
+      // NAT de salida: con el filtrado ya hecho (las reglas ven la IP
+      // privada), el router cambia el origen privado por la IP del puerto.
+      if (egreso.nat && egreso.ip && Red.esIpValida(egreso.ip) && Red.clasificar(ipOrigen) !== "publica" && ipOrigen !== egreso.ip) {
+        agregarPaso("Traducir la dirección de origen (NAT)",
+          nom(router.id) + " cambia la IP de origen " + ipOrigen + " por la de su puerto " + egreso.id + ", " + egreso.ip +
+          ", y anota la traducción para reconocer la respuesta.", true, 3);
+        traduccion = { router: router.id, ipPublica: egreso.ip, ipPrivada: ipOrigen };
+        ipOrigen = egreso.ip;
+      }
+      ultimoRouter = { id: router.id, puerto: egreso.id };
       recorrido.push(router.nombre || router.id);
       saltos.push({ dispositivo: router.id, interfaz: egreso.id });
       if (siguienteDispositivo.id !== router.id) {
@@ -2358,6 +2434,24 @@ var Motor = (function () {
           });
         }
       }
+    }
+    // Router de borde: un puerto hacia la nube sin NAT, con redes privadas
+    // detrás, deja sin respuesta todo lo que salga a internet (D28).
+    if (esRouter(dev)) {
+      var privada = null;
+      dev.interfaces.forEach(function (f) {
+        if (!privada && f.habilitada && f.ip && Red.esIpValida(f.ip) && Red.clasificar(f.ip) === "privada") { privada = f.ip; }
+      });
+      dev.interfaces.forEach(function (f) {
+        if (!privada || f.nat || !f.habilitada) { return; }
+        var haciaNube = enlacesDe(estado, dev.id, f.id).some(function (e) {
+          var otro = e.a.dispositivo === dev.id && e.a.interfaz === f.id ? e.b : e.a;
+          return esInternet(buscarDispositivo(estado, otro.dispositivo));
+        });
+        if (haciaNube) {
+          agregar("D28", { ip: privada, destino: "internet", router: dev.nombre || dev.id, puerto: f.id, aviso: true });
+        }
+      });
     }
     return avisos;
   }
@@ -3517,7 +3611,8 @@ var Motor = (function () {
     })();
 
     // 38 a 42. Internet y nombres: pc — sw — r1 — nube.
-    function conInternet(rutasR1, dnsPc) {
+    // r1 sale a internet con NAT en g0/1, salvo que se pida lo contrario.
+    function conInternet(rutasR1, dnsPc, sinNat) {
       var pcN = fabPc("pc1", "192.168.1.10", 24, "192.168.1.1");
       pcN.dns = dnsPc;
       var nube = {
@@ -3525,9 +3620,10 @@ var Motor = (function () {
         interfaces: [{ id: "eth0", nombre: "eth0", medio: "ethernet", habilitada: true, modo: "estatico", ip: "200.45.7.1", prefijo: 30, mac: "02:00:00:00:09:01" }],
         gateway: null, dns: null, rutas: [], dhcp: null
       };
+      var r1N = fabRouter("r1", [{ id: "g0/0", ip: "192.168.1.1", prefijo: 24 }, { id: "g0/1", ip: "200.45.7.2", prefijo: 30 }], rutasR1);
+      if (!sinNat) { r1N.interfaces[1].nat = true; }
       return fabTopo(
-        [pcN, fabSwitch("sw1"), nube,
-         fabRouter("r1", [{ id: "g0/0", ip: "192.168.1.1", prefijo: 24 }, { id: "g0/1", ip: "200.45.7.2", prefijo: 30 }], rutasR1)],
+        [pcN, fabSwitch("sw1"), nube, r1N],
         [fabEnlace("l1", "pc1", "eth0", "sw1", "fa0/1"),
          fabEnlace("l2", "r1", "g0/0", "sw1", "fa0/2"),
          fabEnlace("l3", "r1", "g0/1", "nube", "eth0")]);
@@ -3719,6 +3815,51 @@ var Motor = (function () {
       comparar("capas: la consulta DNS es capa 7", [porNombre.pasos[0].capa, porNombre.pasos[1].capa], [7, 1]);
       comparar("tramas: el ping a internet sale y vuelve",
         porNombre.tramas.map(function (t) { return t.sentido + ":" + t.a.dispositivo; }), ["ida:r1", "ida:nube", "vuelta:r1", "vuelta:pc1"]);
+    })();
+
+    // NAT de salida: pc1 (192.168.1.10) — r1 (g0/1 200.45.7.2) — nube.
+    (function () {
+      var porDefecto = [{ destino: "0.0.0.0", prefijo: 0, siguienteSalto: "200.45.7.1" }];
+      var con = ping(crearEstado(conInternet(porDefecto, "8.8.8.8")), "pc1", "8.8.8.8");
+      comparar("NAT: con NAT responde", con.exito, true);
+      comparar("NAT: el paso de traducción figura", con.pasos.some(function (p) {
+        return p.titulo === "Traducir la dirección de origen (NAT)" && p.capa === 3 && /192\.168\.1\.10 por la de su puerto g0\/1, 200\.45\.7\.2/.test(p.detalle);
+      }), true);
+      comparar("NAT: las tramas de ida cambian la IP de origen en r1",
+        con.tramas.filter(function (t) { return t.sentido === "ida"; }).map(function (t) { return t.ipOrigen; }), ["192.168.1.10", "200.45.7.2"]);
+      var vueltas = con.tramas.filter(function (t) { return t.sentido === "vuelta"; });
+      comparar("NAT: la respuesta sale de 8.8.8.8 hacia la IP pública y vuelve a la privada",
+        vueltas.map(function (t) { return t.ipOrigen + ">" + t.ipDestino; }), ["8.8.8.8>200.45.7.2", "8.8.8.8>192.168.1.10"]);
+      comparar("NAT: la respuesta llega con TTL 63", con.respuestas[0].ttl, 63);
+
+      var sin = ping(crearEstado(conInternet(porDefecto, "8.8.8.8", true)), "pc1", "8.8.8.8");
+      comparar("NAT: sin NAT da D28", sin.diagnostico && sin.diagnostico.codigo, "D28");
+      comparar("D28 nombra la IP privada y el router", /192\.168\.1\.10/.test(sin.diagnostico.explicacion) && /r1/.test(sin.diagnostico.explicacion), true);
+      comparar("D28 sugiere el puerto", /g0\/1/.test(sin.diagnostico.sugerencia), true);
+      var sinNombre = ping(crearEstado(conInternet(porDefecto, "8.8.8.8", true)), "pc1", "google.com");
+      comparar("NAT: sin NAT, el ping por nombre da D26 por falta de NAT",
+        [sinNombre.diagnostico.codigo, /privada/.test(sinNombre.diagnostico.explicacion)], ["D26", true]);
+      var est = crearEstado(conInternet(porDefecto, "8.8.8.8", true));
+      comparar("NAT: advertencia en el router de borde sin NAT", advertenciasDe(est, "r1").some(function (a) { return a.codigo === "D28"; }), true);
+      comparar("NAT: sin advertencia con NAT",
+        advertenciasDe(crearEstado(conInternet(porDefecto, "8.8.8.8")), "r1").some(function (a) { return a.codigo === "D28"; }), false);
+
+      var publica = conInternet(porDefecto, "8.8.8.8");
+      publica.dispositivos.forEach(function (d) {
+        if (d.id === "pc1") { d.interfaces[0].ip = "190.10.10.10"; d.gateway = "190.10.10.1"; }
+        if (d.id === "r1") { d.interfaces[0].ip = "190.10.10.1"; }
+      });
+      var rPub = ping(crearEstado(publica), "pc1", "8.8.8.8");
+      comparar("NAT: un origen público no se traduce",
+        [rPub.exito, rPub.pasos.some(function (p) { return /NAT/.test(p.titulo); })], [true, false]);
+
+      var fw = conInternet(porDefecto, "8.8.8.8");
+      fw.dispositivos.forEach(function (d) {
+        if (d.id === "r1") { d.modelo = "firewall"; d.reglas = [{ accion: "bloquear", origen: "0.0.0.0/0", destino: "192.168.1.0/24" }]; }
+      });
+      var rFw = ping(crearEstado(fw), "pc1", "8.8.8.8");
+      comparar("NAT: un firewall con NAT deja volver la respuesta y la traduce",
+        [rFw.exito, rFw.pasos.some(function (p) { return p.titulo === "Traducir la dirección de origen (NAT)"; })], [true, true]);
     })();
 
     // 36. Un destino mal escrito no es un diagnóstico de red.

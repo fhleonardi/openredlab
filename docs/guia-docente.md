@@ -21,6 +21,8 @@ Esta guía explica cómo usar OpenRedLab en clase, cómo armar laboratorios de d
 
 **Para la unidad de modelos de capas.** Cada paso del recorrido indica su capa (OSI, y TCP/IP al pasar el mouse). Después de un ping, **Cómo viaja el paquete** muestra las tramas tramo por tramo: en cada router cambian las MAC y baja el TTL, mientras el paquete IP conserva su origen y su destino; los switches pasan la trama sin cambiarla. **Ver los encabezados** muestra el encapsulamiento (trama ⊃ paquete IP ⊃ mensaje ICMP). Una buena pregunta para la clase: «¿con qué TTL llega la respuesta, y por qué?». En Cálculo de subred aparece también la clase de la IP frente al prefijo CIDR.
 
+**Para direcciones privadas y NAT.** Una red con la nube Internet y un router de borde sin NAT da D28: el pedido llega, pero la respuesta no puede volver a una IP privada. Al marcar NAT en el puerto que va a internet, el recorrido muestra *Traducir la dirección de origen (NAT)* y las tramas, el cambio de IP en ese salto. Sirve para un laboratorio de una sola falla: «la oficina no sale a internet». Un firewall nuevo trae NAT en wan, como los equipos reales.
+
 **Qué entregan los alumnos y cómo corregir.** La [guía del alumno](guia-rapida-alumno.md#qué-entregar) les pide capturas del recorrido, el registro de eventos (*Exportar registro*), su red corregida (*Exportar*, como `ApellidoNombre_lab.json`) y una línea por problema. Para corregir, abrí su `.json` con **Importar** (o arrastrándolo al lienzo) y apretá **Verificar**: en un laboratorio vas a ver qué objetivos cumple; en un desafío, el diseño sector por sector. El registro tiene la hora de cada acción, así que muestra cómo llegó a la solución.
 
 ## 2. Armar un laboratorio de diagnóstico

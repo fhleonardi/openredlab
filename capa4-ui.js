@@ -246,7 +246,12 @@ var UI = (function () {
       return [iface("eth0", "ethernet", true)];
     }
     if (tipo === "firewall") {
-      return ["wan", "lan1", "lan2", "lan3", "dmz"].map(function (id) { return iface(id, "ethernet", true); });
+      // Como los equipos reales, el firewall trae NAT en su puerto wan.
+      return ["wan", "lan1", "lan2", "lan3", "dmz"].map(function (id) {
+        var f = iface(id, "ethernet", true);
+        if (id === "wan") { f.nat = true; }
+        return f;
+      });
     }
     if (tipo === "router-8") {
       // Como un equipo de oficina tipo MikroTik: cada puerto es ruteado y
@@ -2257,6 +2262,24 @@ var UI = (function () {
       labH.appendChild(document.createTextNode("habilitada"));
       labH.setAttribute("title", "Deshabilitarla produce D01");
       fila.appendChild(labH);
+      if (d.tipo === "router") {
+        // NAT de salida: lo que sale por este puerto con IP privada se va
+        // con la IP de este puerto.
+        var labN = el("label", "enlinea");
+        var cbNat = document.createElement("input");
+        cbNat.type = "checkbox"; cbNat.checked = !!f.nat;
+        cbNat.addEventListener("change", function () {
+          empujarHistorial();
+          if (cbNat.checked) { f.nat = true; } else { delete f.nat; }
+          reconstruirEstado(); renderTodo();
+          registrar("NAT", "NAT " + (cbNat.checked ? "activado" : "desactivado") + " en " + (d.nombre || d.id) + ":" + f.id + ".");
+        });
+        labN.appendChild(cbNat);
+        labN.appendChild(document.createTextNode("NAT"));
+        labN.setAttribute("title", "NAT al salir por este puerto: el router cambia la IP privada de origen por la IP de este puerto, " +
+          "y a la respuesta la traduce de vuelta. Se activa en el puerto que va a internet; sin NAT, la respuesta de internet no vuelve (D28).");
+        fila.appendChild(labN);
+      }
       controlesPuerto(fila, d, f, enl);
       c.appendChild(fila);
     });
@@ -2715,7 +2738,7 @@ var UI = (function () {
     return lineas.length ? lineas[lineas.length - 1].trim() : "";
   }
 
-  var PASOS_CLAVE = /^(Averiguar la IP de|Decidir si el destino|Buscar ruta|Llegar a internet|Comprobar que la respuesta)/;
+  var PASOS_CLAVE = /^(Averiguar la IP de|Decidir si el destino|Buscar ruta|Traducir la dirección|Llegar a internet|Comprobar que la respuesta)/;
 
   // «Capa 2 · Enlace», con el nombre TCP/IP y la unidad de datos al pasar
   // el mouse. Los pasos de configuración no son de ninguna capa.
@@ -2781,9 +2804,10 @@ var UI = (function () {
         (cambiaMac ? cambia : queda).push("MAC");
         (cambiaIp ? cambia : queda).push("IP");
         (cambiaTtl ? cambia : queda).push("TTL");
-        partes.push((cambia.length ? "<span class='cambia'>cambia: " + cambia.join(" y ") + "</span>" : "") +
+        function enumerar(l) { return l.length > 1 ? l.slice(0, -1).join(", ") + " y " + l[l.length - 1] : l[0]; }
+        partes.push((cambia.length ? "<span class='cambia'>cambia: " + enumerar(cambia) + "</span>" : "") +
           (cambia.length && queda.length ? " · " : "") +
-          (queda.length ? "<span class='queda'>se mantiene: " + queda.join(" y ") + "</span>" : ""));
+          (queda.length ? "<span class='queda'>se mantiene: " + enumerar(queda) + "</span>" : ""));
       }
       partes.push("TTL " + t.ttl);
       var fila = el("div", "trama",
@@ -3381,7 +3405,7 @@ var UI = (function () {
     var alcance = (Motor && Motor.UMBRAL_WIRELESS) || 250;
     caja.appendChild(el("section", "",
       "<h3>Qué simplifica el simulador</h3><ul>" +
-      "<li>Las rutas se cargan a mano: no hay OSPF, BGP ni RIP. Tampoco STP, VLAN, NAT ni IPv6.</li>" +
+      "<li>Las rutas se cargan a mano: no hay OSPF, BGP ni RIP. Tampoco STP, VLAN ni IPv6, y el NAT es sólo de salida (no hay redirección de puertos).</li>" +
       "<li>El único tráfico es el ping, con tiempos aproximados: no hay TCP, HTTP ni TLS.</li>" +
       "<li>El wireless sólo mira la distancia: llega hasta " + alcance + " m.</li>" +
       "<li>El router filtra <b>cada paquete por separado</b>; el firewall recuerda la conversación y deja volver la respuesta.</li>" +
