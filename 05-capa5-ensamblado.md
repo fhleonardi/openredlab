@@ -45,7 +45,7 @@ Reglas del ensamblado:
 - **Las cuatro capas se pegan sin tocarlas.** No las reescribas, no las "mejores", no las reordenes por dentro. Si una capa tiene un error, decilo al final en vez de parchearla acá por tu cuenta.
 - El orden de los `<script>` importa: cada capa depende de las anteriores.
 - Ninguna referencia externa: ni CDN, ni fuentes remotas, ni imágenes. El archivo abre con doble clic, sin servidor y sin conexión, y **no hace ninguna petición de red**.
-- El arranque carga la topología `complejo` de `Escenarios.EJEMPLOS` y llama a `UI.iniciar(document.getElementById('app'), topologia)`.
+- El arranque llama a `UI.iniciar(document.getElementById('app'), topologia)` con una red vacía: el lienzo explica cómo empezar, y los ejemplos están en «Ejemplos…».
 
 Si el archivo completo no entra en una sola respuesta, **no lo entregues cortado**: devolvé únicamente el bloque de la capa 5 más instrucciones precisas de dónde pegar cada archivo, y decilo desde el principio.
 

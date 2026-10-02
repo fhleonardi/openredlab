@@ -6265,6 +6265,10 @@ var UI = (function () {
     ".consola{background:#0d1117;color:#d6f0d6;font-family:ui-monospace,Consolas,monospace;font-size:12px;border-radius:8px;padding:8px;flex:1;min-height:0;overflow:auto;white-space:pre-wrap;margin:0;}",
     ".consola .error{color:#ff8a80;}",
     ".consolabtn{text-align:left;font-family:ui-monospace,Consolas,monospace;font-size:12px;}",
+    ".lienzovacio{position:absolute;left:50%;top:45%;transform:translate(-50%,-50%);width:min(440px,80%);text-align:center;color:var(--sim-tenue);font-size:14px;line-height:1.45;pointer-events:none;}",
+    ".lienzovacio b{display:block;color:var(--sim-texto);font-size:17px;margin-bottom:4px;}",
+    ".lienzovacio .recuperar{pointer-events:auto;margin-top:14px;padding:10px 12px;background:var(--sim-panel);border:1px solid var(--sim-borde);border-radius:10px;color:var(--sim-texto);}",
+    ".lienzovacio .recuperar div{display:flex;gap:6px;justify-content:center;margin-top:8px;flex-wrap:wrap;}",
     ".vacio{text-align:center;color:var(--sim-tenue);font-size:13px;padding:14px 20px;}",
     ".vacio b{display:block;color:var(--sim-texto);font-size:16px;margin-bottom:4px;}",
     ".estadopres{display:flex;align-items:center;gap:12px;font-size:13px;color:var(--sim-tenue);}",
@@ -6605,6 +6609,10 @@ var UI = (function () {
     var pista = el("div", "pista", "Tocá un equipo para configurarlo");
     zona.appendChild(pista);
     S.pista = pista;
+    var vacio = el("div", "lienzovacio");
+    vacio.hidden = true;
+    zona.appendChild(vacio);
+    S.lienzoVacio = vacio;
     var aviso = el("div", "simaviso");
     aviso.hidden = true;
     zona.appendChild(aviso);
@@ -6675,8 +6683,8 @@ var UI = (function () {
     reconstruirEstado();
     recontarNombres();
     aplicarVista();
-    renderTodo();
     autoguardar();
+    renderTodo();
     registrar("inicio", "Simulador listo. Pestaña activa: Simulación.");
   }
 
@@ -6782,6 +6790,7 @@ var UI = (function () {
   }
 
   function renderLienzo() {
+    actualizarLienzoVacio();
     var svgNS = "http://www.w3.org/2000/svg";
     while (S.capaEnlaces.firstChild) { S.capaEnlaces.removeChild(S.capaEnlaces.firstChild); }
     while (S.capaNodos.firstChild) { S.capaNodos.removeChild(S.capaNodos.firstChild); }
@@ -9095,8 +9104,48 @@ var UI = (function () {
     }
   }
 
+  // Con el lienzo vacío se explica cómo empezar y, si quedó trabajo de la
+  // sesión anterior, se ofrece recuperarlo: no se carga solo, porque en una
+  // PC compartida del laboratorio el siguiente no tiene por qué verlo.
+  function actualizarLienzoVacio() {
+    if (!S.lienzoVacio) { return; }
+    var hayEquipos = (S.topologia.dispositivos || []).length > 0;
+    if (hayEquipos) { S.trabajoPrevio = null; }
+    S.lienzoVacio.hidden = hayEquipos;
+    if (hayEquipos) { return; }
+    S.lienzoVacio.innerHTML = "<b>Lienzo vacío</b>Arrastrá un dispositivo desde la paleta, o abrí una red con " +
+      "<i>Ejemplos…</i> o <i>Importar</i>.";
+    if (S.trabajoPrevio) {
+      var n = (S.trabajoPrevio.dispositivos || []).length;
+      var caja = el("div", "recuperar", "Hay una red guardada de la sesión anterior" +
+        (S.trabajoPrevio.nombre ? ", «" + escapar(S.trabajoPrevio.nombre) + "»" : "") +
+        " (" + n + (n === 1 ? " equipo" : " equipos") + ").");
+      var fila = el("div", "");
+      var bRec = boton("Recuperar el trabajo anterior", "primario");
+      bRec.addEventListener("click", function () {
+        var previo = S.trabajoPrevio;
+        S.trabajoPrevio = null;
+        cargarTopologia(previo);
+        registrar("guardado", "Se recuperó el trabajo de la sesión anterior.");
+        avisar("Se recuperó el trabajo de la sesión anterior.");
+      });
+      var bDes = boton("Descartar");
+      bDes.addEventListener("click", function () {
+        S.trabajoPrevio = null;
+        try { localStorage.removeItem("simuladorRedes.topologia"); } catch (e) { /* sin almacenamiento: se sigue igual */ }
+        actualizarLienzoVacio();
+        anunciar("Se descartó el trabajo guardado.");
+      });
+      fila.appendChild(bRec); fila.appendChild(bDes);
+      caja.appendChild(fila);
+      S.lienzoVacio.appendChild(caja);
+    }
+  }
+
   function autoguardar() {
     function guardar() {
+      // Un lienzo vacío no pisa lo guardado: sigue disponible para recuperarlo.
+      if (!(S.topologia.dispositivos || []).length) { return; }
       try {
         localStorage.setItem("simuladorRedes.topologia", JSON.stringify(S.topologia));
       } catch (e) {
@@ -9110,7 +9159,7 @@ var UI = (function () {
       var previa = localStorage.getItem("simuladorRedes.topologia");
       if (previa && (!S.topologia || !(S.topologia.dispositivos || []).length)) {
         var imp = Escenarios.importar(previa);
-        if (imp.ok) { S.topologia = imp.topologia; reconstruirEstado(); }
+        if (imp.ok && (imp.topologia.dispositivos || []).length) { S.trabajoPrevio = imp.topologia; }
       }
     } catch (e) { /* sin guardado previo: se sigue igual */ }
     setInterval(guardar, 30000);
@@ -9893,6 +9942,12 @@ var Autotest = (function () {
     var nombre = "Los cables terminan en puertos dibujados sobre el perímetro, no en el centro del ícono";
     try {
       var topo = UI.topologiaActual();
+      if (!(topo.enlaces || []).length) {
+        /* Sin cables no hay qué medir (un lienzo vacío): se usa el ejemplo
+         * Complejo. Al terminar, correr() restaura la red del usuario. */
+        UI.cargarTopologia(clonar(ejemploPorId("complejo").topologia));
+        topo = UI.topologiaActual();
+      }
       var svg = document.querySelector(".simlienzo svg.lienzo");
       if (!svg) {
         return fila(15, nombre, false, "No se encontró el SVG del lienzo.");
@@ -10274,9 +10329,11 @@ var Autotest = (function () {
         "(revisá que los cinco bloques script estén pegados en orden).</p>";
       return;
     }
-    var ej = ejemploPorId("complejo");
-    var inicial = ej ? ej.topologia : Escenarios.EJEMPLOS[0].topologia;
-    UI.iniciar(document.getElementById("app"), clonar(inicial));
+    /* Se arranca con el lienzo vacío: los ejemplos están en «Ejemplos…» y
+     * el trabajo de la sesión anterior se ofrece desde el lienzo. */
+    UI.iniciar(document.getElementById("app"), {
+      version: 1, nombre: "Red nueva", dispositivos: [], enlaces: [], escenario: null
+    });
     cablearBoton();
     /* La capa 4 reconstruye la franja inferior en cada render: el observador
      * repone el botón si un repintado lo barre. No toca ninguna capa. */

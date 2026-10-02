@@ -668,6 +668,12 @@ var Autotest = (function () {
     var nombre = "Los cables terminan en puertos dibujados sobre el perímetro, no en el centro del ícono";
     try {
       var topo = UI.topologiaActual();
+      if (!(topo.enlaces || []).length) {
+        /* Sin cables no hay qué medir (un lienzo vacío): se usa el ejemplo
+         * Complejo. Al terminar, correr() restaura la red del usuario. */
+        UI.cargarTopologia(clonar(ejemploPorId("complejo").topologia));
+        topo = UI.topologiaActual();
+      }
       var svg = document.querySelector(".simlienzo svg.lienzo");
       if (!svg) {
         return fila(15, nombre, false, "No se encontró el SVG del lienzo.");
@@ -1049,9 +1055,11 @@ var Autotest = (function () {
         "(revisá que los cinco bloques script estén pegados en orden).</p>";
       return;
     }
-    var ej = ejemploPorId("complejo");
-    var inicial = ej ? ej.topologia : Escenarios.EJEMPLOS[0].topologia;
-    UI.iniciar(document.getElementById("app"), clonar(inicial));
+    /* Se arranca con el lienzo vacío: los ejemplos están en «Ejemplos…» y
+     * el trabajo de la sesión anterior se ofrece desde el lienzo. */
+    UI.iniciar(document.getElementById("app"), {
+      version: 1, nombre: "Red nueva", dispositivos: [], enlaces: [], escenario: null
+    });
     cablearBoton();
     /* La capa 4 reconstruye la franja inferior en cada render: el observador
      * repone el botón si un repintado lo barre. No toca ninguna capa. */
