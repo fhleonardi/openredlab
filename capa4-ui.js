@@ -60,6 +60,8 @@ var UI = (function () {
     ultimoDhcp: null,
     panelRes: "ping",
     verTodos: false,
+    verTramas: false,
+    verEncabezados: false,
     consolaAbierta: false,
     lineasConsola: [],
     presExpandida: false,
@@ -373,6 +375,7 @@ var UI = (function () {
     ".recorrido .tenue{color:var(--sim-tenue);font-size:12px;}",
     ".agregarpuerto{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:8px;padding-top:8px;border-top:1px solid var(--sim-borde);font-size:12px;}",
     ".filaif select{max-width:120px;}",
+    ".simbarra h1 .logo{width:28px;height:28px;vertical-align:-7px;margin-right:8px;}",
     ".simbarra h1 .subtitulo{font-weight:400;font-size:.72em;opacity:.8;margin-left:6px;}",
     "@media (max-width:640px){.simbarra h1 .subtitulo{display:none;}}",
     ".ayuda{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:8px;padding:2px 0;font-size:12px;line-height:1.35;}",
@@ -398,6 +401,17 @@ var UI = (function () {
     ".recorrido .pasos{flex:1;min-height:0;overflow:auto;padding:4px 10px;}",
     ".recorrido .pie{display:flex;align-items:center;gap:8px;padding:4px 10px 6px;font-size:12px;color:var(--sim-tenue);font-style:italic;}",
     ".linpaso{font-size:13px;padding:2px 0;}",
+    ".capa{display:inline-block;min-width:92px;color:var(--sim-tenue);border:1px solid var(--sim-borde);font-size:11px;border-radius:4px;padding:0 5px;margin-right:6px;text-align:center;vertical-align:1px;cursor:help;}",
+    ".recorrido .nota-ttl{font-size:12px;color:var(--sim-tenue);margin:0 0 4px;}",
+    ".trama{font-size:13px;padding:2px 4px;border-radius:4px;}",
+    ".trama:hover,.trama:focus{background:var(--sim-okfondo);outline:none;}",
+    ".trama .sent{display:inline-block;min-width:64px;color:var(--sim-tenue);font-size:12px;}",
+    ".trama .cambia{color:var(--sim-mal);}",
+    ".trama .queda{color:var(--sim-ok);}",
+    ".enc{display:inline-block;border:1px solid var(--sim-borde);border-radius:4px;padding:1px 6px;margin:2px 0 2px 64px;font-family:ui-monospace,Consolas,monospace;font-size:11px;}",
+    ".enc .enc{margin:0 0 0 6px;}",
+    ".enc b{font-family:system-ui,sans-serif;font-weight:600;color:var(--sim-tenue);margin-right:4px;}",
+    ".enc mark{background:#fde68a;color:#111;border-radius:2px;padding:0 2px;}",
     ".linpaso .marca{color:var(--sim-ok);margin-right:4px;}",
     ".linpaso.pendiente{color:var(--sim-tenue);}",
     ".pasofallo{border:1px solid var(--sim-mal);background:var(--sim-malfondo);border-radius:6px;padding:6px 8px;margin:4px 0;font-size:13px;}",
@@ -555,6 +569,10 @@ var UI = (function () {
       "<circle cx='0' cy='-4' r='3' fill='#0b5fa5'/><rect x='-5' y='3' width='10' height='5' fill='#0b5fa5'/>";
   }
 
+  // Marca de OpenRedLab en blanco para la barra oscura (img/openredlab-marca-blanco.png,
+  // 64 px), embebida para que el archivo siga funcionando solo y sin conexión.
+  var LOGO_BLANCO = "data:image/png;base64,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";
+
   /* ---------------- Construcción del DOM ---------------- */
 
   function el(tag, clase, html) {
@@ -628,7 +646,7 @@ var UI = (function () {
       bMenu.setAttribute("aria-expanded", String(abierto));
     });
     barra.appendChild(bMenu);
-    barra.appendChild(el("h1", "", "OpenRedLab <span class='subtitulo'>Simulador de Redes</span>"));
+    barra.appendChild(el("h1", "", "<img class='logo' src='" + LOGO_BLANCO + "' alt=''>OpenRedLab <span class='subtitulo'>Simulador de Redes</span>"));
     S.barra = barra;
     var modos = el("div", "modos");
     modos.setAttribute("role", "group");
@@ -2699,13 +2717,109 @@ var UI = (function () {
 
   var PASOS_CLAVE = /^(Averiguar la IP de|Decidir si el destino|Buscar ruta|Llegar a internet|Comprobar que la respuesta)/;
 
+  // «Capa 2 · Enlace», con el nombre TCP/IP y la unidad de datos al pasar
+  // el mouse. Los pasos de configuración no son de ninguna capa.
+  function etiquetaCapa(capa) {
+    var c = capa && Motor.CAPAS ? Motor.CAPAS[capa] : null;
+    if (!c) { return ""; }
+    return "<span class='capa' title='" + escapar("Modelo OSI: capa " + capa + ", " + c.osi + ". Modelo TCP/IP: " + c.tcpip +
+      ". Lo que viaja: " + c.pdu + ".") + "'>Capa " + capa + " · " + escapar(c.osi) + "</span>";
+  }
+
+  var PALABRA_MEDIO = { ethernet: "cobre", fibra: "fibra", wireless: "inalámbrico" };
+
+  // Cable resaltado mientras se señala una trama: el tramo completo, con
+  // los switches que cruza.
+  function resaltarTrama(t) {
+    quitarResalteTrama();
+    if (!S.capaAnim) { return; }
+    var svgNS = "http://www.w3.org/2000/svg";
+    var g = document.createElementNS(svgNS, "g");
+    g.setAttribute("class", "resalte-trama");
+    (t.enlaces || []).forEach(function (id) {
+      var e = buscarEnlace(id);
+      var tr = e && tramoEnlace(e, e.a.dispositivo);
+      if (!tr) { return; }
+      var l = document.createElementNS(svgNS, "line");
+      l.setAttribute("x1", tr.de.x); l.setAttribute("y1", tr.de.y);
+      l.setAttribute("x2", tr.a.x); l.setAttribute("y2", tr.a.y);
+      l.setAttribute("stroke", "#f59e0b"); l.setAttribute("stroke-width", "7");
+      l.setAttribute("stroke-linecap", "round"); l.setAttribute("opacity", "0.75");
+      g.appendChild(l);
+    });
+    S.capaAnim.appendChild(g);
+  }
+
+  function quitarResalteTrama() {
+    if (!S.capaAnim) { return; }
+    var viejos = S.capaAnim.querySelectorAll(".resalte-trama");
+    for (var i = 0; i < viejos.length; i++) { viejos[i].parentNode.removeChild(viejos[i]); }
+  }
+
+  // Una línea por trama: quién la manda, a quién, por qué medio, qué
+  // switches cruza sin cambiarla, y qué cambió respecto del salto anterior.
+  function renderTramas(res, lista) {
+    var tramas = res.tramas || [];
+    lista.appendChild(el("p", "nota-ttl", "Cada línea es una trama entre dos equipos IP; adentro va el paquete IP con el mensaje ICMP. " +
+      "TTL: cuántos routers más puede cruzar el paquete (cada router le resta uno)."));
+    var anterior = {};
+    var cuenta = { ida: 0, vuelta: 0 };
+    tramas.forEach(function (t) {
+      cuenta[t.sentido] += 1;
+      var prev = anterior[t.sentido];
+      var cambiaMac = !prev || prev.macOrigen !== t.macOrigen || prev.macDestino !== t.macDestino;
+      var cambiaIp = prev && (prev.ipOrigen !== t.ipOrigen || prev.ipDestino !== t.ipDestino);
+      var cambiaTtl = prev && prev.ttl !== t.ttl;
+      var partes = [escapar(nombreDe(t.de.dispositivo)) + " → " + escapar(nombreDe(t.a.dispositivo))];
+      if (t.medio) { partes.push("por " + (PALABRA_MEDIO[t.medio] || escapar(t.medio))); }
+      if (t.atraviesa && t.atraviesa.length) {
+        partes.push("pasa por " + t.atraviesa.map(function (id) { return escapar(nombreDe(id)); }).join(" y ") +
+          (t.atraviesa.length > 1 ? ", que no cambian" : ", que no cambia") + " la trama");
+      }
+      if (prev) {
+        var cambia = [], queda = [];
+        (cambiaMac ? cambia : queda).push("MAC");
+        (cambiaIp ? cambia : queda).push("IP");
+        (cambiaTtl ? cambia : queda).push("TTL");
+        partes.push((cambia.length ? "<span class='cambia'>cambia: " + cambia.join(" y ") + "</span>" : "") +
+          (cambia.length && queda.length ? " · " : "") +
+          (queda.length ? "<span class='queda'>se mantiene: " + queda.join(" y ") + "</span>" : ""));
+      }
+      partes.push("TTL " + t.ttl);
+      var fila = el("div", "trama",
+        "<span class='sent'>" + (t.sentido === "ida" ? "Ida " : "Vuelta ") + cuenta[t.sentido] + "</span>" + partes.join(" · "));
+      fila.tabIndex = 0;
+      fila.addEventListener("mouseenter", function () { resaltarTrama(t); });
+      fila.addEventListener("focus", function () { resaltarTrama(t); });
+      fila.addEventListener("mouseleave", quitarResalteTrama);
+      fila.addEventListener("blur", quitarResalteTrama);
+      lista.appendChild(fila);
+      if (S.verEncabezados) {
+        // Las capas anidadas: la trama contiene al paquete, que contiene al
+        // mensaje. Lo que cambió respecto de la trama anterior, resaltado.
+        function campo(texto, cambio) { return cambio ? "<mark>" + escapar(texto) + "</mark>" : escapar(texto); }
+        lista.appendChild(el("div", "",
+          "<span class='enc' title='Capa 2: trama'><b>Trama</b>MAC " + campo(t.macOrigen || "?", cambiaMac) + " → " +
+          campo(t.macDestino || "?", cambiaMac) +
+          "<span class='enc' title='Capa 3: paquete'><b>Paquete IP</b>" + campo(t.ipOrigen, cambiaIp) + " → " + campo(t.ipDestino, cambiaIp) +
+          " · TTL " + campo(String(t.ttl), cambiaTtl) +
+          "<span class='enc' title='Va dentro del paquete IP'><b>ICMP</b>" + escapar(t.mensaje.replace("ICMP ", "")) + "</span></span></span>"));
+      }
+      anterior[t.sentido] = t;
+    });
+  }
+
   function renderRecorrido(res) {
     var caja = el("div", "recorrido");
     var pasos = res.pasos || [];
     var fallo = -1;
     pasos.forEach(function (p, i) { if (!p.ok && fallo < 0) { fallo = i; } });
-    var cab = el("div", "cab", "<span>Recorrido paso a paso</span>");
-    if (res.exito) {
+    var tramas = res.tramas || [];
+    var enTramas = S.verTramas && tramas.length > 0;
+    var cab = el("div", "cab", "<span>" + (enTramas ? "Cómo viaja el paquete" : "Recorrido paso a paso") + "</span>");
+    if (enTramas) {
+      cab.appendChild(el("span", "", tramas.length + (tramas.length === 1 ? " trama" : " tramas")));
+    } else if (res.exito) {
       cab.appendChild(el("span", "ok", pasos.length + " de " + pasos.length + " verificaciones correctas"));
     } else if (fallo >= 0) {
       cab.appendChild(el("span", "mal", "se detuvo en el paso " + pasos[fallo].n));
@@ -2713,7 +2827,9 @@ var UI = (function () {
     caja.appendChild(cab);
     var lista = el("div", "pasos");
     var visibles = [];
-    if (!pasos.length) {
+    if (enTramas) {
+      renderTramas(res, lista);
+    } else if (!pasos.length) {
       lista.appendChild(el("p", "", res.diagnostico && res.diagnostico.codigo === "ENTRADA"
         ? "No se recorrió ningún paso: la dirección de destino no es válida."
         : "No se recorrió ningún paso."));
@@ -2728,11 +2844,11 @@ var UI = (function () {
       if (p.ok) {
         var resumen = resumenPaso(p);
         lista.appendChild(el("div", "linpaso",
-          "<span class='marca' aria-hidden='true'>✓</span><b>" + p.n + ".</b> " + escapar(p.titulo) +
+          "<span class='marca' aria-hidden='true'>✓</span>" + etiquetaCapa(p.capa) + "<b>" + p.n + ".</b> " + escapar(p.titulo) +
           (resumen ? " — " + escapar(resumen) : "")));
       } else {
         var f = el("div", "pasofallo",
-          "<span class='marca' aria-hidden='true'>✗</span><b>" + p.n + ". " + escapar(p.titulo) + "</b>");
+          "<span class='marca' aria-hidden='true'>✗</span>" + etiquetaCapa(p.capa) + "<b>" + p.n + ". " + escapar(p.titulo) + "</b>");
         var pre = document.createElement("pre");
         // En el resumen van la primera línea del detalle (la cuenta) y la
         // última (la conclusión); los binarios, en "Ver los pasos".
@@ -2744,10 +2860,21 @@ var UI = (function () {
     });
     caja.appendChild(lista);
     var pie = el("div", "pie");
-    if (!res.exito && fallo >= 0 && !S.verTodos) {
+    if (!res.exito && fallo >= 0 && !S.verTodos && !enTramas) {
       pie.appendChild(el("span", "", "los pasos siguientes no se llegaron a verificar"));
     }
-    if (pasos.length > visibles.length || S.verTodos) {
+    if (tramas.length) {
+      var bTramas = boton(enTramas ? "Ver los pasos" : "Cómo viaja el paquete (" + tramas.length + (tramas.length === 1 ? " trama)" : " tramas)"));
+      bTramas.addEventListener("click", function () { S.verTramas = !S.verTramas; quitarResalteTrama(); renderInferior(); });
+      pie.appendChild(bTramas);
+    }
+    if (enTramas) {
+      var bEnc = boton(S.verEncabezados ? "Ocultar los encabezados" : "Ver los encabezados");
+      bEnc.setAttribute("aria-expanded", String(!!S.verEncabezados));
+      bEnc.addEventListener("click", function () { S.verEncabezados = !S.verEncabezados; renderInferior(); });
+      pie.appendChild(bEnc);
+    }
+    if (!enTramas && (pasos.length > visibles.length || S.verTodos)) {
       var bTodos = boton(S.verTodos ? "Ver resumen" : "Ver los " + pasos.length + " pasos");
       bTodos.addEventListener("click", function () { S.verTodos = !S.verTodos; renderInferior(); });
       pie.appendChild(bTodos);
@@ -2912,6 +3039,7 @@ var UI = (function () {
     S.ultimo = { origen: origen, destino: destino, res: res };
     S.panelRes = "ping";
     S.verTodos = false;
+    S.verTramas = false;
     S.consolaAbierta = false;
     if (res.exito) {
       var r = res.respuestas[0] || { ttl: 64, ms: 1 };
@@ -3050,6 +3178,16 @@ var UI = (function () {
     html += "<section><h3>IP y máscara en binario</h3><div class='grid'>";
     html += "<span>IP</span><span class='binario'>" + escapar(det.ip) + " &nbsp; Prefijo /" + det.prefijo + "</span>";
     html += "<span>Máscara</span><span class='binario'>" + escapar(det.mascaraDecimal) + "</span>";
+    var cl = Red.clase(det.ip);
+    if (cl) {
+      var TIPO_IP = { privada: "privada", publica: "pública", cgnat: "compartida (CGNAT)", loopback: "loopback", apipa: "autoasignada (APIPA)" };
+      var tipoIp = TIPO_IP[Red.clasificar(det.ip)];
+      html += "<span>Clase</span><span>" + (cl.prefijoClasico
+        ? "<b>" + cl.letra + "</b>" + (tipoIp ? " · " + tipoIp : "") + " <span class='tenue'>(con clases usaría /" + cl.prefijoClasico +
+          "; hoy se usa CIDR: /" + det.prefijo + ")</span>"
+        : "<b>" + cl.letra + "</b> <span class='tenue'>(" + (cl.letra === "D" ? "multicast" : "reservada") + ": no se asigna a equipos)</span>") +
+        "</span>";
+    }
     html += "</div>";
     html += "<div class='binario bits'>IP&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;" + binarioColoreado(det.ipBinario, det.cortePosicion) + "<br>";
     html += "<span style='font-size:11px'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;" +
