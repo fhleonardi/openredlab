@@ -653,7 +653,7 @@ var UI = (function () {
       for (var i = 0; i < Escenarios.EJEMPLOS.length; i++) {
         if (Escenarios.EJEMPLOS[i].id === selEjemplo.value) { ej = Escenarios.EJEMPLOS[i]; }
       }
-      if (ej) { empujarHistorial(); cargarTopologia(clonar(ej.topologia)); registrar("ejemplo", "Se cargó el ejemplo " + ej.nombre); }
+      if (ej) { empujarHistorial(); cargarTopologiaAjustada(clonar(ej.topologia)); registrar("ejemplo", "Se cargó el ejemplo " + ej.nombre); }
       selEjemplo.value = "";
     });
     barra.appendChild(selEjemplo);
@@ -3484,7 +3484,7 @@ var UI = (function () {
       bRec.addEventListener("click", function () {
         var previo = S.trabajoPrevio;
         S.trabajoPrevio = null;
-        cargarTopologia(previo);
+        cargarTopologiaAjustada(previo);
         registrar("guardado", "Se recuperó el trabajo de la sesión anterior.");
         avisar("Se recuperó el trabajo de la sesión anterior.");
       });
@@ -3545,7 +3545,7 @@ var UI = (function () {
         return;
       }
       empujarHistorial();
-      cargarTopologia(res.topologia);
+      cargarTopologiaAjustada(res.topologia);
       registrar("importar", "Topología importada: " + (res.topologia.nombre || "sin nombre") + ".");
     };
     lector.readAsText(archivo);
@@ -3575,6 +3575,14 @@ var UI = (function () {
       botones[i].classList.toggle("activo", esActivo);
       botones[i].setAttribute("aria-pressed", String(esActivo));
     }
+  }
+
+  // Lo que abre el usuario (un ejemplo, un archivo importado, el trabajo
+  // recuperado) aparece entero en la vista. cargarTopologia sola no mueve la
+  // vista: la usa el Autotest para devolver la red tal como estaba.
+  function cargarTopologiaAjustada(topologia) {
+    cargarTopologia(topologia);
+    ajustarVista();
   }
 
   function cargarTopologia(topologia) {
