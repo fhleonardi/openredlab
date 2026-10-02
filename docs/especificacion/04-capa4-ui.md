@@ -21,8 +21,8 @@ Esta aplicación se proyecta frente a un curso. La pantalla se reparte con ese c
 - **Panel derecho de propiedades:** unos 320 px, colapsable.
 - **Franja inferior: un solo panel con pestañas**, nunca varios paneles simultáneos. Pestañas: *Simulación*, *DHCP*, *Cálculo de subred*, *Ayuda*. Alto de unos 260 px, colapsable a una barra de 32 px. La pestaña activa por defecto es **Simulación**, no la calculadora.
 - **Modo presentación:** un botón y la tecla `F` ocultan paleta y propiedades, dejan el lienzo a pantalla completa y agrandan los rótulos un 25 %.
-  - *Decisión (SRE-727):* la franja inferior queda en una línea de estado y la vista se ajusta para que entre toda la topología. Los rótulos **no se achican con ese ajuste**: compensan el zoom y conservan su tamaño en pantalla (14 px como mínimo). Si dos se pisan, primero se achica el de más abajo hasta ese mínimo y sólo después se lo desplaza. Los nombres de los enlaces se ocultan, salvo los caídos.
-- **Enlaces (SRE-751):** el color indica el estado y la forma el medio. Como verde y rojo se confunden con daltonismo, un enlace caído además se dibuja con guiones largos y su rótulo dice "(caído)"; por eso el wireless usa puntos redondos y no guiones.
+  - *Decisión:* la franja inferior queda en una línea de estado y la vista se ajusta para que entre toda la topología. Los rótulos **no se achican con ese ajuste**: compensan el zoom y conservan su tamaño en pantalla (14 px como mínimo). Si dos se pisan, primero se achica el de más abajo hasta ese mínimo y sólo después se lo desplaza. Los nombres de los enlaces se ocultan, salvo los caídos.
+- **Enlaces:** el color indica el estado y la forma el medio. Como verde y rojo se confunden con daltonismo, un enlace caído además se dibuja con guiones largos y su rótulo dice "(caído)"; por eso el wireless usa puntos redondos y no guiones.
 - **Tamaños mínimos en el lienzo:** ícono 48 px, nombre 16 px, línea de IP/prefijo 14 px, grosor de enlace 3 px. Contraste de texto 4.5:1 como mínimo, en tema claro y oscuro.
 
 **Errores de maquetación a evitar.** Son los que aparecen cuando esto se diseña como herramienta de red y no como herramienta de aula:

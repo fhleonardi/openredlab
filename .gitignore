@@ -3,3 +3,6 @@
 # Copias de respaldo y entregas anteriores: quedan en disco, fuera del repo
 escenarios-bak-*/
 Claude outputs/
+
+# Escenarios con las soluciones (versión docente): no se publican
+escenarios-docente/
