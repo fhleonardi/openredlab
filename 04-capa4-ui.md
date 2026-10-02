@@ -144,6 +144,7 @@ Las peticiones ARP se animan por difusión hacia todos los equipos del segmento:
 - Menú de topologías de ejemplo, tomado de `Escenarios.EJEMPLOS`, mostrando nombre y descripción.
 - Importar arrastrando un archivo `.json` sobre el lienzo, y por selector de archivo.
 - Autoguardado en `localStorage` cada 30 segundos y al cerrar la pestaña, envuelto en `try/catch`: si el navegador lo bloquea, la aplicación sigue andando y avisa una sola vez. Un lienzo vacío no se guarda, para no pisar lo anterior.
+- Lo que abre el usuario —un ejemplo, un archivo importado o el trabajo recuperado— aparece **ajustado a la vista**, como con el botón Ajustar. La recarga interna que hace el Autotest para devolver la red no mueve la vista.
 - Al abrir, el lienzo vacío dice cómo empezar y, si hay trabajo guardado, ofrece **Recuperar el trabajo anterior** o **Descartar**. No se carga solo: en una PC compartida del laboratorio, el siguiente no tiene por qué ver la red del anterior.
 - Tema claro y oscuro con un conmutador.
 
