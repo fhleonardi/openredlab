@@ -873,6 +873,14 @@ var Escenarios = (function () {
       if (direccionados.length === 0) {
         hallazgo(info, "error", "Ningún equipo de este sector tiene IP todavía.");
       } else {
+        // 0. Un sector direccionado a medias no está resuelto: cada integrante
+        // sin IP se nombra. El puerto del router es la puerta de enlace.
+        info.miembros.forEach(function (m) {
+          if (m.ip !== null) { return; }
+          hallazgo(info, "error", m.esInterfazDeclarada && m.dispositivo.tipo === "router"
+            ? m.etiqueta + " todavía no tiene IP: es la puerta de enlace del sector, y sin ella nadie sale de su red."
+            : m.etiqueta + " todavía no tiene IP.");
+        });
         info.red = Red.direccionDeRed(direccionados[0].ip, direccionados[0].prefijo);
         info.prefijo = direccionados[0].prefijo;
         // 1. Todos los equipos del sector en la misma subred.
@@ -1735,6 +1743,15 @@ var Escenarios = (function () {
       poner(topo, "r2:g0/0", null, 24);
       comparar("desafío sector sin direccionar",
         dice(sectorDe(informeDe(topo), "Servidores"), "tiene IP todavía"), true);
+    })();
+
+    (function () {
+      // Administración a medias: la PC tiene IP y el puerto del router no.
+      var topo = disenoCorrecto();
+      poner(topo, "r1:g0/0", null, 24);
+      var adm = sectorDe(informeDe(topo), "Administración");
+      comparar("desafío sector a medias da error", adm.ok, false);
+      comparar("desafío sector a medias nombra al router", dice(adm, "R1, puerto g0/0 todavía no tiene IP"), true);
     })();
 
     (function () {

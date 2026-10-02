@@ -83,6 +83,7 @@ Un objetivo con `esperado: "falla"` se cumple cuando el ping efectivamente falla
 
 Comprobaciones, en este orden:
 
+0. Un sector direccionado a medias no está resuelto: si algún integrante ya tiene IP, cada uno que todavía no la tiene es un error con su nombre (el puerto del router se nombra como la puerta de enlace del sector). Si no tiene ninguno: "Ningún equipo de este sector tiene IP todavía."
 1. Cada subred cae dentro del bloque base asignado.
 2. Ninguna subred se solapa con otra (`Red.solapan`).
 3. Cada subred arranca en un múltiplo de su propio tamaño de bloque (`Red.estaAlineada`).
@@ -129,6 +130,7 @@ Al menos **15 aserciones**. Obligatorias:
 | `verificarDesafio` con una subred desalineada | un hallazgo de nivel error mencionando la alineación |
 | `verificarDesafio` con dos subredes solapadas | un hallazgo de error por solapamiento en ambos sectores |
 | `verificarDesafio` con un diseño correcto | `resumen.errores === 0` |
+| `verificarDesafio` con la PC direccionada y el puerto del router sin IP | error que nombra al puerto del router |
 
 ---
 

@@ -545,9 +545,6 @@ var Autotest = (function () {
           }
         }
       }
-      if (lista.length) {
-        return lista[0].id;
-      }
     } catch (e) {
       /* se informa abajo */
     }
@@ -560,7 +557,14 @@ var Autotest = (function () {
     try {
       var id = dispositivoConIp();
       if (!id) {
-        return fila(13, nombre, false, "No hay ningún dispositivo para seleccionar.");
+        /* La red abierta puede no tener direcciones todavía (un desafío
+         * recién cargado): se usa el ejemplo Complejo. Al terminar, correr()
+         * restaura la topología del usuario. */
+        UI.cargarTopologia(clonar(ejemploPorId("complejo").topologia));
+        id = dispositivoConIp();
+      }
+      if (!id) {
+        return fila(13, nombre, false, "No hay ningún dispositivo con IP para seleccionar.");
       }
       UI.setModo("subredes");
       UI.seleccionar(id);

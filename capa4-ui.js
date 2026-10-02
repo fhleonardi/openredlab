@@ -910,7 +910,8 @@ var UI = (function () {
       g.setAttribute("tabindex", "0");
       g.setAttribute("role", "button");
       g.setAttribute("aria-label", mayus(cableTexto(e)) + ", " + palabraCable(e.tipo) + ", " + (e.estado === "up" ? "activo" : "caído") +
-        ", de " + puertoTexto(e.a.dispositivo, e.a.interfaz) + " a " + puertoTexto(e.b.dispositivo, e.b.interfaz));
+        ", del " + puertoTexto(e.a.dispositivo, e.a.interfaz).replace(/^el /, "") +
+        " al " + puertoTexto(e.b.dispositivo, e.b.interfaz).replace(/^el /, ""));
       var pa = puntoPuerto(a, e.a.interfaz);
       var pb = puntoPuerto(b, e.b.interfaz);
       var x1 = pa.x, y1 = pa.y, x2 = pb.x, y2 = pb.y;
@@ -2393,8 +2394,9 @@ var UI = (function () {
     // deshabilitados en lugar de desaparecer.
     var esc = S.topologia.escenario;
     var bVer = boton("Verificar");
-    bVer.disabled = !(esc && esc.objetivos && esc.objetivos.length);
-    if (bVer.disabled) { bVer.title = "Esta red no tiene objetivos para verificar"; }
+    bVer.disabled = !(esc && esc.objetivos && esc.objetivos.length) && !esDesafioActual();
+    if (bVer.disabled) { bVer.title = "Esta red no tiene objetivos ni un desafío para verificar"; }
+    else if (esDesafioActual()) { bVer.title = "Verifica el diseño VLSM" + (esc && esc.objetivos && esc.objetivos.length ? " y los objetivos" : ""); }
     var hayResultado = !!(S.ultimo || S.ultimaVerif);
     var bCopiar = boton("Copiar registro");
     var bExp = boton("Exportar registro");
@@ -2578,13 +2580,29 @@ var UI = (function () {
   function renderVerificacion(cont) {
     var v = S.ultimaVerif;
     var caja = el("div", "recorrido");
-    var cab = el("div", "cab", "<span>Objetivos del escenario</span>");
+    var titulo = v.vlsm && v.res ? "Diseño VLSM y objetivos" : (v.vlsm ? "Diseño VLSM" : "Objetivos del escenario");
+    var cab = el("div", "cab", "<span>" + titulo + "</span>");
     var lista = el("div", "pasos");
     if (v.error) {
       lista.appendChild(el("p", "", escapar(v.error)));
-    } else {
+    }
+    if (v.vlsm) {
+      var errores = v.vlsm.resumen.errores, advertencias = v.vlsm.resumen.advertencias;
+      var estado = (errores ? errores + (errores === 1 ? " error" : " errores") : "sin errores") +
+        (advertencias ? ", " + advertencias + (advertencias === 1 ? " advertencia" : " advertencias") : "");
+      if (v.res) { lista.appendChild(el("div", "", "<b>Diseño VLSM</b> — " + escapar(estado))); }
+      else { cab.appendChild(el("span", errores ? "mal" : "ok", estado)); }
+      v.vlsm.porSector.forEach(function (sec) {
+        lista.appendChild(el("div", sec.ok ? "linpaso" : "pasofallo",
+          "<span class='marca' aria-hidden='true'>" + (sec.ok ? "✓" : "✗") + "</span><b>" + escapar(sec.sector) + "</b>" +
+          sec.hallazgos.map(function (h) { return "<br><small>" + escapar(h.nivel + ": " + h.mensaje) + "</small>"; }).join("")));
+      });
+    }
+    if (v.res) {
       var cumplidos = v.res.filter(function (r) { return r.cumple; }).length;
-      cab.appendChild(el("span", cumplidos === v.res.length ? "ok" : "mal", cumplidos + " de " + v.res.length + " cumplidos"));
+      var estadoObj = cumplidos + " de " + v.res.length + " cumplidos";
+      if (v.vlsm) { lista.appendChild(el("div", "", "<b>Objetivos</b> — " + escapar(estadoObj))); }
+      else { cab.appendChild(el("span", cumplidos === v.res.length ? "ok" : "mal", estadoObj)); }
       v.res.forEach(function (r) {
         var o = r.objetivo;
         var espera = o.esperado === "falla"
@@ -2677,23 +2695,56 @@ var UI = (function () {
     renderLienzo(); renderPropiedades();
   }
 
+  // Hay un diseño VLSM para verificar cuando el escenario declara sus
+  // sectores; el modo elegido en la barra no alcanza: sin sectores no hay
+  // contra qué comparar.
+  function esDesafioActual() {
+    var esc = S.topologia.escenario;
+    return !!(esc && (esc.sectores || esc.requerimientos));
+  }
+
+  // Verifica lo que el escenario pida: el diseño VLSM si es un desafío, los
+  // objetivos de ping si los trae, o las dos cosas.
   function verificarActual() {
     var esc = S.topologia.escenario;
-    if (!esc || !esc.objetivos) {
-      S.ultimaVerif = { error: "Esta red no tiene objetivos para verificar. Los traen los laboratorios y el ejemplo \"Complejo roto\"." };
-    } else {
+    var conObjetivos = !!(esc && esc.objetivos && esc.objetivos.length);
+    var desafio = esDesafioActual();
+    S.ultimaVerif = {};
+    if (!conObjetivos && !desafio) {
+      S.ultimaVerif.error = "Esta red no tiene objetivos para verificar. Los traen los laboratorios y el ejemplo \"Complejo roto\".";
+    }
+    if (desafio) {
+      try { S.ultimaVerif.vlsm = Escenarios.verificarDesafio(S.topologia, esc || {}); }
+      catch (e) { S.ultimaVerif.error = "No se pudo verificar el diseño: " + e.message; }
+    }
+    if (conObjetivos) {
       if (!S.estado) { reconstruirEstado(); }
-      try { S.ultimaVerif = { res: Escenarios.verificarObjetivos(S.estado, esc.objetivos) }; }
-      catch (e) { S.ultimaVerif = { error: "No se pudo verificar: " + e.message }; }
+      try { S.ultimaVerif.res = Escenarios.verificarObjetivos(S.estado, esc.objetivos); }
+      catch (e) { S.ultimaVerif.error = "No se pudo verificar: " + e.message; }
+      // Cada objetivo es un ping: queda en la consola como si se hubiera hecho a mano.
+      if (S.ultimaVerif.res) {
+        var n = S.ultimaVerif.res.length;
+        consolaAgregar("Verificando " + n + (n === 1 ? " objetivo" : " objetivos") + " del escenario:");
+        S.ultimaVerif.res.forEach(function (r) {
+          var o = r.objetivo;
+          if (!o || o.tipo !== "ping") { return; }
+          consolaAgregar((r.cumple ? "✓ " : "✗ ") + "ping " + nombreDe(o.origen) + " → " + o.destino + ": " +
+            (r.codigo ? "no llegó — " + r.titulo + " (" + r.codigo + ")" : "llegó"), !r.cumple);
+        });
+      }
     }
     S.panelRes = "verificacion";
     renderInferior();
+    var partes = [];
+    if (S.ultimaVerif.vlsm) {
+      var errores = S.ultimaVerif.vlsm.resumen.errores;
+      partes.push("diseño VLSM " + (errores ? "con " + errores + (errores === 1 ? " error" : " errores") : "sin errores"));
+    }
     if (S.ultimaVerif.res) {
       var ok = S.ultimaVerif.res.filter(function (r) { return r.cumple; }).length;
-      anunciar("Verificación: " + ok + " de " + S.ultimaVerif.res.length + " objetivos cumplidos.");
-    } else {
-      anunciar(S.ultimaVerif.error);
+      partes.push(ok + " de " + S.ultimaVerif.res.length + " objetivos cumplidos");
     }
+    anunciar(S.ultimaVerif.error || ("Verificación: " + partes.join(", ") + "."));
   }
 
   /* Cálculo de subred atado al seleccionado, con binario en dos colores. */
@@ -2916,8 +2967,7 @@ var UI = (function () {
       "Desde el teclado, Enter sobre un dispositivo de la paleta lo agrega en el centro de la vista. " +
       "Para cambiar un cable de puerto: seleccionalo, hacé clic en el asa redonda de la punta que querés mover " +
       "y después en el puerto nuevo (también desde las listas Punta A y Punta B del panel).</p>";
-    var escD = S.topologia.escenario;
-    if (S.modo === "desafio" || (escD && (escD.modo === "desafio" || escD.sectores || escD.requerimientos))) {
+    if (esDesafioActual()) {
       var b = boton("Verificar diseño VLSM", "primario");
       var out = el("div", "");
       out.setAttribute("aria-live", "polite");
