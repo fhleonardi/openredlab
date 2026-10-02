@@ -329,8 +329,8 @@ var Motor = (function () {
         if (ctx.enLaVuelta) {
           return "El paquete llegó a " + (ctx.destinoNombre || "destino") + ", pero la respuesta (de " +
             (ctx.ipOrigen || "?") + " hacia " + (ctx.ipDestino || "?") + ") pasa por " + (ctx.router || "un router") +
-            ", que tiene " + regla + ", y la descarta. Este simulador revisa cada paquete por separado: " +
-            "un firewall real recuerda las conexiones y puede dejar pasar la respuesta de una que ya permitió.";
+            ", que tiene " + regla + ", y la descarta. Un router revisa cada paquete por separado: " +
+            "un firewall, en cambio, recuerda las conversaciones y deja volver la respuesta de una que ya permitió.";
         }
         return (ctx.router || "El router") + " tiene " + regla + ". El paquete de " + (ctx.ipOrigen || "?") +
           " hacia " + (ctx.ipDestino || "?") + " coincide con ella y el router lo descarta: " +
@@ -547,6 +547,12 @@ var Motor = (function () {
       return false;
     }
     return true;
+  }
+
+  // El firewall es un router con estado: recuerda las conversaciones que
+  // dejó pasar y deja volver sus respuestas sin revisar las reglas.
+  function esFirewall(dispositivo) {
+    return !!dispositivo && dispositivo.tipo === "router" && dispositivo.modelo === "firewall";
   }
 
   function esRouter(dispositivo) {
@@ -1081,6 +1087,10 @@ var Motor = (function () {
     opciones = opciones || {};
     var registrar = opciones.registrar !== false;
     var profundidad = opciones.profundidad || 0;
+    // Firewalls que dejaron pasar la ida: en la vuelta, la respuesta pasa.
+    var conexionIda = {};
+    var respuestaDe = opciones.respuestaDe || null;
+    var porEstado = opciones.porEstado || null;
     function nom(id) { return nombreDe(estado, id); }
 
     var pasos = [];
@@ -1432,11 +1442,23 @@ var Motor = (function () {
     // Reglas de filtrado de un router que el paquete atraviesa (no las del
     // equipo que lo genera). Cada router se revisa una sola vez por ping.
     function revisarFiltro(router) {
-      if (router.id === origen.id || filtrados[router.id] || !Array.isArray(router.reglas) || router.reglas.length === 0) {
+      if (router.id === origen.id || filtrados[router.id]) {
+        return null;
+      }
+      var nombreRouter = router.nombre || router.id;
+      if (respuestaDe && respuestaDe[router.id]) {
+        filtrados[router.id] = true;
+        if (porEstado && porEstado.indexOf(nombreRouter) < 0) { porEstado.push(nombreRouter); }
+        agregarPaso("Revisar las reglas de filtrado de " + nombreRouter,
+          nombreRouter + " es un firewall y recuerda la conversación: es la respuesta de un paquete que ya dejó pasar, " +
+          "así que pasa sin revisar las reglas.", true);
+        return null;
+      }
+      if (esFirewall(router)) { conexionIda[router.id] = true; }
+      if (!Array.isArray(router.reglas) || router.reglas.length === 0) {
         return null;
       }
       filtrados[router.id] = true;
-      var nombreRouter = router.nombre || router.id;
       var aplica = reglaQueAplica(router, ipOrigen, destinoIp);
       if (!aplica) {
         agregarPaso("Revisar las reglas de filtrado de " + nombreRouter,
@@ -1448,6 +1470,7 @@ var Motor = (function () {
           "La regla " + (aplica.indice + 1) + " permite el tráfico de " + aplica.origen + " hacia " + aplica.destino + ": pasa.", true);
         return null;
       }
+      delete conexionIda[router.id];
       agregarPaso("Revisar las reglas de filtrado de " + nombreRouter,
         "La regla " + (aplica.indice + 1) + " bloquea el tráfico de " + aplica.origen + " hacia " + aplica.destino +
         ", y el paquete de " + ipOrigen + " hacia " + destinoIp + " coincide: " + nombreRouter + " lo descarta.", false);
@@ -1512,7 +1535,7 @@ var Motor = (function () {
         "(En una red real, el router de salida traduciría la dirección privada del origen por una pública: NAT. El simulador no lo hace.)", true);
       msTotal += 20;
       if (profundidad < 1) {
-        var vueltaNube = ejecutarPing(estado, dispositivo.id, ipOrigen, { registrar: false, profundidad: profundidad + 1 });
+        var vueltaNube = ejecutarPing(estado, dispositivo.id, ipOrigen, { registrar: false, profundidad: profundidad + 1, respuestaDe: conexionIda });
         if (!vueltaNube.exito) {
           return {
             exito: false,
@@ -1703,10 +1726,18 @@ var Motor = (function () {
         if (profundidad < 1) {
           agregarPaso("Comprobar que la respuesta pueda volver",
             nombreDestinoFinal + " le responde a " + ipOrigen + ": la respuesta hace el camino inverso.", true);
+          var firewallsConEstado = [];
           var vuelta = ejecutarPing(estado, destPar.dispositivo.id, actualIp === destinoIp && actualId === origen.id ? ipOrigen : ipOrigen, {
             registrar: false,
-            profundidad: profundidad + 1
+            profundidad: profundidad + 1,
+            respuestaDe: conexionIda,
+            porEstado: firewallsConEstado
           });
+          if (vuelta.exito && firewallsConEstado.length) {
+            agregarPaso("Dejar volver la respuesta por el firewall",
+              firewallsConEstado.join(" y ") + (firewallsConEstado.length > 1 ? " son firewalls y recuerdan" : " es un firewall y recuerda") +
+              " la conversación: la respuesta pasa sin revisar las reglas, porque responde a un paquete que ya dejó pasar.", true);
+          }
           // Si el destino es el mismo equipo que el origen (ping a sí mismo),
           // la vuelta siempre existe.
           var esAPropiaIp = false;
@@ -3450,6 +3481,26 @@ var Motor = (function () {
       comparar("filtro: sin reglas todo pasa", ping(crearEstado(conFiltro()), "h1", "10.0.2.10").exito, true);
     })();
 
+    // Firewall con estado: la respuesta de lo que dejó pasar vuelve aunque
+    // una regla la bloquearía; lo que la regla frena a la ida, sigue frenado.
+    (function () {
+      var bloqueo = [{ accion: "bloquear", origen: "10.0.1.0/24", destino: "10.0.0.0/16" }];
+      function conFirewall() {
+        var topo = conFiltro(bloqueo);
+        topo.dispositivos.forEach(function (d) { if (d.id === "r1") { d.modelo = "firewall"; } });
+        return topo;
+      }
+      var resp = ping(crearEstado(conFirewall()), "s1", "10.0.1.10");
+      comparar("firewall: deja volver la respuesta", resp.exito, true);
+      comparar("firewall: el recorrido lo explica", (resp.pasos || []).some(function (p) {
+        return /recuerda la conversación/.test(p.detalle || p.texto || p.descripcion || JSON.stringify(p));
+      }) || JSON.stringify(resp).indexOf("recuerda la conversación") >= 0, true);
+      comparar("firewall: lo que la regla frena a la ida sigue frenado",
+        ping(crearEstado(conFirewall()), "h1", "10.0.2.10").diagnostico.codigo, "D27");
+      comparar("router sin estado: la misma respuesta se bloquea",
+        ping(crearEstado(conFiltro(bloqueo)), "s1", "10.0.1.10").diagnostico.codigo, "D27");
+    })();
+
     // 36. Un destino mal escrito no es un diagnóstico de red.
     (function () {
       var topo = fabTopo([fabPc("pc-admin", "10.45.7.66", 27, "10.45.7.65")], []);
@@ -3468,6 +3519,7 @@ var Motor = (function () {
     advertenciasDe: advertenciasDe,
     dhcpSolicitar: dhcpSolicitar,
     avisosDhcp: avisosServidorDhcp,
+    esFirewall: esFirewall,
     // Puertos ("equipo:interfaz") del mismo dominio de difusión que el dado.
     puertosDelSegmento: segmentoL2,
     rutaElegida: rutaElegida,

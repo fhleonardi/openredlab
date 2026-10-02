@@ -38,7 +38,7 @@ Esta aplicación se proyecta frente a un curso. La pantalla se reparte con ese c
 
 ## 2. Paleta y colocación de dispositivos
 
-Un ítem por tipo de dispositivo, con ícono SVG dibujado a mano —nada de imágenes externas— y el nombre debajo, bajo el título "Dispositivos". Más abajo, la herramienta de cable con su selector de tipo y la leyenda de los tres trazos.
+Un ítem por tipo de dispositivo, con ícono SVG dibujado a mano —nada de imágenes externas— y el nombre debajo, bajo el título "Dispositivos". La paleta trae PC, Router, Firewall, Switch, Cámara, IoT, Punto de acceso e Internet; el router de 8 puertos y los switches de 24 y 48 se eligen con **Modelo**, en la pestaña Configuración del equipo ya colocado. En la pestaña Interfaces de un router o firewall, cada puerto tiene un selector de medio y un botón Quitar (deshabilitados si el puerto tiene cable), y al pie se agregan puertos nuevos, con el nombre del estilo del modelo. Al seleccionar un firewall, Propiedades abre en Filtrado. Más abajo, la herramienta de cable con su selector de tipo y la leyenda de los tres trazos.
 
 **Dos formas de agregar un dispositivo, las dos obligatorias:**
 
