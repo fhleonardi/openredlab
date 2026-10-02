@@ -6,7 +6,7 @@
 
 No hace falta instalar nada: es un único archivo HTML, sin dependencias y sin conexión a internet. También podés descargar [`index.html`](index.html) y abrirlo con doble clic.
 
-Para empezar, leé la [guía rápida para el alumno](docs/guia-rapida-alumno.md).
+Para empezar, leé la [guía rápida para el alumno](docs/guia-rapida-alumno.md). Si sos docente, la [guía para docentes](docs/guia-docente.md) explica cómo usarlo en clase y cómo armar laboratorios y desafíos.
 
 ## Qué podés hacer
 
@@ -33,7 +33,7 @@ En [`escenarios/`](escenarios/) hay archivos para abrir con **Importar**:
 | `lab3-ALUMNO.json` | Lab 3: el problema invisible |
 | `desafio-complejo-termal.json` | Desafío VLSM: Complejo Termal Río Verde, sin direccionar |
 
-Las versiones docentes de los laboratorios, con la red resuelta, no se publican. Un docente puede armar las suyas con el ejemplo **Complejo roto (docente)** como plantilla.
+Las versiones docentes de los laboratorios, con la red resuelta, no se publican. Un docente puede armar las suyas con el ejemplo **Complejo roto (docente)** como plantilla: la [guía para docentes](docs/guia-docente.md) explica cómo.
 
 ## Cómo está hecho
 
@@ -56,7 +56,7 @@ python3 herramientas/ensamblar.py --verificar  # comprueba que coincida con las 
 
 Las autopruebas de las capas 1 a 3 se corren desde la consola del navegador (`Red.autopruebas()`, `Motor.autopruebas()`, `Escenarios.autopruebas()`) o con `node`. El botón **Autotest** muestra los casos de redes; `Autotest.correr({ tecnico: true })` corre además los criterios de la interfaz y las pruebas internas.
 
-La especificación con la que se construyó cada capa, los contratos entre ellas y el diseño de la interfaz están en [`docs/`](docs/).
+La especificación con la que se construyó cada capa, los contratos entre ellas y el diseño de la interfaz están en [`desarrollo/`](desarrollo/).
 
 ## Simplificaciones
 

@@ -6959,6 +6959,12 @@ var UI = (function () {
     bImp.addEventListener("click", importarPorArchivo);
     var bExp = boton("Exportar", "enedicion");
     bExp.addEventListener("click", exportarActual);
+    // Sólo en modo Docente: la versión del alumno, con las fallas aplicadas
+    // y sin la lista de fallas ni el modo.
+    var bAlu = boton("Exportar para el alumno", "enedicion");
+    bAlu.hidden = true;
+    bAlu.addEventListener("click", exportarParaAlumnoActual);
+    S.botonAlumno = bAlu;
     var bTema = boton("Tema oscuro", "enedicion");
     bTema.setAttribute("aria-pressed", "false");
     bTema.addEventListener("click", alternarTema);
@@ -6967,7 +6973,7 @@ var UI = (function () {
     bPres.setAttribute("aria-pressed", "false");
     bPres.addEventListener("click", alternarPresentacion);
     S.botonPres = bPres;
-    barra.appendChild(bImp); barra.appendChild(bExp);
+    barra.appendChild(bImp); barra.appendChild(bExp); barra.appendChild(bAlu);
     barra.appendChild(bTema); barra.appendChild(bPres);
     S.raiz.appendChild(barra);
 
@@ -9853,20 +9859,50 @@ var UI = (function () {
     lector.readAsText(archivo);
   }
 
+  function descargarTexto(texto, nombreArchivo) {
+    var blob = new Blob([texto], { type: "application/json" });
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = nombreArchivo;
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 2000);
+  }
+
   function exportarActual() {
+    try { descargarTexto(Escenarios.exportar(S.topologia), "topologia.json"); }
+    catch (e) { registrar("exportar", "No se pudo exportar."); }
+  }
+
+  // Nombre de archivo a partir del nombre de la red: "Lab 1 — Un solo problema" → "lab-1-un-solo-problema".
+  function nombreDeArchivo(texto) {
+    var base = String(texto || "laboratorio").normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+    return base || "laboratorio";
+  }
+
+  function exportarParaAlumnoActual() {
+    var esc = S.topologia.escenario || {};
+    var fallas = (esc.fallas || []).length;
     try {
-      var blob = new Blob([Escenarios.exportar(S.topologia)], { type: "application/json" });
-      var a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = "topologia.json";
-      a.click();
-      setTimeout(function () { URL.revokeObjectURL(a.href); }, 2000);
-    } catch (e) { registrar("exportar", "No se pudo exportar."); }
+      descargarTexto(Escenarios.exportarParaAlumno(S.topologia), nombreDeArchivo(S.topologia.nombre) + "-ALUMNO.json");
+      var texto = "Se exportó la versión del alumno: " + fallas + (fallas === 1 ? " falla aplicada" : " fallas aplicadas") +
+        " y " + (esc.objetivos || []).length + " objetivos, sin la lista de fallas.";
+      registrar("exportar", texto);
+      avisar(texto);
+    } catch (e) { registrar("exportar", "No se pudo exportar la versión del alumno: " + e.message); }
   }
 
   /* ---------------- API pública ---------------- */
 
   function renderTodo() {
+    if (S.botonAlumno) {
+      var escA = S.topologia.escenario;
+      var hayLab = !!(escA && ((escA.fallas || []).length || (escA.objetivos || []).length));
+      S.botonAlumno.hidden = S.modo !== "docente";
+      S.botonAlumno.disabled = !hayLab;
+      S.botonAlumno.title = hayLab ? "Baja la red con las fallas aplicadas y sin la lista de fallas, para repartir"
+        : "Esta red no tiene fallas ni objetivos: no es un laboratorio";
+    }
     renderLienzo();
     renderPropiedades();
     renderInferior();
