@@ -81,6 +81,8 @@ Un objetivo con `esperado: "falla"` se cumple cuando el ping efectivamente falla
 }
 ```
 
+**Diseño libre.** `Escenarios.verificarDiseno(topologia)` verifica una red armada sin enunciado. `Escenarios.detectarSectores` toma cada dominio de difusión con equipos como un sector (un puerto de router con lo que cuelga de sus switches y AP, un enlace entre routers, o una LAN sin router), deja afuera el tramo hacia la nube Internet, y le pasa esos sectores a `verificarDesafio` en modo libre: el bloque base es opcional y, sin hosts pedidos, no se controla la capacidad ni el desperdicio. Los requisitos que el alumno quiera agregar viajan en `escenario.diseno = { bloqueBase, hosts: { idSector: n } }`. En una red con objetivos no se usa: sus fallas están plantadas y el informe las delataría.
+
 Comprobaciones, en este orden:
 
 0. Un sector direccionado a medias no está resuelto: si algún integrante ya tiene IP, cada uno que todavía no la tiene es un error con su nombre (el puerto del router se nombra como la puerta de enlace del sector). Si no tiene ninguno: "Ningún equipo de este sector tiene IP todavía."

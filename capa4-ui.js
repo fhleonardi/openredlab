@@ -348,6 +348,11 @@ var UI = (function () {
     ".siminf .tabs .espacio{flex:1;}",
     ".siminf .tabs label{font-size:12px;color:var(--sim-tenue);}",
     ".siminf .cuerpoinf{flex:1;min-height:0;overflow:auto;}",
+    ".recorrido .nota{margin:2px 0 6px;font-size:12px;color:var(--sim-tenue);}",
+    ".recorrido .requisito{display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px;}",
+    ".recorrido .requisito input{width:150px;}",
+    ".recorrido input.hosts{width:64px;margin-left:6px;}",
+    ".recorrido .tenue{color:var(--sim-tenue);font-size:12px;}",
     ".ayuda{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:8px;padding:2px 0;font-size:12px;line-height:1.35;}",
     ".ayuda section{background:var(--sim-fondo);border:1px solid var(--sim-borde);border-radius:10px;padding:6px 10px;min-width:0;}",
     ".ayuda h3{margin:0 0 3px;font-size:12.5px;color:var(--sim-acento);}",
@@ -2413,12 +2418,16 @@ var UI = (function () {
     // Los botones están siempre en el mismo lugar; si no aplican, quedan
     // deshabilitados en lugar de desaparecer.
     var esc = S.topologia.escenario;
-    // En un desafío el botón lo dice con todas las letras y se destaca: es
-    // la acción que el alumno busca cuando termina su diseño.
-    var bVer = esDesafioActual() ? boton("Verificar diseño VLSM", "primario") : boton("Verificar");
-    bVer.disabled = !(esc && esc.objetivos && esc.objetivos.length) && !esDesafioActual();
-    if (bVer.disabled) { bVer.title = "Esta red no tiene objetivos ni un desafío para verificar"; }
-    else if (esDesafioActual() && esc.objetivos && esc.objetivos.length) { bVer.title = "Verifica el diseño VLSM y los objetivos"; }
+    // Tres casos: un desafío verifica el diseño VLSM pedido; una red con
+    // objetivos, los objetivos; una red armada sin enunciado, su propio
+    // diseño. En un desafío el botón se destaca: es lo que el alumno busca.
+    var conObjetivos = !!(esc && esc.objetivos && esc.objetivos.length);
+    var bVer = esDesafioActual() ? boton("Verificar diseño VLSM", "primario")
+      : (conObjetivos ? boton("Verificar") : boton("Verificar diseño"));
+    bVer.disabled = !conObjetivos && !esDesafioActual() && !(S.topologia.dispositivos || []).length;
+    if (bVer.disabled) { bVer.title = "Armá una red para verificar su diseño"; }
+    else if (esDesafioActual() && conObjetivos) { bVer.title = "Verifica el diseño VLSM y los objetivos"; }
+    else if (!esDesafioActual() && !conObjetivos) { bVer.title = "Revisa las subredes, los solapamientos y las puertas de enlace de tu red"; }
     var hayResultado = !!(S.ultimo || S.ultimaVerif);
     var bCopiar = boton("Copiar registro");
     var bExp = boton("Exportar registro");
@@ -2599,15 +2608,71 @@ var UI = (function () {
     return caja;
   }
 
+  // Requisitos opcionales del diseño libre: el bloque a repartir y los
+  // hosts de cada sector. Se guardan en la red (escenario.diseno), así viajan
+  // al exportar, y al cambiarlos se vuelve a verificar.
+  function guardarRequisito(campo, clave, valor) {
+    empujarHistorial();
+    var esc = S.topologia.escenario || (S.topologia.escenario = {});
+    var diseno = esc.diseno || (esc.diseno = { bloqueBase: null, hosts: {} });
+    if (!diseno.hosts) { diseno.hosts = {}; }
+    if (campo === "bloque") { diseno.bloqueBase = valor || null; }
+    else if (valor) { diseno.hosts[clave] = valor; }
+    else { delete diseno.hosts[clave]; }
+    reconstruirEstado();
+    verificarActual();
+  }
+
+  function renderDisenoLibre(inf, cab, lista) {
+    var errores = inf.resumen.errores, advertencias = inf.resumen.advertencias;
+    cab.appendChild(el("span", errores ? "mal" : "ok", (errores ? errores + (errores === 1 ? " error" : " errores") : "sin errores") +
+      (advertencias ? ", " + advertencias + (advertencias === 1 ? " advertencia" : " advertencias") : "")));
+    lista.appendChild(el("p", "nota", "Cada puerto de router, con lo que cuelga de sus switches, es un sector. " +
+      "Sin enunciado se revisan las subredes, los solapamientos y las puertas de enlace. " +
+      "Para revisar además si alcanzan las direcciones, cargá los hosts que pide cada sector y el bloque a repartir."));
+    var filaBloque = el("div", "requisito");
+    var inBloque = document.createElement("input");
+    inBloque.type = "text"; inBloque.placeholder = "p. ej. 10.45.7.0/24"; inBloque.value = inf.bloqueBase || "";
+    inBloque.addEventListener("change", function () {
+      var v = inBloque.value.trim();
+      if (v && !/^\d{1,3}(\.\d{1,3}){3}\/\d{1,2}$/.test(v)) { avisar("Escribí el bloque como red/prefijo, por ejemplo 10.45.7.0/24."); return; }
+      guardarRequisito("bloque", null, v);
+    });
+    filaBloque.appendChild(etiqueta("Bloque a repartir (opcional)", inBloque));
+    filaBloque.appendChild(inBloque);
+    lista.appendChild(filaBloque);
+    inf.porSector.forEach(function (sec) {
+      var fila = el("div", sec.ok ? "linpaso" : "pasofallo",
+        "<span class='marca' aria-hidden='true'>" + (sec.ok ? "✓" : "✗") + "</span><b>" + escapar(sec.sector) + "</b>");
+      var inHosts = document.createElement("input");
+      inHosts.type = "number"; inHosts.min = "0"; inHosts.className = "hosts";
+      inHosts.value = sec.hosts || "";
+      inHosts.setAttribute("aria-label", "Hosts que necesita " + sec.sector);
+      inHosts.addEventListener("change", function () {
+        var n = parseInt(inHosts.value, 10);
+        guardarRequisito("hosts", sec.id, isNaN(n) || n <= 0 ? null : n);
+      });
+      fila.appendChild(document.createTextNode(" "));
+      fila.appendChild(inHosts);
+      fila.appendChild(el("span", "tenue", " hosts necesarios"));
+      sec.hallazgos.forEach(function (h) {
+        fila.appendChild(el("div", "", "<small>" + escapar(h.nivel + ": " + h.mensaje) + "</small>"));
+      });
+      lista.appendChild(fila);
+    });
+  }
+
   function renderVerificacion(cont) {
     var v = S.ultimaVerif;
     var caja = el("div", "recorrido");
-    var titulo = v.vlsm && v.res ? "Diseño VLSM y objetivos" : (v.vlsm ? "Diseño VLSM" : "Objetivos del escenario");
+    var titulo = v.libre ? "Diseño de la red"
+      : (v.vlsm && v.res ? "Diseño VLSM y objetivos" : (v.vlsm ? "Diseño VLSM" : "Objetivos del escenario"));
     var cab = el("div", "cab", "<span>" + titulo + "</span>");
     var lista = el("div", "pasos");
     if (v.error) {
       lista.appendChild(el("p", "", escapar(v.error)));
     }
+    if (v.libre) { renderDisenoLibre(v.libre, cab, lista); }
     if (v.vlsm) {
       var errores = v.vlsm.resumen.errores, advertencias = v.vlsm.resumen.advertencias;
       var estado = (errores ? errores + (errores === 1 ? " error" : " errores") : "sin errores") +
@@ -2732,8 +2797,15 @@ var UI = (function () {
     var conObjetivos = !!(esc && esc.objetivos && esc.objetivos.length);
     var desafio = esDesafioActual();
     S.ultimaVerif = {};
+    // Sin objetivos ni desafío se verifica el diseño propio. En una red con
+    // objetivos no: sus fallas están plantadas y el informe las delataría.
     if (!conObjetivos && !desafio) {
-      S.ultimaVerif.error = "Esta red no tiene objetivos para verificar. Los traen los laboratorios y el ejemplo \"Complejo roto\".";
+      if (!(S.topologia.dispositivos || []).length) {
+        S.ultimaVerif.error = "Armá una red para verificar su diseño.";
+      } else {
+        try { S.ultimaVerif.libre = Escenarios.verificarDiseno(S.topologia); }
+        catch (e) { S.ultimaVerif.error = "No se pudo verificar el diseño: " + e.message; }
+      }
     }
     if (desafio) {
       try { S.ultimaVerif.vlsm = Escenarios.verificarDesafio(S.topologia, esc || {}); }
@@ -2758,6 +2830,10 @@ var UI = (function () {
     S.panelRes = "verificacion";
     renderInferior();
     var partes = [];
+    if (S.ultimaVerif.libre) {
+      var errLibre = S.ultimaVerif.libre.resumen.errores;
+      partes.push("diseño de la red " + (errLibre ? "con " + errLibre + (errLibre === 1 ? " error" : " errores") : "sin errores"));
+    }
     if (S.ultimaVerif.vlsm) {
       var errores = S.ultimaVerif.vlsm.resumen.errores;
       partes.push("diseño VLSM " + (errores ? "con " + errores + (errores === 1 ? " error" : " errores") : "sin errores"));
@@ -2985,7 +3061,7 @@ var UI = (function () {
       "<li>Elegí <i>Conectar con un cable</i> y hacé clic en dos puertos.</li>" +
       "<li>Seleccioná cada equipo y cargá su IP, máscara y puerta de enlace en <i>Propiedades</i>.</li>" +
       "<li>Probá la conexión con <i>Ping</i>. Si falla, el recorrido muestra en qué paso se cortó y por qué.</li>" +
-      "<li>Si la red trae objetivos o es un desafío VLSM, comprobala con <i>Verificar</i>, en esta misma franja.</li></ol>"));
+      "<li>Comprobá tu diseño con <i>Verificar</i>, en esta misma franja; si la red trae objetivos o es un desafío, también los revisa.</li></ol>"));
     caja.appendChild(el("section", "",
       "<h3>Ideas clave</h3><ul>" +
       "<li>Antes de enviar, el equipo aplica el operador lógico <b>«AND»</b> entre su máscara y cada IP, la suya y la del destino. " +
@@ -3388,8 +3464,8 @@ var UI = (function () {
 
   function setModo(modo) {
     S.modo = modo;
+    // Desafío abre Simulación: ahí está "Verificar diseño VLSM".
     if (modo === "subredes") { S.pestañaInf = "calculo"; }
-    else if (modo === "desafio") { S.pestañaInf = "ayuda"; }
     else { S.pestañaInf = "simulacion"; }
     renderTodo();
     registrar("modo", "Modo " + modo + ". La topología cargada no cambió." +
