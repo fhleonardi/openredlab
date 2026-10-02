@@ -500,6 +500,14 @@ var Escenarios = (function () {
             anotar(campoBase + ".modoRadio", "El puerto " + f.id + " del equipo \"" + d.id + "\" tiene un modo de radio que no existe: puede ser ap, cliente o bridge.");
           }
         }
+        // NAT de salida: sólo en puertos de router o firewall.
+        if (f.nat !== undefined && f.nat !== null) {
+          if (typeof f.nat !== "boolean") {
+            anotar(campoBase + ".nat", "El puerto " + f.id + " del equipo \"" + d.id + "\" no indica bien si hace NAT (va true o false).");
+          } else if (f.nat && d.tipo !== "router") {
+            anotar(campoBase + ".nat", "Sólo los routers y los firewalls hacen NAT, y \"" + d.id + "\" es " + d.tipo + ".");
+          }
+        }
       }
 
       // Puerta de enlace y DNS, cuando están presentes.
@@ -2046,6 +2054,13 @@ var Escenarios = (function () {
       conNube.dispositivos.push({ id: "nube", tipo: "internet", nombre: "Internet", x: 400, y: -80, encendido: true,
         interfaces: [interfaz("eth0", "ethernet", "200.45.7.1", 30, true)], gateway: null, dns: null, rutas: [], dhcp: null });
       comparar("dispositivo internet valida", validarTopologia(conNube).ok, true);
+      buscarDispositivo(conNube, "r1").interfaces[0].nat = true;
+      comparar("NAT en un puerto de router valida", validarTopologia(conNube).ok, true);
+      var natPc = clonar(r8);
+      buscarDispositivo(natPc, "pc-adm").interfaces[0].nat = true;
+      comparar("NAT en una PC no valida", validarTopologia(natPc).errores.some(function (e) { return /Sólo los routers y los firewalls hacen NAT/.test(e.mensaje); }), true);
+      buscarDispositivo(natPc, "pc-adm").interfaces[0].nat = "si";
+      comparar("NAT que no es booleano no valida", validarTopologia(natPc).ok, false);
       var faltante = clonar(r8);
       buscarDispositivo(faltante, "r1").interfaces.pop();
       comparar("router con puertos a gusto valida", validarTopologia(faltante).ok, true);

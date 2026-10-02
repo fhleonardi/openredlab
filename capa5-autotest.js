@@ -114,6 +114,13 @@ var Autotest = (function () {
       esperado: "En cada salto de router la trama cambia (MAC de origen y de destino), pero el paquete IP conserva su " +
         "origen y su destino; el TTL baja uno por router. Los switches pasan la trama sin cambiarla."
     },
+    18: {
+      conError: true,
+      situacion: "Una PC con IP privada (192.168.1.10) sale a internet por R-Borde, que tiene la IP pública 200.45.7.2 " +
+        "en su puerto hacia la nube, y hace ping a 8.8.8.8. Primero sin NAT y después con NAT en ese puerto.",
+      esperado: "Sin NAT el pedido llega, pero la respuesta no puede volver a una IP privada: D28. Con NAT, R-Borde cambia " +
+        "la IP de origen por 200.45.7.2 al salir, y a la respuesta la traduce de vuelta: el ping responde."
+    },
     12: {
       conError: true,
       situacion: "En el desafío VLSM, el sector Cámaras se arma con el router en 10.45.7.41/28, al lado del Wi-Fi " +
@@ -261,6 +268,48 @@ var Autotest = (function () {
         "el TTL va " + ttls + "; " + switches.join(" y ") + " pasan la trama sin cambiarla.");
     } catch (e) {
       return fila(17, nombre, false, "Excepción: " + e.message);
+    }
+  }
+
+  // PC — switch — R-Borde — nube, para los casos de NAT.
+  function redConInternet(nat) {
+    function puerto(id, ip, prefijo) {
+      return { id: id, nombre: id, medio: "ethernet", habilitada: true, modo: "estatico", ip: ip, prefijo: prefijo, mac: null };
+    }
+    function equipo(id, tipo, nombre, puertos, extra) {
+      var d = { id: id, tipo: tipo, nombre: nombre, x: 0, y: 0, encendido: true, interfaces: puertos, gateway: null, dns: null, rutas: [], dhcp: null };
+      for (var k in (extra || {})) { d[k] = extra[k]; }
+      return d;
+    }
+    function cable(id, a, ia, b, ib) {
+      return { id: id, tipo: "ethernet", estado: "up", a: { dispositivo: a, interfaz: ia }, b: { dispositivo: b, interfaz: ib } };
+    }
+    var salida = puerto("g0/1", "200.45.7.2", 30);
+    if (nat) { salida.nat = true; }
+    return {
+      version: 1, nombre: "Salida a internet",
+      dispositivos: [
+        equipo("pc1", "pc", "PC-Casa", [puerto("eth0", "192.168.1.10", 24)], { gateway: "192.168.1.1" }),
+        equipo("sw1", "switch-l2", "SW", [puerto("fa0/1", null, 24), puerto("fa0/2", null, 24)]),
+        equipo("r1", "router", "R-Borde", [puerto("g0/0", "192.168.1.1", 24), salida],
+          { rutas: [{ destino: "0.0.0.0", prefijo: 0, siguienteSalto: "200.45.7.1" }] }),
+        equipo("nube", "internet", "Internet", [puerto("eth0", "200.45.7.1", 30)])
+      ],
+      enlaces: [cable("l1", "pc1", "eth0", "sw1", "fa0/1"), cable("l2", "r1", "g0/0", "sw1", "fa0/2"), cable("l3", "r1", "g0/1", "nube", "eth0")]
+    };
+  }
+
+  function crit18() {
+    var nombre = "Sin NAT, la respuesta de internet no vuelve a una IP privada (D28)";
+    try {
+      var sin = Motor.ping(Motor.crearEstado(redConInternet(false)), "pc1", "8.8.8.8");
+      var con = Motor.ping(Motor.crearEstado(redConInternet(true)), "pc1", "8.8.8.8");
+      var salida = (con.tramas || []).filter(function (t) { return t.sentido === "ida" && t.a.dispositivo === "nube"; })[0];
+      var pasa = sin.diagnostico && sin.diagnostico.codigo === "D28" && con.exito && salida && salida.ipOrigen === "200.45.7.2";
+      return fila(18, nombre, pasa, "Sin NAT: " + diagnosticoTexto(sin) + ". Con NAT respondió" +
+        (salida ? ", y el paquete salió a internet con la IP de origen " + salida.ipOrigen + "." : "."));
+    } catch (e) {
+      return fila(18, nombre, false, "Excepción: " + e.message);
     }
   }
 
@@ -935,7 +984,7 @@ var Autotest = (function () {
    * puede leer y discutir. Los criterios de la interfaz y del archivo, y las
    * pruebas internas de las capas, quedan para quien programa:
    * Autotest.correr({ tecnico: true }) desde la consola. */
-  var CRITERIOS_DIDACTICOS = [crit02, crit17, crit03, crit04, crit05, crit06, crit07, crit08, crit12];
+  var CRITERIOS_DIDACTICOS = [crit02, crit17, crit03, crit04, crit05, crit06, crit18, crit07, crit08, crit12];
   var CRITERIOS_TECNICOS = [crit01, crit09, crit10, crit11, crit13, crit14, crit15, crit16];
 
   function correr(opciones) {

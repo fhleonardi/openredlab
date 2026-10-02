@@ -38,6 +38,8 @@ Después de un ping, el botón **Cómo viaja el paquete** cambia los pasos por l
 - **El paquete IP no cambia:** la IP de origen y la de destino son las mismas de punta a punta.
 - **El TTL baja uno por router.** Sale con 64; si llega a 0, el paquete se descarta (D23).
 
+**Con NAT, en el router de borde cambia también la IP de origen.** Una IP privada (10.x, 172.16–31.x, 192.168.x) no sale a internet: el router que da a internet la cambia por la IP pública de su puerto (paso *Traducir la dirección de origen (NAT)*) y, cuando vuelve la respuesta, la traduce al revés. En las tramas se ve: la línea del router a Internet dice «cambia: … IP». El NAT se activa con la casilla **NAT** del puerto que va a internet (pestaña Interfaces del router); un firewall nuevo ya lo trae en wan.
+
 Los switches y puntos de acceso aparecen como «pasa por… sin cambiar la trama»: trabajan con la MAC y no la modifican. **Ver los encabezados** muestra cada trama con lo que lleva adentro: la trama (MAC), el paquete IP (IP y TTL) y el mensaje ICMP del ping, con lo que cambió resaltado. Al pasar el mouse por una línea se resalta su cable en el lienzo.
 
 Los diagnósticos que más te van a aparecer:
@@ -58,6 +60,7 @@ Los diagnósticos que más te van a aparecer:
 | **D20** | Nadie tiene esa IP en tu red | Que la IP de destino esté bien escrita y el equipo exista |
 | **D23** | El paquete quedó dando vueltas entre routers | La ruta hacia ese destino en cada router del recorrido |
 | **D27** | Una regla de filtrado bloqueó el paquete | Pestaña Filtrado del router o firewall: el orden de las reglas |
+| **D28** | Falta NAT: la respuesta no puede volver de internet | Casilla NAT del puerto del router que va a internet |
 
 ## La pestaña Cálculo de subred
 
