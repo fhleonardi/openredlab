@@ -46,7 +46,7 @@ Cada elemento de `pasos` tiene la forma `{ n, titulo, detalle, ok }`, donde `tit
 
 **ARP.** Tabla por dispositivo con entradas que expiran. Las peticiones son de difusión: el resultado de `ping` debe permitir a la capa 4 animarlas hacia todos los equipos del segmento, porque ver eso *es* entender qué es un dominio de broadcast.
 
-**DHCP.** `Motor.dhcpSolicitar` devuelve los cuatro mensajes DORA en orden, cada uno con origen y destino, para que la capa 4 los anime sobre la topología real. El servidor lleva registro de las concesiones otorgadas. Si el rango se agotó o no hay servidor → `D16`, y el cliente se autoasigna una dirección `169.254.x.x`.
+**DHCP.** `Motor.dhcpSolicitar` devuelve los mensajes DORA en orden, cada uno con origen, destino y los enlaces que recorre (`enlaces`: el camino al destino; `inundados`: la difusión por el segmento), para que la capa 4 los anime sobre los cables reales. Un router responde sólo si su rango pertenece a la red de la interfaz por la que le llegó el DISCOVER; con varios servidores hay un OFFER por cada uno y el cliente acepta el primero. REQUEST va en difusión y nombra al servidor elegido. Una renovación conserva la IP si sigue libre. Las concesiones se deducen de la topología en `crearEstado` (interfaces en modo DHCP con una IP del rango), así sobreviven a reconstruir el estado y pasar a estática las libera. Un gateway fuera de la red del rango se entrega igual, con un aviso en `avisos`. Si no hay servidor, el rango es de otra red o se agotó → `D16` con el motivo, y el cliente se autoasigna una dirección `169.254.x.x`.
 
 **Wireless.** Modelo simple por distancia euclidiana entre las coordenadas `x`/`y` de los dos extremos en el lienzo. Más allá de un umbral configurable (por defecto 250 unidades), el enlace se considera caído → `D17`. Sin potencia ni interferencia. Exponé la distancia calculada para que el tooltip pueda mostrar actual contra máxima.
 
@@ -98,6 +98,7 @@ Al menos **20 aserciones** que construyan topologías mínimas en memoria y veri
 | Ping válido de punta a punta entre dos subredes | `exito: true`, y `saltos.length` correcto |
 | Router con ruta específica y ruta por defecto | `rutaElegida` devuelve la específica |
 | DHCP con rango de dos direcciones, tercer cliente | `D16` |
+| DHCP con el rango en otra red que la interfaz del router | `D16` con el motivo |
 
 La distinción `D11` contra `D12` es la que más cuesta implementar bien: probala en los dos sentidos.
 

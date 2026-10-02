@@ -53,7 +53,9 @@ Si el archivo completo no entra en una sola respuesta, **no lo entregues cortado
 
 ## 2. `Autotest.correr()`
 
-Un botón en la franja inferior ejecuta `Autotest.correr()` y muestra el informe en pantalla: cuántos criterios pasan, cuáles fallan y con qué detalle. Corre **en pocos segundos y sin animaciones** — desactivá las animaciones durante el autotest y restauralas al terminar.
+Un botón en la franja inferior ejecuta `Autotest.correr()` y muestra el informe en pantalla: cuántos criterios pasan, cuáles fallan y con qué detalle.
+
+**Qué ve la cátedra y qué queda para quien programa.** El botón muestra sólo los criterios de redes (2–8 y 12), numerados del 1 al 8 y redactados en lenguaje de la materia, sin nombres de funciones ni ids internos. Los criterios de la interfaz y del archivo (1, 9–11, 13–16) y las autopruebas internas de las capas 1–3 se corren desde la consola con `Autotest.correr({ tecnico: true })`; corrélo antes de commitear. Corre **en pocos segundos y sin animaciones** — desactivá las animaciones durante el autotest y restauralas al terminar.
 
 Empieza por encadenar las autopruebas de las capas: `Red.autopruebas()`, `Motor.autopruebas()` y `Escenarios.autopruebas()`, sumando sus resultados al informe. Después, estos dieciséis criterios:
 

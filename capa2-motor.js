@@ -210,7 +210,9 @@ var Motor = (function () {
       titulo: "No se obtuvo una IP por DHCP",
       explicacion: function (ctx) {
         ctx = ctx || {};
-        return (ctx.servidor
+        return (ctx.motivo
+          ? ctx.motivo
+          : ctx.servidor
           ? "El servidor DHCP de " + ctx.servidor + " no tiene direcciones libres para ofrecer."
           : "Ningún servidor DHCP respondió en la red.") +
           " El equipo se asigna solo una dirección 169.254.x.x (APIPA) y no puede comunicarse con nadie.";
@@ -653,9 +655,17 @@ var Motor = (function () {
   // se cruza en up, con medios y modos compatibles y dentro del alcance:
   // cada cliente tiene su propia distancia al AP.
   function segmentoL2(estado, idDispositivo, idInterfaz) {
+    return Object.keys(recorrerSegmento(estado, idDispositivo, idInterfaz));
+  }
+
+  // Mismo recorrido que segmentoL2, pero cada puerto alcanzado recuerda de
+  // qué puerto vino y por qué enlace (null en el salto interno de un
+  // conmutador, de un puerto suyo a otro). Sirve para dibujar la difusión y
+  // para reconstruir el camino de una trama dentro del segmento.
+  function recorrerSegmento(estado, idDispositivo, idInterfaz) {
     var visitados = {};
     var inicio = clavePuerto(idDispositivo, idInterfaz);
-    visitados[inicio] = true;
+    visitados[inicio] = { desde: null, enlace: null };
     var cola = [inicio];
     while (cola.length > 0) {
       var actual = cola.shift();
@@ -673,7 +683,7 @@ var Motor = (function () {
         if (visitados[claveOtra]) {
           continue;
         }
-        visitados[claveOtra] = true;
+        visitados[claveOtra] = { desde: actual, enlace: enlace.id };
         var devVecino = buscarDispositivo(estado, otro.dispositivo);
         // Si el vecino es un conmutador encendido, el broadcast inunda todos
         // sus puertos: se agregan los equipos del otro lado de cada puerto.
@@ -682,7 +692,7 @@ var Motor = (function () {
             var puerto = devVecino.interfaces[i];
             var clavePuertoSw = clavePuerto(devVecino.id, puerto.id);
             if (!visitados[clavePuertoSw]) {
-              visitados[clavePuertoSw] = true;
+              visitados[clavePuertoSw] = { desde: claveOtra, enlace: null };
               cola.push(clavePuertoSw);
             }
           }
@@ -691,7 +701,40 @@ var Motor = (function () {
         }
       }
     }
-    return Object.keys(visitados);
+    return visitados;
+  }
+
+  // Ids de los enlaces que recorre una difusión salida de ese puerto.
+  function enlacesDelSegmento(estado, idDispositivo, idInterfaz) {
+    var visitados = recorrerSegmento(estado, idDispositivo, idInterfaz);
+    var ids = [];
+    var claves = Object.keys(visitados);
+    for (var i = 0; i < claves.length; i++) {
+      var e = visitados[claves[i]].enlace;
+      if (e && ids.indexOf(e) < 0) {
+        ids.push(e);
+      }
+    }
+    return ids;
+  }
+
+  // Ids de los enlaces, en orden, que cruza una trama del puerto A al puerto
+  // B dentro del mismo segmento. Lista vacía si B no se alcanza.
+  function caminoL2(estado, idA, ifA, idB, ifB) {
+    var visitados = recorrerSegmento(estado, idA, ifA);
+    var clave = clavePuerto(idB, ifB);
+    if (!visitados[clave]) {
+      return [];
+    }
+    var camino = [];
+    while (clave) {
+      var paso = visitados[clave];
+      if (paso.enlace) {
+        camino.unshift(paso.enlace);
+      }
+      clave = paso.desde;
+    }
+    return camino;
   }
 
   // Todos los equipos con IP en el mismo segmento que el puerto dado.
@@ -885,6 +928,7 @@ var Motor = (function () {
       estado.enlacePorPuerto[claveA].push(enlace);
       estado.enlacePorPuerto[claveB].push(enlace);
     }
+    reconstruirConcesiones(estado);
     return estado;
   }
 
@@ -2232,115 +2276,283 @@ var Motor = (function () {
       };
     }
 
-    // Servidores DHCP alcanzables en el mismo segmento.
-    var candidatos = [];
+    // DISCOVER: difusión por todo el segmento del cliente. Cada router con
+    // DHCP habilitado que la recibe responde sólo si su rango pertenece a la
+    // red de la interfaz por la que le llegó.
+    var inundadosCliente = enlacesDelSegmento(estado, idDispositivo, idInterfaz);
+    var mensajes = [{
+      tipo: "discover", origen: idDispositivo, destino: "broadcast",
+      difusion: true, enlaces: [], inundados: inundadosCliente
+    }];
+    var servidores = [];
+    var vistos = [];
+    var motivos = [];
+    var llenos = [];
     var claves = segmentoL2(estado, idDispositivo, idInterfaz);
     for (var i = 0; i < claves.length; i++) {
       var partes = claves[i].split(":");
       var dev = buscarDispositivo(estado, partes[0]);
-      if (esRouter(dev) && dev.encendido && dev.dhcp && dev.dhcp.habilitado) {
-        if (candidatos.indexOf(dev) < 0) {
-          candidatos.push(dev);
-        }
+      if (!esRouter(dev) || !dev.encendido || !dev.dhcp || !dev.dhcp.habilitado) {
+        continue;
       }
+      if (vistos.indexOf(dev.id) >= 0) {
+        continue;
+      }
+      var ifServidor = buscarInterfaz(dev, partes.slice(1).join(":"));
+      if (!ifServidor || !ifServidor.habilitada) {
+        continue;
+      }
+      vistos.push(dev.id);
+      var chequeo = poolAtiende(estado, dev, ifServidor);
+      if (!chequeo.ok) {
+        motivos.push(chequeo.motivo);
+        continue;
+      }
+      var ipOfrecida = ipLibreEnPool(estado, dev, chequeo.rango, idDispositivo, idInterfaz, iface.ip);
+      if (!ipOfrecida) {
+        llenos.push(nombreDe(estado, dev.id));
+        continue;
+      }
+      servidores.push({ dispositivo: dev, interfaz: ifServidor, ip: ipOfrecida });
     }
-    var mensajes = [{ tipo: "discover", origen: idDispositivo, destino: "broadcast" }];
-    if (candidatos.length === 0) {
+
+    if (servidores.length === 0) {
       var apipa = apipaPara(idDispositivo, idInterfaz);
+      liberarConcesiones(estado, idDispositivo, idInterfaz);
       iface.ip = apipa;
       iface.prefijo = 16;
       iface.modo = "dhcp";
       cliente.gateway = null;
+      var ctx = llenos.length ? { servidor: llenos[0] } : (motivos.length ? { motivo: motivos.join(" ") } : {});
       return {
         exito: false,
         mensajes: mensajes,
         ip: apipa,
         prefijo: 16,
         gateway: null,
-        diagnostico: diagnosticoDe("D16", {})
+        servidor: null,
+        avisos: [],
+        diagnostico: diagnosticoDe("D16", ctx)
       };
     }
-    var servidor = candidatos[0];
-    var cfg = servidor.dhcp;
-    var desdeNum = ipANumeroSeguro(cfg.desde);
-    var hastaNum = ipANumeroSeguro(cfg.hasta);
-    if (desdeNum === null || hastaNum === null || desdeNum > hastaNum ||
-        !prefijoValido(cfg.prefijo)) {
-      var apipaMala = apipaPara(idDispositivo, idInterfaz);
-      iface.ip = apipaMala;
-      iface.prefijo = 16;
-      iface.modo = "dhcp";
-      cliente.gateway = null;
-      return {
-        exito: false,
-        mensajes: mensajes,
-        ip: apipaMala,
-        prefijo: 16,
-        gateway: null,
-        diagnostico: diagnosticoDe("D16", { servidor: servidor.nombre || servidor.id })
-      };
+
+    // OFFER: cada servidor que puede ofrece una dirección. El cliente pidió
+    // las respuestas en difusión (todavía no tiene IP), así que también
+    // inundan el segmento; el camino marcado es el que llega al cliente.
+    for (var s = 0; s < servidores.length; s++) {
+      var srv = servidores[s];
+      mensajes.push({
+        tipo: "offer", origen: srv.dispositivo.id, destino: idDispositivo,
+        difusion: true, ip: srv.ip,
+        enlaces: caminoL2(estado, srv.dispositivo.id, srv.interfaz.id, idDispositivo, idInterfaz),
+        inundados: enlacesDelSegmento(estado, srv.dispositivo.id, srv.interfaz.id)
+      });
     }
-    if (!estado.concesiones[servidor.id]) {
-      estado.concesiones[servidor.id] = {};
+
+    // REQUEST: el cliente acepta la primera oferta y lo anuncia en difusión,
+    // nombrando al servidor elegido para que los demás retiren la suya.
+    var elegido = servidores[0];
+    var cfg = elegido.dispositivo.dhcp;
+    mensajes.push({
+      tipo: "request", origen: idDispositivo, destino: "broadcast",
+      difusion: true, ip: elegido.ip, servidor: elegido.dispositivo.id,
+      enlaces: caminoL2(estado, idDispositivo, idInterfaz, elegido.dispositivo.id, elegido.interfaz.id),
+      inundados: inundadosCliente
+    });
+    // ACK: el servidor elegido confirma la concesión.
+    mensajes.push({
+      tipo: "ack", origen: elegido.dispositivo.id, destino: idDispositivo,
+      difusion: true, ip: elegido.ip,
+      enlaces: caminoL2(estado, elegido.dispositivo.id, elegido.interfaz.id, idDispositivo, idInterfaz),
+      inundados: enlacesDelSegmento(estado, elegido.dispositivo.id, elegido.interfaz.id)
+    });
+
+    liberarConcesiones(estado, idDispositivo, idInterfaz);
+    if (!estado.concesiones[elegido.dispositivo.id]) {
+      estado.concesiones[elegido.dispositivo.id] = {};
     }
-    var concesiones = estado.concesiones[servidor.id];
-    // Marcar como ocupadas las IP estáticas del segmento que caigan en el rango.
-    function ocupada(ipTexto) {
-      if (concesiones[ipTexto]) {
-        var c = concesiones[ipTexto];
-        if (c.cliente === idDispositivo && c.interfaz === idInterfaz) {
-          return false;
-        }
-        return true;
-      }
-      var duenos = configuradosConIp(estado, ipTexto);
-      for (var d = 0; d < duenos.length; d++) {
-        if (duenos[d].dispositivo.id === idDispositivo && duenos[d].interfaz.id === idInterfaz) {
-          continue;
-        }
-        return true;
-      }
-      return false;
-    }
-    var elegida = null;
-    for (var n = desdeNum; n <= hastaNum; n++) {
-      var textoIp = numeroAIpSeguro(n);
-      if (!ocupada(textoIp)) {
-        elegida = textoIp;
-        break;
-      }
-    }
-    if (!elegida) {
-      var apipaLlena = apipaPara(idDispositivo, idInterfaz);
-      iface.ip = apipaLlena;
-      iface.prefijo = 16;
-      iface.modo = "dhcp";
-      cliente.gateway = null;
-      return {
-        exito: false,
-        mensajes: mensajes,
-        ip: apipaLlena,
-        prefijo: 16,
-        gateway: null,
-        diagnostico: diagnosticoDe("D16", { servidor: servidor.nombre || servidor.id })
-      };
-    }
-    mensajes.push({ tipo: "offer", origen: servidor.id, destino: idDispositivo });
-    mensajes.push({ tipo: "request", origen: idDispositivo, destino: servidor.id });
-    mensajes.push({ tipo: "ack", origen: servidor.id, destino: idDispositivo });
-    concesiones[elegida] = { cliente: idDispositivo, interfaz: idInterfaz, mac: iface.mac };
-    iface.ip = elegida;
+    estado.concesiones[elegido.dispositivo.id][elegido.ip] = { cliente: idDispositivo, interfaz: idInterfaz, mac: iface.mac };
+    iface.ip = elegido.ip;
     iface.prefijo = cfg.prefijo;
     iface.modo = "dhcp";
     cliente.gateway = cfg.gateway || null;
     return {
       exito: true,
       mensajes: mensajes,
-      ip: elegida,
+      ip: elegido.ip,
       prefijo: cfg.prefijo,
       gateway: cfg.gateway || null,
+      servidor: elegido.dispositivo.id,
+      avisos: avisosPool(estado, elegido.dispositivo, elegido.interfaz),
       diagnostico: null
     };
+  }
+
+  // Rango de un servidor en números, o null si está mal cargado.
+  function rangoDhcp(cfg) {
+    var desde = ipANumeroSeguro(cfg.desde);
+    var hasta = ipANumeroSeguro(cfg.hasta);
+    if (desde === null || hasta === null || desde > hasta || !prefijoValido(cfg.prefijo)) {
+      return null;
+    }
+    return { desde: desde, hasta: hasta };
+  }
+
+  // Un router atiende DHCP por una interfaz sólo si su rango está bien
+  // cargado y pertenece a la red de esa interfaz.
+  function poolAtiende(estado, router, iface) {
+    var cfg = router.dhcp;
+    var nombre = nombreDe(estado, router.id);
+    var rango = rangoDhcp(cfg);
+    if (!rango) {
+      return {
+        ok: false,
+        motivo: nombre + " tiene el servidor DHCP habilitado, pero su rango (" + valor(cfg.desde, "?") + " – " +
+          valor(cfg.hasta, "?") + " /" + valor(cfg.prefijo, "?") + ") está mal cargado."
+      };
+    }
+    if (!iface.ip || !prefijoValido(iface.prefijo)) {
+      return {
+        ok: false,
+        motivo: nombre + " tiene el servidor DHCP habilitado, pero su interfaz " + iface.id +
+          " no tiene dirección IP: no sabe qué red atiende por ahí."
+      };
+    }
+    if (!Red.mismaRed(cfg.desde, iface.ip, iface.prefijo) || !Red.mismaRed(cfg.hasta, iface.ip, iface.prefijo)) {
+      return {
+        ok: false,
+        motivo: nombre + " tiene el servidor DHCP habilitado, pero su rango (" + cfg.desde + " – " + cfg.hasta +
+          ") no pertenece a la red de su interfaz " + iface.id + " (" + Red.direccionDeRed(iface.ip, iface.prefijo) +
+          "/" + iface.prefijo + "), así que no responde en esta red."
+      };
+    }
+    return { ok: true, rango: rango };
+  }
+
+  // Primera dirección libre del rango. Si el cliente ya tiene una del rango
+  // que nadie más usa (una renovación), se le ofrece la misma.
+  function ipLibreEnPool(estado, router, rango, idCliente, idIfCliente, ipActual) {
+    var concesiones = estado.concesiones[router.id] || {};
+    function ocupada(ipTexto) {
+      var c = concesiones[ipTexto];
+      if (c && !(c.cliente === idCliente && c.interfaz === idIfCliente)) {
+        return true;
+      }
+      var duenos = configuradosConIp(estado, ipTexto);
+      for (var d = 0; d < duenos.length; d++) {
+        if (duenos[d].dispositivo.id === idCliente && duenos[d].interfaz.id === idIfCliente) {
+          continue;
+        }
+        return true;
+      }
+      return false;
+    }
+    var actual = ipActual ? ipANumeroSeguro(ipActual) : null;
+    if (actual !== null && actual >= rango.desde && actual <= rango.hasta && !ocupada(ipActual)) {
+      return ipActual;
+    }
+    for (var n = rango.desde; n <= rango.hasta; n++) {
+      var textoIp = numeroAIpSeguro(n);
+      if (!ocupada(textoIp)) {
+        return textoIp;
+      }
+    }
+    return null;
+  }
+
+  // Un cliente tiene a lo sumo una concesión por interfaz: al pedir de nuevo
+  // se suelta la anterior, sea del servidor que sea.
+  function liberarConcesiones(estado, idCliente, idIfCliente) {
+    var routers = Object.keys(estado.concesiones);
+    for (var r = 0; r < routers.length; r++) {
+      var tabla = estado.concesiones[routers[r]];
+      var ips = Object.keys(tabla);
+      for (var k = 0; k < ips.length; k++) {
+        if (tabla[ips[k]].cliente === idCliente && tabla[ips[k]].interfaz === idIfCliente) {
+          delete tabla[ips[k]];
+        }
+      }
+    }
+  }
+
+  // Lo que un servidor real entregaría igual, pero deja al cliente mal
+  // configurado: se avisa sin cortar el DORA.
+  function avisosPool(estado, router, iface) {
+    var cfg = router.dhcp;
+    var nombre = nombreDe(estado, router.id);
+    var avisos = [];
+    var red = Red.direccionDeRed(cfg.desde, cfg.prefijo) + "/" + cfg.prefijo;
+    if (!cfg.gateway) {
+      avisos.push(nombre + " no entrega puerta de enlace: el equipo sólo podrá hablar dentro de su red.");
+    } else if (!Red.mismaRed(cfg.gateway, cfg.desde, cfg.prefijo)) {
+      avisos.push("La puerta de enlace " + cfg.gateway + " que entrega " + nombre + " no está en la red " + red +
+        ": el equipo no podrá salir de su red.");
+    }
+    if (iface && prefijoValido(iface.prefijo) && iface.prefijo !== cfg.prefijo) {
+      avisos.push(nombre + " entrega el prefijo /" + cfg.prefijo + ", pero la red de su interfaz " + iface.id +
+        " es /" + iface.prefijo + ".");
+    }
+    return avisos;
+  }
+
+  // Las concesiones se deducen de la topología: cada interfaz en modo DHCP
+  // con una dirección que un servidor de su segmento atiende tiene concesión
+  // de ese servidor. Así sobreviven a reconstruir el estado y a exportar.
+  function reconstruirConcesiones(estado) {
+    var ids = Object.keys(estado.porDispositivo);
+    for (var i = 0; i < ids.length; i++) {
+      var dev = estado.porDispositivo[ids[i]];
+      if (esRouter(dev) || esConmutador(dev)) {
+        continue;
+      }
+      for (var j = 0; j < dev.interfaces.length; j++) {
+        var iface = dev.interfaces[j];
+        if (iface.modo !== "dhcp" || !iface.ip || Red.clasificar(iface.ip) === "apipa") {
+          continue;
+        }
+        var n = ipANumeroSeguro(iface.ip);
+        var claves = segmentoL2(estado, dev.id, iface.id);
+        for (var k = 0; k < claves.length; k++) {
+          var partes = claves[k].split(":");
+          var router = buscarDispositivo(estado, partes[0]);
+          if (!esRouter(router) || !router.dhcp || !router.dhcp.habilitado) {
+            continue;
+          }
+          var chequeo = poolAtiende(estado, router, buscarInterfaz(router, partes.slice(1).join(":")) || {});
+          if (!chequeo.ok || n === null || n < chequeo.rango.desde || n > chequeo.rango.hasta) {
+            continue;
+          }
+          if (!estado.concesiones[router.id]) {
+            estado.concesiones[router.id] = {};
+          }
+          if (!estado.concesiones[router.id][iface.ip]) {
+            estado.concesiones[router.id][iface.ip] = { cliente: dev.id, interfaz: iface.id, mac: iface.mac };
+          }
+          break;
+        }
+      }
+    }
+  }
+
+  // Avisos de configuración de un servidor DHCP, para mostrarlos en su panel
+  // antes de que algún cliente pida: el rango tiene que caer en la red de
+  // alguna de sus interfaces, y lo que entrega tiene que tener sentido.
+  function avisosServidorDhcp(estado, idRouter) {
+    var router = buscarDispositivo(estado, idRouter);
+    if (!router || !router.dhcp || !router.dhcp.habilitado) {
+      return [];
+    }
+    for (var i = 0; i < router.interfaces.length; i++) {
+      var chequeo = poolAtiende(estado, router, router.interfaces[i]);
+      if (chequeo.ok) {
+        return avisosPool(estado, router, router.interfaces[i]);
+      }
+      if (!rangoDhcp(router.dhcp)) {
+        return [chequeo.motivo];
+      }
+    }
+    return [nombreDe(estado, idRouter) + " tiene el servidor DHCP habilitado, pero su rango (" + router.dhcp.desde +
+      " – " + router.dhcp.hasta + ") no pertenece a la red de ninguna de sus interfaces: no va a responder a nadie."];
   }
 
   /* ---------------- Tablas ---------------- */
@@ -2814,6 +3026,86 @@ var Motor = (function () {
       comparar("DHCP cuatro mensajes",
         res.mensajes.map(function (m) { return m.tipo; }),
         ["discover", "offer", "request", "ack"]);
+      comparar("DHCP servidor elegido", res.servidor, "r1");
+      comparar("DHCP sin avisos", res.avisos, []);
+    })();
+
+    // 20b. DHCP sobre los cables: la difusión se queda en el segmento y el
+    // OFFER recorre router → switch → PC. La concesión sobrevive a
+    // reconstruir el estado y una renovación conserva la dirección.
+    (function () {
+      var r = fabRouter("r1", [{ id: "g0/0", ip: "192.168.1.1", prefijo: 24 }, { id: "g0/1", ip: "10.0.0.1", prefijo: 30 }], [], {
+        dhcp: { habilitado: true, desde: "192.168.1.50", hasta: "192.168.1.60", prefijo: 24, gateway: "192.168.1.1" }
+      });
+      var r2 = fabRouter("r2", [{ id: "g0/0", ip: "10.0.0.2", prefijo: 30 }], []);
+      var c1 = fabPc("c1", null, 24, null, { modo: "dhcp" });
+      var c2 = fabPc("c2", "192.168.1.50", 24, "192.168.1.1");
+      var sw = fabSwitch("sw1");
+      var topo = fabTopo([r, r2, c1, c2, sw],
+        [fabEnlace("l1", "r1", "g0/0", "sw1", "fa0/1"),
+         fabEnlace("l2", "c1", "eth0", "sw1", "fa0/2"),
+         fabEnlace("l3", "c2", "eth0", "sw1", "fa0/3"),
+         fabEnlace("l9", "r1", "g0/1", "r2", "g0/0")]);
+      var est = crearEstado(topo);
+      var res = dhcpSolicitar(est, "c1", "eth0");
+      var porTipo = {};
+      res.mensajes.forEach(function (m) { porTipo[m.tipo] = m; });
+      comparar("DHCP salta la IP estática ocupada", res.ip, "192.168.1.51");
+      comparar("DHCP discover es difusión", porTipo.discover.difusion, true);
+      comparar("DHCP discover inunda el segmento", porTipo.discover.inundados.slice().sort(), ["l1", "l2", "l3"]);
+      comparar("DHCP offer sigue los cables", porTipo.offer.enlaces, ["l1", "l2"]);
+      comparar("DHCP offer lleva la IP", porTipo.offer.ip, "192.168.1.51");
+      comparar("DHCP request en difusión nombra al servidor",
+        [porTipo.request.destino, porTipo.request.servidor, porTipo.request.enlaces], ["broadcast", "r1", ["l2", "l1"]]);
+      comparar("DHCP concesión registrada", est.concesiones.r1["192.168.1.51"].cliente, "c1");
+      var est2 = crearEstado(est.topologia);
+      comparar("DHCP concesión reconstruida", est2.concesiones.r1 && est2.concesiones.r1["192.168.1.51"] &&
+        est2.concesiones.r1["192.168.1.51"].cliente, "c1");
+      var otra = dhcpSolicitar(est2, "c1", "eth0");
+      comparar("DHCP renovación conserva la IP", otra.ip, "192.168.1.51");
+      est2.topologia.dispositivos.forEach(function (d) {
+        if (d.id === "c1") { d.interfaces[0].modo = "estatico"; }
+      });
+      comparar("DHCP estática libera la concesión", Object.keys(crearEstado(est2.topologia).concesiones.r1 || {}), []);
+    })();
+
+    // 20c. Rango de otra red: el router no responde y el D16 dice por qué.
+    // Gateway fuera de la red del rango: se entrega igual, con aviso.
+    (function () {
+      function armar(dhcp) {
+        var r = fabRouter("r1", [{ id: "g0/0", ip: "192.168.1.1", prefijo: 24 }], [], { dhcp: dhcp });
+        var c1 = fabPc("c1", null, 24, null, { modo: "dhcp" });
+        return crearEstado(fabTopo([r, c1], [fabEnlace("l1", "r1", "g0/0", "c1", "eth0")]));
+      }
+      var est = armar({ habilitado: true, desde: "192.168.2.10", hasta: "192.168.2.20", prefijo: 24, gateway: "192.168.2.1" });
+      var res = dhcpSolicitar(est, "c1", "eth0");
+      comparar("DHCP rango ajeno D16", res.diagnostico && res.diagnostico.codigo, "D16");
+      comparar("DHCP rango ajeno explica", /no pertenece a la red/.test(res.diagnostico.explicacion), true);
+      comparar("DHCP rango ajeno sólo discover", res.mensajes.map(function (m) { return m.tipo; }), ["discover"]);
+      comparar("DHCP rango ajeno aviso del servidor", avisosServidorDhcp(est, "r1").length > 0, true);
+      var est2 = armar({ habilitado: true, desde: "192.168.1.10", hasta: "192.168.1.20", prefijo: 24, gateway: "192.168.5.1" });
+      var res2 = dhcpSolicitar(est2, "c1", "eth0");
+      comparar("DHCP gateway ajeno igual entrega", res2.exito, true);
+      comparar("DHCP gateway ajeno avisa", /no está en la red/.test((res2.avisos || []).join(" ")), true);
+    })();
+
+    // 20d. Dos servidores en el mismo segmento: dos OFFER, el cliente acepta
+    // el primero y el ACK viene sólo de ése.
+    (function () {
+      var dhcpA = { habilitado: true, desde: "192.168.1.50", hasta: "192.168.1.60", prefijo: 24, gateway: "192.168.1.1" };
+      var dhcpB = { habilitado: true, desde: "192.168.1.100", hasta: "192.168.1.110", prefijo: 24, gateway: "192.168.1.2" };
+      var ra = fabRouter("ra", [{ id: "g0/0", ip: "192.168.1.1", prefijo: 24 }], [], { dhcp: dhcpA });
+      var rb = fabRouter("rb", [{ id: "g0/0", ip: "192.168.1.2", prefijo: 24 }], [], { dhcp: dhcpB });
+      var c1 = fabPc("c1", null, 24, null, { modo: "dhcp" });
+      var sw = fabSwitch("sw1");
+      var est = crearEstado(fabTopo([c1, sw, ra, rb],
+        [fabEnlace("l1", "c1", "eth0", "sw1", "fa0/1"),
+         fabEnlace("l2", "ra", "g0/0", "sw1", "fa0/2"),
+         fabEnlace("l3", "rb", "g0/0", "sw1", "fa0/3")]));
+      var res = dhcpSolicitar(est, "c1", "eth0");
+      comparar("DHCP dos ofertas", res.mensajes.map(function (m) { return m.tipo + ":" + m.origen; }),
+        ["discover:c1", "offer:ra", "offer:rb", "request:c1", "ack:ra"]);
+      comparar("DHCP acepta la primera", [res.servidor, res.ip, res.gateway], ["ra", "192.168.1.50", "192.168.1.1"]);
     })();
 
     // 21. advertenciasDe detecta D06 y se apaga en modo docente.
@@ -3175,6 +3467,7 @@ var Motor = (function () {
     diagnosticar: diagnosticar,
     advertenciasDe: advertenciasDe,
     dhcpSolicitar: dhcpSolicitar,
+    avisosDhcp: avisosServidorDhcp,
     rutaElegida: rutaElegida,
     tablaArp: tablaArp,
     tablaMac: tablaMac,

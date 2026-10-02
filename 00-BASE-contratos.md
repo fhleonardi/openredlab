@@ -195,8 +195,13 @@ Motor.ping(estado, idOrigen, destinoIp)
 Motor.diagnosticar(estado, idOrigen, destinoIp)  // mismo objeto diagnostico, sin animar
 Motor.advertenciasDe(estado, idDispositivo)      // -> [{ codigo, titulo, explicacion, sugerencia }]
 Motor.dhcpSolicitar(estado, idDispositivo, idInterfaz)
-// -> { exito, mensajes: [{ tipo:"discover"|"offer"|"request"|"ack", origen, destino }],
-//      ip, prefijo, gateway, diagnostico|null }
+// -> { exito, mensajes: [{ tipo:"discover"|"offer"|"request"|"ack", origen, destino ("broadcast" en
+//        discover y request), difusion, ip?, servidor? (sólo request), enlaces: [idsEnlace del camino
+//        origen→destino], inundados: [idsEnlace que recorre la difusión] }],
+//      ip, prefijo, gateway, servidor|null, avisos: [texto], diagnostico|null }
+//    Un OFFER por cada router del segmento cuyo rango cae en la red de la interfaz que recibió el
+//    DISCOVER; el cliente acepta el primero. Renovar conserva la IP si sigue libre.
+Motor.avisosDhcp(estado, idRouter)               // -> [texto]: rango ajeno a sus redes, gateway fuera de la red, prefijo distinto
 Motor.rutaElegida(estado, idRouter, destinoIp)   // -> ruta ganadora por prefijo más largo | null
 Motor.tablaArp(estado, idDispositivo)            // -> [{ ip, mac, vence }]
 Motor.tablaMac(estado, idSwitch)                 // -> [{ mac, puerto, vence }]
@@ -240,7 +245,8 @@ UI.registrar(codigo, texto)        // agrega una línea al registro de eventos
 ### Capa 5 — `Autotest`
 
 ```js
-Autotest.correr()   // -> { total, pasadas, resultados: [{ n, criterio, pasa, detalle }] }
+Autotest.correr(opciones?)   // -> { tecnico, total, pasadas, resultados: [{ n, criterio, pasa, detalle }] }
+                             //    sin opciones: criterios de redes; { tecnico: true }: todo, con capas 1–3
 ```
 
 ---
@@ -266,7 +272,7 @@ Lo implementa la capa 2 en `Motor.CATALOGO` y lo usan todas las demás. Cada ent
 | D13 | Destino apagado o con la interfaz deshabilitada (sólo cuando existe un equipo con esa IP) |
 | D14 | Máscaras distintas en el mismo segmento |
 | D15 | Mismo switch, subredes distintas: un switch no enruta |
-| D16 | DHCP sin servidor o sin direcciones libres |
+| D16 | DHCP sin servidor, con el rango fuera de la red de la interfaz, o sin direcciones libres |
 | D17 | Fuera del alcance del enlace inalámbrico |
 | D18 | Modos inalámbricos incompatibles (por ejemplo, cliente contra cliente) |
 | D19 | Punto de acceso apagado o con la interfaz inalámbrica caída |

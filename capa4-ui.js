@@ -56,7 +56,8 @@ var UI = (function () {
     abajo: null,
     ultimo: null,
     ultimaVerif: null,
-    ultimoAutotest: null,
+    dhcpSel: null,
+    ultimoDhcp: null,
     panelRes: "ping",
     verTodos: false,
     consolaAbierta: false,
@@ -1967,8 +1968,9 @@ var UI = (function () {
     selModo.innerHTML = "<option value='estatico'>estática</option><option value='dhcp'>DHCP</option>";
     selModo.value = editada.modo || "estatico";
     selModo.addEventListener("change", function () {
+      // Pedir por DHCP ya guarda el historial y vuelve a dibujar todo.
+      if (selModo.value === "dhcp") { solicitarDhcp(d.id, editada.id); return; }
       empujarHistorial(); editada.modo = selModo.value;
-      if (selModo.value === "dhcp") { solicitarDhcp(d.id, editada.id); }
       reconstruirEstado(); renderTodo();
     });
     c.appendChild(etiqueta("Modo", selModo)); c.appendChild(selModo);
@@ -2178,9 +2180,16 @@ var UI = (function () {
       var n = parseInt(v, 10);
       if (!isNaN(n) && n >= 0 && n <= 32) { cfg.prefijo = n; d.dhcp = cfg; reconstruirEstado(); }
     });
+    if (S.estado) {
+      Motor.avisosDhcp(S.estado, d.id).forEach(function (a) {
+        c.appendChild(el("div", "advertencia", escapar(a)));
+      });
+    }
     var conc = (S.estado && S.estado.concesiones && S.estado.concesiones[d.id]) || {};
     var claves = Object.keys(conc);
-    c.appendChild(el("p", "", "<b>Concesiones otorgadas:</b> " + (claves.length ? escapar(claves.join(", ")) : "ninguna")));
+    c.appendChild(el("p", "", "<b>Concesiones otorgadas:</b> " + (claves.length
+      ? claves.map(function (ip) { return escapar(ip + " → " + nombreDe(conc[ip].cliente)); }).join(", ")
+      : "ninguna")));
   }
 
   function panelEstado(c, d) {
@@ -2364,13 +2373,12 @@ var UI = (function () {
     var bVer = boton("Verificar");
     bVer.disabled = !(esc && esc.objetivos && esc.objetivos.length);
     if (bVer.disabled) { bVer.title = "Esta red no tiene objetivos para verificar"; }
-    var hayResultado = !!(S.ultimo || S.ultimaVerif || S.ultimoAutotest);
+    var hayResultado = !!(S.ultimo || S.ultimaVerif);
     var bCopiar = boton("Copiar registro");
     var bExp = boton("Exportar registro");
     bCopiar.disabled = !hayResultado;
     bExp.disabled = !hayResultado;
-    var bAuto = boton("Autotest");
-    [bVer, bCopiar, bExp, bAuto].forEach(function (b) { ctrl.appendChild(b); });
+    [bVer, bCopiar, bExp].forEach(function (b) { ctrl.appendChild(b); });
     c.appendChild(ctrl);
     c.appendChild(renderResultado());
 
@@ -2412,20 +2420,6 @@ var UI = (function () {
       } catch (e) { registrar("registro", "No se pudo exportar el registro."); }
     });
     bVer.addEventListener("click", verificarActual);
-    bAuto.addEventListener("click", function () {
-      var r1 = Red.autopruebas(), r2 = Motor.autopruebas(), r3 = Escenarios.autopruebas();
-      var fallos = r1.fallos.concat(r2.fallos).concat(r3.fallos);
-      S.ultimoAutotest = {
-        total: r1.total + r2.total + r3.total,
-        pasadas: r1.pasadas + r2.pasadas + r3.pasadas,
-        fallos: fallos
-      };
-      consolaAgregar("Autotest: " + S.ultimoAutotest.pasadas + "/" + S.ultimoAutotest.total + " pruebas pasadas.", fallos.length > 0);
-      fallos.slice(0, 10).forEach(function (f) { consolaAgregar("- " + f.nombre, true); });
-      S.panelRes = "autotest";
-      renderInferior();
-      anunciar("Autotest: " + S.ultimoAutotest.pasadas + " de " + S.ultimoAutotest.total + " pruebas pasadas.");
-    });
     if (S.enfocarPing) {
       S.enfocarPing = false;
       try { bPing.focus(); } catch (e) { /* sin foco: se sigue igual */ }
@@ -2447,7 +2441,6 @@ var UI = (function () {
   function renderResultado() {
     var cont = el("div", "simres");
     if (S.panelRes === "verificacion" && S.ultimaVerif) { return renderVerificacion(cont); }
-    if (S.panelRes === "autotest" && S.ultimoAutotest) { return renderAutotest(cont); }
     if (!S.ultimo) {
       cont.appendChild(el("div", "vacio",
         "<b>Elegí un origen y un destino, y apretá Ping</b>" +
@@ -2587,27 +2580,6 @@ var UI = (function () {
       });
     }
     caja.insertBefore(cab, caja.firstChild);
-    caja.appendChild(lista);
-    cont.appendChild(caja);
-    var lado = el("div", "lado");
-    lado.appendChild(renderConsola());
-    cont.appendChild(lado);
-    return cont;
-  }
-
-  function renderAutotest(cont) {
-    var a = S.ultimoAutotest;
-    var caja = el("div", "recorrido");
-    var cab = el("div", "cab", "<span>Autotest de las capas 1 a 3</span>");
-    cab.appendChild(el("span", a.fallos.length ? "mal" : "ok", a.pasadas + " de " + a.total + " pruebas pasadas"));
-    caja.appendChild(cab);
-    var lista = el("div", "pasos");
-    if (!a.fallos.length) {
-      lista.appendChild(el("div", "linpaso", "<span class='marca' aria-hidden='true'>✓</span>Todas las pruebas pasaron."));
-    }
-    a.fallos.forEach(function (f) {
-      lista.appendChild(el("div", "pasofallo", "<span class='marca' aria-hidden='true'>✗</span>" + escapar(f.nombre)));
-    });
     caja.appendChild(lista);
     cont.appendChild(caja);
     var lado = el("div", "lado");
@@ -2781,28 +2753,47 @@ var UI = (function () {
     caja.innerHTML = html;
   }
 
+  // Sólo los hosts piden dirección: routers, switches, AP y la nube no.
+  function esClienteDhcp(d) {
+    return !!d && ["router", "switch-l2", "ap", "internet"].indexOf(d.tipo) < 0;
+  }
+
   function panelDhcpInf(c) {
     c.innerHTML = "";
-    c.appendChild(el("p", "", "<b>DHCP</b> <span style='font-size:12px'>— la animación DORA ocurre sobre la topología del lienzo.</span>"));
+    c.appendChild(el("p", "", "<b>DHCP</b> <span style='font-size:12px'>— la animación DORA recorre los cables del lienzo.</span>"));
+    var clientes = (S.topologia.dispositivos || []).filter(esClienteDhcp);
+    if (!clientes.length) {
+      c.appendChild(el("p", "", "Agregá una PC (u otro equipo final) para pedir una dirección por DHCP."));
+      return;
+    }
+    var sel = S.dhcpSel || {};
+    var inicial = buscarDisp(sel.equipo) || buscarDisp(S.seleccionado);
+    if (!esClienteDhcp(inicial)) { inicial = clientes[0]; }
     var selC = document.createElement("select");
-    (S.topologia.dispositivos || []).forEach(function (d) {
+    clientes.forEach(function (d) {
       var op = document.createElement("option");
       op.value = d.id; op.textContent = (d.nombre || d.id);
       selC.appendChild(op);
     });
-    if (S.seleccionado) { selC.value = S.seleccionado; }
+    selC.value = inicial.id;
     var selI = document.createElement("select");
-    function cargarIfaces() {
+    function cargarIfaces(preferida) {
       selI.innerHTML = "";
       var d = buscarDisp(selC.value);
-      ((d && d.interfaces) || []).forEach(function (f) {
+      var lista = (d && d.interfaces) || [];
+      lista.forEach(function (f) {
         var op = document.createElement("option");
-        op.value = f.id; op.textContent = f.id;
+        op.value = f.id; op.textContent = f.id + (enlaceEnPuerto(d.id, f.id) ? "" : " (sin cable)");
         selI.appendChild(op);
       });
+      var conCable = lista.filter(function (f) { return enlaceEnPuerto(d.id, f.id); })[0];
+      if (preferida && buscarIface(d, preferida)) { selI.value = preferida; }
+      else if (conCable) { selI.value = conCable.id; }
     }
-    cargarIfaces();
-    selC.addEventListener("change", cargarIfaces);
+    cargarIfaces(sel.equipo === inicial.id ? sel.interfaz : null);
+    function recordar() { S.dhcpSel = { equipo: selC.value, interfaz: selI.value }; }
+    selC.addEventListener("change", function () { cargarIfaces(null); recordar(); });
+    selI.addEventListener("change", recordar);
     var b = boton("Solicitar dirección (DORA)", "primario");
     var out = el("div", "");
     out.setAttribute("aria-live", "polite");
@@ -2811,25 +2802,81 @@ var UI = (function () {
     fila.appendChild(etiqueta("Interfaz", selI)); fila.appendChild(selI);
     fila.appendChild(b);
     c.appendChild(fila); c.appendChild(out);
+    // El resultado vive en S.ultimoDhcp: renderTodo() rehace este panel y lo
+    // vuelve a mostrar.
+    var u = S.ultimoDhcp;
+    if (u && u.equipo === selC.value && u.interfaz === selI.value) {
+      out.innerHTML = htmlResultadoDhcp(u.res, u.equipo);
+    }
     b.addEventListener("click", function () {
-      if (!S.estado) { reconstruirEstado(); }
-      var res;
-      try { res = Motor.dhcpSolicitar(S.estado, selC.value, selI.value); }
-      catch (e) { out.textContent = "Error: " + e.message; return; }
-      S.topologia = clonar(S.estado.topologia);
-      reconstruirEstado();
-      var orden = { discover: 0, offer: 1, request: 2, ack: 3 };
-      var msgs = (res.mensajes || []).slice().sort(function (a, b2) { return (orden[a.tipo] || 0) - (orden[b2.tipo] || 0); });
-      out.innerHTML = msgs.map(function (m) {
-        return "<div class='paso ok'><b>" + escapar(m.tipo) + "</b> " + escapar(m.origen) + " → " + escapar(m.destino) + "</div>";
-      }).join("") + (res.exito
-        ? "<p>Dirección otorgada: <b>" + escapar(res.ip + "/" + res.prefijo) + "</b>, puerta de enlace " + escapar(res.gateway || "—") + ".</p>"
-        : "<div class='diagnostico'><span class='tit'>" + escapar(res.diagnostico ? res.diagnostico.titulo : "") + "</span>" +
-          "<span class='cod'>" + escapar(res.diagnostico ? res.diagnostico.codigo : "D16") + "</span><div>" +
-          escapar(res.diagnostico ? res.diagnostico.explicacion : "") + "</div></div>");
-      renderTodo();
-      animarDhcp(res);
+      recordar();
+      pedirDhcp(selC.value, selI.value);
     });
+  }
+
+  // Pide una dirección, guarda el resultado y anima el DORA. Lo usan el
+  // panel inferior y el selector de modo del panel de propiedades.
+  function pedirDhcp(idDisp, idIf) {
+    if (!S.estado) { reconstruirEstado(); }
+    if (!S.estado) { avisar("La topología tiene errores: no se puede simular DHCP."); return null; }
+    var res;
+    try { res = Motor.dhcpSolicitar(S.estado, idDisp, idIf); }
+    catch (e) { registrar("D16", "DHCP falló: " + e.message); avisar("DHCP falló: " + e.message); return null; }
+    empujarHistorial();
+    S.topologia = clonar(S.estado.topologia);
+    reconstruirEstado();
+    S.dhcpSel = { equipo: idDisp, interfaz: idIf };
+    S.ultimoDhcp = { equipo: idDisp, interfaz: idIf, res: res };
+    renderTodo();
+    avisar(res.exito
+      ? nombreDe(idDisp) + " obtuvo " + res.ip + "/" + res.prefijo + " por DHCP."
+      : nombreDe(idDisp) + " no obtuvo dirección por DHCP" + (res.ip ? " (quedó en " + res.ip + ")" : "") + ".");
+    animarDhcp(res);
+    return res;
+  }
+
+  function textoMensajeDhcp(m, res) {
+    var o = escapar(nombreDe(m.origen));
+    var d = escapar(nombreDe(m.destino));
+    if (m.tipo === "discover") {
+      return "<b>DISCOVER</b> — " + o + " pregunta en difusión a toda su red: ¿hay algún servidor DHCP?";
+    }
+    if (m.tipo === "offer") {
+      var aceptada = res.exito && res.servidor === m.origen;
+      return "<b>OFFER</b> — " + o + " le ofrece <b>" + escapar(m.ip) + "</b> a " + d +
+        " (en difusión: " + d + " todavía no tiene IP)" +
+        (res.mensajes.filter(function (x) { return x.tipo === "offer"; }).length > 1
+          ? (aceptada ? " · <b>aceptada</b>" : " · descartada") : "");
+    }
+    if (m.tipo === "request") {
+      return "<b>REQUEST</b> — " + o + " anuncia en difusión que acepta la oferta de " +
+        escapar(nombreDe(m.servidor)) + " (" + escapar(m.ip) + ")";
+    }
+    if (m.tipo === "ack") {
+      return "<b>ACK</b> — " + o + " confirma: " + escapar(m.ip + "/" + res.prefijo) + " queda concedida a " + d;
+    }
+    return "<b>" + escapar(String(m.tipo).toUpperCase()) + "</b> " + o + " → " + d;
+  }
+
+  function htmlResultadoDhcp(res, idDisp) {
+    var html = (res.mensajes || []).map(function (m) {
+      var descartada = m.tipo === "offer" && res.exito && res.servidor !== m.origen;
+      return "<div class='paso " + (descartada ? "" : "ok") + "'>" + textoMensajeDhcp(m, res) + "</div>";
+    }).join("");
+    if (res.exito) {
+      html += "<p>Dirección otorgada a " + escapar(nombreDe(idDisp)) + ": <b>" + escapar(res.ip + "/" + res.prefijo) +
+        "</b>, puerta de enlace " + escapar(res.gateway || "—") + ".</p>";
+    } else {
+      var dg = res.diagnostico;
+      html += "<div class='diagnostico'><span class='tit'>" + escapar(dg ? dg.titulo : "No se obtuvo una IP por DHCP") + "</span>" +
+        (dg ? "<span class='cod' title='Código del diagnóstico'>" + escapar(dg.codigo) + "</span>" : "") +
+        "<div>" + escapar(dg ? dg.explicacion : "") + "</div>" +
+        (dg && dg.sugerencia ? "<div class='rev'><b>Sugerencia:</b> " + escapar(dg.sugerencia) + "</div>" : "") + "</div>";
+    }
+    (res.avisos || []).forEach(function (a) {
+      html += "<div class='advertencia'>" + escapar(a) + "</div>";
+    });
+    return html;
   }
 
   function panelAyuda(c) {
@@ -2947,64 +2994,136 @@ var UI = (function () {
     registrar("animacion", "Animación del ping sobre " + resultado.saltos.length + " saltos (" + S.velocidad + ", cancelable con Esc o nuevo ping).");
   }
 
+  // Extremos de un enlace en el lienzo, en el sentido desde→hacia: la misma
+  // geometría con la que renderLienzo dibuja el cable.
+  function tramoEnlace(e, idDesde) {
+    var a = buscarDisp(e.a.dispositivo), b = buscarDisp(e.b.dispositivo);
+    if (!a || !b) { return null; }
+    var pa = puntoPuerto(a, e.a.interfaz), pb = puntoPuerto(b, e.b.interfaz);
+    return e.a.dispositivo === idDesde ? { de: pa, a: pb } : { de: pb, a: pa };
+  }
+
+  // Ondas de una trama que inunda: los enlaces se ordenan por distancia (en
+  // saltos) al equipo que la emite, y cada onda avanza un enlace más.
+  function ondasDifusion(idOrigen, idsEnlaces) {
+    var pendientes = idsEnlaces.map(buscarEnlace).filter(Boolean);
+    var alcanzados = {}; alcanzados[idOrigen] = true;
+    var ondas = [];
+    while (pendientes.length) {
+      var onda = [], resto = [];
+      pendientes.forEach(function (e) {
+        if (alcanzados[e.a.dispositivo]) { onda.push({ e: e, desde: e.a.dispositivo }); }
+        else if (alcanzados[e.b.dispositivo]) { onda.push({ e: e, desde: e.b.dispositivo }); }
+        else { resto.push(e); }
+      });
+      if (!onda.length) { break; }
+      onda.forEach(function (x) { alcanzados[x.e.a.dispositivo] = true; alcanzados[x.e.b.dispositivo] = true; });
+      ondas.push(onda.map(function (x) { return tramoEnlace(x.e, x.desde); }).filter(Boolean));
+      pendientes = resto;
+    }
+    return ondas;
+  }
+
+  function etiquetaDhcp(m) {
+    var t = String(m.tipo).toUpperCase();
+    if (m.ip && m.tipo !== "request") { t += " " + m.ip; }
+    return t + (m.difusion ? " (difusión)" : "");
+  }
+
   function animarDhcp(resultado) {
     var miToken = ++S.animToken;
     limpiarAnim();
     var svgNS = "http://www.w3.org/2000/svg";
     var msgs = (resultado && resultado.mensajes) || [];
     if (!msgs.length) { return; }
+    function linea(p, q, color, ancho, punteada) {
+      var l = document.createElementNS(svgNS, "line");
+      l.setAttribute("x1", p.x); l.setAttribute("y1", p.y);
+      l.setAttribute("x2", q.x); l.setAttribute("y2", q.y);
+      l.setAttribute("stroke", color); l.setAttribute("stroke-width", ancho);
+      l.setAttribute("stroke-linecap", "round");
+      if (punteada) { l.setAttribute("stroke-dasharray", "6 5"); l.setAttribute("opacity", "0.7"); }
+      S.capaAnim.appendChild(l);
+    }
+    // Dibujo fijo de un mensaje: la inundación punteada, el camino útil en
+    // trazo firme y el nombre del mensaje sobre quien lo emite.
+    function dibujarFijo(m, color) {
+      var ondas = ondasDifusion(m.origen, (m.inundados && m.inundados.length) ? m.inundados : (m.enlaces || []));
+      ondas.forEach(function (onda) { onda.forEach(function (t) { linea(t.de, t.a, color, 2, true); }); });
+      var actual = m.origen;
+      (m.enlaces || []).forEach(function (id) {
+        var e = buscarEnlace(id);
+        var t = e && tramoEnlace(e, actual);
+        if (!t) { return; }
+        linea(t.de, t.a, color, 4, false);
+        actual = e.a.dispositivo === actual ? e.b.dispositivo : e.a.dispositivo;
+      });
+      var o = buscarDisp(m.origen);
+      if (o) {
+        var tx = document.createElementNS(svgNS, "text");
+        tx.setAttribute("x", o.x + 14); tx.setAttribute("y", o.y - 38);
+        tx.setAttribute("font-size", "14"); tx.setAttribute("font-weight", "700");
+        tx.setAttribute("fill", color); tx.setAttribute("stroke", "#fff");
+        tx.setAttribute("stroke-width", "3"); tx.setAttribute("paint-order", "stroke");
+        tx.textContent = etiquetaDhcp(m);
+        S.capaAnim.appendChild(tx);
+      }
+      return ondas;
+    }
+    function colorDe(m) {
+      if (m.tipo === "offer" && resultado.exito && resultado.servidor !== m.origen) { return "#6b7280"; }
+      // Cliente en azul, servidor en violeta: el verde ya es el de los cables en up.
+      return (m.tipo === "discover" || m.tipo === "request") ? "#0b5fa5" : "#7c3aed";
+    }
+    if (movimientoReducido()) {
+      // Sin animación: queda dibujado el último mensaje con su recorrido.
+      dibujarFijo(msgs[msgs.length - 1], colorDe(msgs[msgs.length - 1]));
+      return;
+    }
     var i = 0;
     function siguiente() {
       if (miToken !== S.animToken) { return; }
       if (i >= msgs.length) { return; }
       limpiarAnim();
       var m = msgs[i];
-      var o = buscarDisp(m.origen);
-      var dt = (m.destino === "broadcast") ? null : buscarDisp(m.destino);
-      if (m.destino === "broadcast" && o) {
-        (S.topologia.dispositivos || []).forEach(function (d) {
-          if (d.id === o.id) { return; }
-          var l = document.createElementNS(svgNS, "line");
-          l.setAttribute("x1", o.x); l.setAttribute("y1", o.y - 30);
-          l.setAttribute("x2", d.x); l.setAttribute("y2", d.y - 30);
-          l.setAttribute("stroke", "#0b5fa5"); l.setAttribute("stroke-width", 2);
-          l.setAttribute("stroke-dasharray", "5 4");
-          S.capaAnim.appendChild(l);
+      var color = colorDe(m);
+      var ondas = dibujarFijo(m, color);
+      registrar("dhcp", "DORA sobre el lienzo: " + etiquetaDhcp(m) + ", " + nombreDe(m.origen) + " → " +
+        (m.destino === "broadcast" ? "toda la red" : nombreDe(m.destino)) + ".");
+      var puntos = [];
+      var dur = msVelocidad();
+      var onda = 0, t0 = null;
+      function cuadro(t) {
+        if (miToken !== S.animToken) { return; }
+        if (t0 === null) { t0 = t; }
+        var avance = (t - t0) / dur;
+        if (avance >= 1) { onda += 1; t0 = t; avance = 0; }
+        puntos.forEach(function (p) { S.capaAnim.removeChild(p); });
+        puntos = [];
+        if (onda >= ondas.length) {
+          i += 1;
+          setTimeout(siguiente, dur);
+          return;
+        }
+        ondas[onda].forEach(function (tr) {
+          var c = document.createElementNS(svgNS, "circle");
+          c.setAttribute("r", 7); c.setAttribute("fill", color);
+          c.setAttribute("stroke", "#fff"); c.setAttribute("stroke-width", 2);
+          c.setAttribute("cx", tr.de.x + (tr.a.x - tr.de.x) * avance);
+          c.setAttribute("cy", tr.de.y + (tr.a.y - tr.de.y) * avance);
+          S.capaAnim.appendChild(c);
+          puntos.push(c);
         });
-        var t = document.createElementNS(svgNS, "text");
-        t.setAttribute("x", o.x + 12); t.setAttribute("y", o.y - 36);
-        t.setAttribute("font-size", "14"); t.textContent = m.tipo + " (difusión: así se ve un broadcast)";
-        S.capaAnim.appendChild(t);
-      } else if (o && dt) {
-        var l2 = document.createElementNS(svgNS, "line");
-        l2.setAttribute("x1", o.x); l2.setAttribute("y1", o.y - 30);
-        l2.setAttribute("x2", dt.x); l2.setAttribute("y2", dt.y - 30);
-        l2.setAttribute("stroke", "#1a7f37"); l2.setAttribute("stroke-width", 3);
-        S.capaAnim.appendChild(l2);
-        var t2 = document.createElementNS(svgNS, "text");
-        t2.setAttribute("x", (o.x + dt.x) / 2 + 8); t2.setAttribute("y", (o.y + dt.y) / 2 - 34);
-        t2.setAttribute("font-size", "14"); t2.textContent = m.tipo;
-        S.capaAnim.appendChild(t2);
+        requestAnimationFrame(cuadro);
       }
-      registrar("dhcp", "DORA sobre el lienzo: " + m.tipo + " " + m.origen + " → " + m.destino + ".");
-      i += 1;
-      setTimeout(siguiente, msVelocidad());
+      requestAnimationFrame(cuadro);
     }
-    // Con movimiento reducido se muestra sólo el último mensaje (el ACK o el
-    // último que se llegó a enviar), sin la secuencia animada.
-    if (movimientoReducido()) { i = msgs.length - 1; }
     siguiente();
   }
 
   function solicitarDhcp(idDisp, idIf) {
-    if (!S.estado) { reconstruirEstado(); }
-    var res;
-    try { res = Motor.dhcpSolicitar(S.estado, idDisp, idIf); }
-    catch (e) { registrar("D16", "DHCP falló: " + e.message); return res; }
-    S.topologia = clonar(S.estado.topologia);
-    reconstruirEstado(); renderTodo();
-    animarDhcp(res);
-    return res;
+    S.pestañaInf = "dhcp";
+    return pedirDhcp(idDisp, idIf);
   }
 
   /* ---------------- Registro, persistencia, importar/exportar ---------------- */

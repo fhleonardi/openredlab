@@ -732,7 +732,9 @@ var Motor = (function () {
       titulo: "No se obtuvo una IP por DHCP",
       explicacion: function (ctx) {
         ctx = ctx || {};
-        return (ctx.servidor
+        return (ctx.motivo
+          ? ctx.motivo
+          : ctx.servidor
           ? "El servidor DHCP de " + ctx.servidor + " no tiene direcciones libres para ofrecer."
           : "Ningún servidor DHCP respondió en la red.") +
           " El equipo se asigna solo una dirección 169.254.x.x (APIPA) y no puede comunicarse con nadie.";
@@ -1175,9 +1177,17 @@ var Motor = (function () {
   // se cruza en up, con medios y modos compatibles y dentro del alcance:
   // cada cliente tiene su propia distancia al AP.
   function segmentoL2(estado, idDispositivo, idInterfaz) {
+    return Object.keys(recorrerSegmento(estado, idDispositivo, idInterfaz));
+  }
+
+  // Mismo recorrido que segmentoL2, pero cada puerto alcanzado recuerda de
+  // qué puerto vino y por qué enlace (null en el salto interno de un
+  // conmutador, de un puerto suyo a otro). Sirve para dibujar la difusión y
+  // para reconstruir el camino de una trama dentro del segmento.
+  function recorrerSegmento(estado, idDispositivo, idInterfaz) {
     var visitados = {};
     var inicio = clavePuerto(idDispositivo, idInterfaz);
-    visitados[inicio] = true;
+    visitados[inicio] = { desde: null, enlace: null };
     var cola = [inicio];
     while (cola.length > 0) {
       var actual = cola.shift();
@@ -1195,7 +1205,7 @@ var Motor = (function () {
         if (visitados[claveOtra]) {
           continue;
         }
-        visitados[claveOtra] = true;
+        visitados[claveOtra] = { desde: actual, enlace: enlace.id };
         var devVecino = buscarDispositivo(estado, otro.dispositivo);
         // Si el vecino es un conmutador encendido, el broadcast inunda todos
         // sus puertos: se agregan los equipos del otro lado de cada puerto.
@@ -1204,7 +1214,7 @@ var Motor = (function () {
             var puerto = devVecino.interfaces[i];
             var clavePuertoSw = clavePuerto(devVecino.id, puerto.id);
             if (!visitados[clavePuertoSw]) {
-              visitados[clavePuertoSw] = true;
+              visitados[clavePuertoSw] = { desde: claveOtra, enlace: null };
               cola.push(clavePuertoSw);
             }
           }
@@ -1213,7 +1223,40 @@ var Motor = (function () {
         }
       }
     }
-    return Object.keys(visitados);
+    return visitados;
+  }
+
+  // Ids de los enlaces que recorre una difusión salida de ese puerto.
+  function enlacesDelSegmento(estado, idDispositivo, idInterfaz) {
+    var visitados = recorrerSegmento(estado, idDispositivo, idInterfaz);
+    var ids = [];
+    var claves = Object.keys(visitados);
+    for (var i = 0; i < claves.length; i++) {
+      var e = visitados[claves[i]].enlace;
+      if (e && ids.indexOf(e) < 0) {
+        ids.push(e);
+      }
+    }
+    return ids;
+  }
+
+  // Ids de los enlaces, en orden, que cruza una trama del puerto A al puerto
+  // B dentro del mismo segmento. Lista vacía si B no se alcanza.
+  function caminoL2(estado, idA, ifA, idB, ifB) {
+    var visitados = recorrerSegmento(estado, idA, ifA);
+    var clave = clavePuerto(idB, ifB);
+    if (!visitados[clave]) {
+      return [];
+    }
+    var camino = [];
+    while (clave) {
+      var paso = visitados[clave];
+      if (paso.enlace) {
+        camino.unshift(paso.enlace);
+      }
+      clave = paso.desde;
+    }
+    return camino;
   }
 
   // Todos los equipos con IP en el mismo segmento que el puerto dado.
@@ -1407,6 +1450,7 @@ var Motor = (function () {
       estado.enlacePorPuerto[claveA].push(enlace);
       estado.enlacePorPuerto[claveB].push(enlace);
     }
+    reconstruirConcesiones(estado);
     return estado;
   }
 
@@ -2754,115 +2798,283 @@ var Motor = (function () {
       };
     }
 
-    // Servidores DHCP alcanzables en el mismo segmento.
-    var candidatos = [];
+    // DISCOVER: difusión por todo el segmento del cliente. Cada router con
+    // DHCP habilitado que la recibe responde sólo si su rango pertenece a la
+    // red de la interfaz por la que le llegó.
+    var inundadosCliente = enlacesDelSegmento(estado, idDispositivo, idInterfaz);
+    var mensajes = [{
+      tipo: "discover", origen: idDispositivo, destino: "broadcast",
+      difusion: true, enlaces: [], inundados: inundadosCliente
+    }];
+    var servidores = [];
+    var vistos = [];
+    var motivos = [];
+    var llenos = [];
     var claves = segmentoL2(estado, idDispositivo, idInterfaz);
     for (var i = 0; i < claves.length; i++) {
       var partes = claves[i].split(":");
       var dev = buscarDispositivo(estado, partes[0]);
-      if (esRouter(dev) && dev.encendido && dev.dhcp && dev.dhcp.habilitado) {
-        if (candidatos.indexOf(dev) < 0) {
-          candidatos.push(dev);
-        }
+      if (!esRouter(dev) || !dev.encendido || !dev.dhcp || !dev.dhcp.habilitado) {
+        continue;
       }
+      if (vistos.indexOf(dev.id) >= 0) {
+        continue;
+      }
+      var ifServidor = buscarInterfaz(dev, partes.slice(1).join(":"));
+      if (!ifServidor || !ifServidor.habilitada) {
+        continue;
+      }
+      vistos.push(dev.id);
+      var chequeo = poolAtiende(estado, dev, ifServidor);
+      if (!chequeo.ok) {
+        motivos.push(chequeo.motivo);
+        continue;
+      }
+      var ipOfrecida = ipLibreEnPool(estado, dev, chequeo.rango, idDispositivo, idInterfaz, iface.ip);
+      if (!ipOfrecida) {
+        llenos.push(nombreDe(estado, dev.id));
+        continue;
+      }
+      servidores.push({ dispositivo: dev, interfaz: ifServidor, ip: ipOfrecida });
     }
-    var mensajes = [{ tipo: "discover", origen: idDispositivo, destino: "broadcast" }];
-    if (candidatos.length === 0) {
+
+    if (servidores.length === 0) {
       var apipa = apipaPara(idDispositivo, idInterfaz);
+      liberarConcesiones(estado, idDispositivo, idInterfaz);
       iface.ip = apipa;
       iface.prefijo = 16;
       iface.modo = "dhcp";
       cliente.gateway = null;
+      var ctx = llenos.length ? { servidor: llenos[0] } : (motivos.length ? { motivo: motivos.join(" ") } : {});
       return {
         exito: false,
         mensajes: mensajes,
         ip: apipa,
         prefijo: 16,
         gateway: null,
-        diagnostico: diagnosticoDe("D16", {})
+        servidor: null,
+        avisos: [],
+        diagnostico: diagnosticoDe("D16", ctx)
       };
     }
-    var servidor = candidatos[0];
-    var cfg = servidor.dhcp;
-    var desdeNum = ipANumeroSeguro(cfg.desde);
-    var hastaNum = ipANumeroSeguro(cfg.hasta);
-    if (desdeNum === null || hastaNum === null || desdeNum > hastaNum ||
-        !prefijoValido(cfg.prefijo)) {
-      var apipaMala = apipaPara(idDispositivo, idInterfaz);
-      iface.ip = apipaMala;
-      iface.prefijo = 16;
-      iface.modo = "dhcp";
-      cliente.gateway = null;
-      return {
-        exito: false,
-        mensajes: mensajes,
-        ip: apipaMala,
-        prefijo: 16,
-        gateway: null,
-        diagnostico: diagnosticoDe("D16", { servidor: servidor.nombre || servidor.id })
-      };
+
+    // OFFER: cada servidor que puede ofrece una dirección. El cliente pidió
+    // las respuestas en difusión (todavía no tiene IP), así que también
+    // inundan el segmento; el camino marcado es el que llega al cliente.
+    for (var s = 0; s < servidores.length; s++) {
+      var srv = servidores[s];
+      mensajes.push({
+        tipo: "offer", origen: srv.dispositivo.id, destino: idDispositivo,
+        difusion: true, ip: srv.ip,
+        enlaces: caminoL2(estado, srv.dispositivo.id, srv.interfaz.id, idDispositivo, idInterfaz),
+        inundados: enlacesDelSegmento(estado, srv.dispositivo.id, srv.interfaz.id)
+      });
     }
-    if (!estado.concesiones[servidor.id]) {
-      estado.concesiones[servidor.id] = {};
+
+    // REQUEST: el cliente acepta la primera oferta y lo anuncia en difusión,
+    // nombrando al servidor elegido para que los demás retiren la suya.
+    var elegido = servidores[0];
+    var cfg = elegido.dispositivo.dhcp;
+    mensajes.push({
+      tipo: "request", origen: idDispositivo, destino: "broadcast",
+      difusion: true, ip: elegido.ip, servidor: elegido.dispositivo.id,
+      enlaces: caminoL2(estado, idDispositivo, idInterfaz, elegido.dispositivo.id, elegido.interfaz.id),
+      inundados: inundadosCliente
+    });
+    // ACK: el servidor elegido confirma la concesión.
+    mensajes.push({
+      tipo: "ack", origen: elegido.dispositivo.id, destino: idDispositivo,
+      difusion: true, ip: elegido.ip,
+      enlaces: caminoL2(estado, elegido.dispositivo.id, elegido.interfaz.id, idDispositivo, idInterfaz),
+      inundados: enlacesDelSegmento(estado, elegido.dispositivo.id, elegido.interfaz.id)
+    });
+
+    liberarConcesiones(estado, idDispositivo, idInterfaz);
+    if (!estado.concesiones[elegido.dispositivo.id]) {
+      estado.concesiones[elegido.dispositivo.id] = {};
     }
-    var concesiones = estado.concesiones[servidor.id];
-    // Marcar como ocupadas las IP estáticas del segmento que caigan en el rango.
-    function ocupada(ipTexto) {
-      if (concesiones[ipTexto]) {
-        var c = concesiones[ipTexto];
-        if (c.cliente === idDispositivo && c.interfaz === idInterfaz) {
-          return false;
-        }
-        return true;
-      }
-      var duenos = configuradosConIp(estado, ipTexto);
-      for (var d = 0; d < duenos.length; d++) {
-        if (duenos[d].dispositivo.id === idDispositivo && duenos[d].interfaz.id === idInterfaz) {
-          continue;
-        }
-        return true;
-      }
-      return false;
-    }
-    var elegida = null;
-    for (var n = desdeNum; n <= hastaNum; n++) {
-      var textoIp = numeroAIpSeguro(n);
-      if (!ocupada(textoIp)) {
-        elegida = textoIp;
-        break;
-      }
-    }
-    if (!elegida) {
-      var apipaLlena = apipaPara(idDispositivo, idInterfaz);
-      iface.ip = apipaLlena;
-      iface.prefijo = 16;
-      iface.modo = "dhcp";
-      cliente.gateway = null;
-      return {
-        exito: false,
-        mensajes: mensajes,
-        ip: apipaLlena,
-        prefijo: 16,
-        gateway: null,
-        diagnostico: diagnosticoDe("D16", { servidor: servidor.nombre || servidor.id })
-      };
-    }
-    mensajes.push({ tipo: "offer", origen: servidor.id, destino: idDispositivo });
-    mensajes.push({ tipo: "request", origen: idDispositivo, destino: servidor.id });
-    mensajes.push({ tipo: "ack", origen: servidor.id, destino: idDispositivo });
-    concesiones[elegida] = { cliente: idDispositivo, interfaz: idInterfaz, mac: iface.mac };
-    iface.ip = elegida;
+    estado.concesiones[elegido.dispositivo.id][elegido.ip] = { cliente: idDispositivo, interfaz: idInterfaz, mac: iface.mac };
+    iface.ip = elegido.ip;
     iface.prefijo = cfg.prefijo;
     iface.modo = "dhcp";
     cliente.gateway = cfg.gateway || null;
     return {
       exito: true,
       mensajes: mensajes,
-      ip: elegida,
+      ip: elegido.ip,
       prefijo: cfg.prefijo,
       gateway: cfg.gateway || null,
+      servidor: elegido.dispositivo.id,
+      avisos: avisosPool(estado, elegido.dispositivo, elegido.interfaz),
       diagnostico: null
     };
+  }
+
+  // Rango de un servidor en números, o null si está mal cargado.
+  function rangoDhcp(cfg) {
+    var desde = ipANumeroSeguro(cfg.desde);
+    var hasta = ipANumeroSeguro(cfg.hasta);
+    if (desde === null || hasta === null || desde > hasta || !prefijoValido(cfg.prefijo)) {
+      return null;
+    }
+    return { desde: desde, hasta: hasta };
+  }
+
+  // Un router atiende DHCP por una interfaz sólo si su rango está bien
+  // cargado y pertenece a la red de esa interfaz.
+  function poolAtiende(estado, router, iface) {
+    var cfg = router.dhcp;
+    var nombre = nombreDe(estado, router.id);
+    var rango = rangoDhcp(cfg);
+    if (!rango) {
+      return {
+        ok: false,
+        motivo: nombre + " tiene el servidor DHCP habilitado, pero su rango (" + valor(cfg.desde, "?") + " – " +
+          valor(cfg.hasta, "?") + " /" + valor(cfg.prefijo, "?") + ") está mal cargado."
+      };
+    }
+    if (!iface.ip || !prefijoValido(iface.prefijo)) {
+      return {
+        ok: false,
+        motivo: nombre + " tiene el servidor DHCP habilitado, pero su interfaz " + iface.id +
+          " no tiene dirección IP: no sabe qué red atiende por ahí."
+      };
+    }
+    if (!Red.mismaRed(cfg.desde, iface.ip, iface.prefijo) || !Red.mismaRed(cfg.hasta, iface.ip, iface.prefijo)) {
+      return {
+        ok: false,
+        motivo: nombre + " tiene el servidor DHCP habilitado, pero su rango (" + cfg.desde + " – " + cfg.hasta +
+          ") no pertenece a la red de su interfaz " + iface.id + " (" + Red.direccionDeRed(iface.ip, iface.prefijo) +
+          "/" + iface.prefijo + "), así que no responde en esta red."
+      };
+    }
+    return { ok: true, rango: rango };
+  }
+
+  // Primera dirección libre del rango. Si el cliente ya tiene una del rango
+  // que nadie más usa (una renovación), se le ofrece la misma.
+  function ipLibreEnPool(estado, router, rango, idCliente, idIfCliente, ipActual) {
+    var concesiones = estado.concesiones[router.id] || {};
+    function ocupada(ipTexto) {
+      var c = concesiones[ipTexto];
+      if (c && !(c.cliente === idCliente && c.interfaz === idIfCliente)) {
+        return true;
+      }
+      var duenos = configuradosConIp(estado, ipTexto);
+      for (var d = 0; d < duenos.length; d++) {
+        if (duenos[d].dispositivo.id === idCliente && duenos[d].interfaz.id === idIfCliente) {
+          continue;
+        }
+        return true;
+      }
+      return false;
+    }
+    var actual = ipActual ? ipANumeroSeguro(ipActual) : null;
+    if (actual !== null && actual >= rango.desde && actual <= rango.hasta && !ocupada(ipActual)) {
+      return ipActual;
+    }
+    for (var n = rango.desde; n <= rango.hasta; n++) {
+      var textoIp = numeroAIpSeguro(n);
+      if (!ocupada(textoIp)) {
+        return textoIp;
+      }
+    }
+    return null;
+  }
+
+  // Un cliente tiene a lo sumo una concesión por interfaz: al pedir de nuevo
+  // se suelta la anterior, sea del servidor que sea.
+  function liberarConcesiones(estado, idCliente, idIfCliente) {
+    var routers = Object.keys(estado.concesiones);
+    for (var r = 0; r < routers.length; r++) {
+      var tabla = estado.concesiones[routers[r]];
+      var ips = Object.keys(tabla);
+      for (var k = 0; k < ips.length; k++) {
+        if (tabla[ips[k]].cliente === idCliente && tabla[ips[k]].interfaz === idIfCliente) {
+          delete tabla[ips[k]];
+        }
+      }
+    }
+  }
+
+  // Lo que un servidor real entregaría igual, pero deja al cliente mal
+  // configurado: se avisa sin cortar el DORA.
+  function avisosPool(estado, router, iface) {
+    var cfg = router.dhcp;
+    var nombre = nombreDe(estado, router.id);
+    var avisos = [];
+    var red = Red.direccionDeRed(cfg.desde, cfg.prefijo) + "/" + cfg.prefijo;
+    if (!cfg.gateway) {
+      avisos.push(nombre + " no entrega puerta de enlace: el equipo sólo podrá hablar dentro de su red.");
+    } else if (!Red.mismaRed(cfg.gateway, cfg.desde, cfg.prefijo)) {
+      avisos.push("La puerta de enlace " + cfg.gateway + " que entrega " + nombre + " no está en la red " + red +
+        ": el equipo no podrá salir de su red.");
+    }
+    if (iface && prefijoValido(iface.prefijo) && iface.prefijo !== cfg.prefijo) {
+      avisos.push(nombre + " entrega el prefijo /" + cfg.prefijo + ", pero la red de su interfaz " + iface.id +
+        " es /" + iface.prefijo + ".");
+    }
+    return avisos;
+  }
+
+  // Las concesiones se deducen de la topología: cada interfaz en modo DHCP
+  // con una dirección que un servidor de su segmento atiende tiene concesión
+  // de ese servidor. Así sobreviven a reconstruir el estado y a exportar.
+  function reconstruirConcesiones(estado) {
+    var ids = Object.keys(estado.porDispositivo);
+    for (var i = 0; i < ids.length; i++) {
+      var dev = estado.porDispositivo[ids[i]];
+      if (esRouter(dev) || esConmutador(dev)) {
+        continue;
+      }
+      for (var j = 0; j < dev.interfaces.length; j++) {
+        var iface = dev.interfaces[j];
+        if (iface.modo !== "dhcp" || !iface.ip || Red.clasificar(iface.ip) === "apipa") {
+          continue;
+        }
+        var n = ipANumeroSeguro(iface.ip);
+        var claves = segmentoL2(estado, dev.id, iface.id);
+        for (var k = 0; k < claves.length; k++) {
+          var partes = claves[k].split(":");
+          var router = buscarDispositivo(estado, partes[0]);
+          if (!esRouter(router) || !router.dhcp || !router.dhcp.habilitado) {
+            continue;
+          }
+          var chequeo = poolAtiende(estado, router, buscarInterfaz(router, partes.slice(1).join(":")) || {});
+          if (!chequeo.ok || n === null || n < chequeo.rango.desde || n > chequeo.rango.hasta) {
+            continue;
+          }
+          if (!estado.concesiones[router.id]) {
+            estado.concesiones[router.id] = {};
+          }
+          if (!estado.concesiones[router.id][iface.ip]) {
+            estado.concesiones[router.id][iface.ip] = { cliente: dev.id, interfaz: iface.id, mac: iface.mac };
+          }
+          break;
+        }
+      }
+    }
+  }
+
+  // Avisos de configuración de un servidor DHCP, para mostrarlos en su panel
+  // antes de que algún cliente pida: el rango tiene que caer en la red de
+  // alguna de sus interfaces, y lo que entrega tiene que tener sentido.
+  function avisosServidorDhcp(estado, idRouter) {
+    var router = buscarDispositivo(estado, idRouter);
+    if (!router || !router.dhcp || !router.dhcp.habilitado) {
+      return [];
+    }
+    for (var i = 0; i < router.interfaces.length; i++) {
+      var chequeo = poolAtiende(estado, router, router.interfaces[i]);
+      if (chequeo.ok) {
+        return avisosPool(estado, router, router.interfaces[i]);
+      }
+      if (!rangoDhcp(router.dhcp)) {
+        return [chequeo.motivo];
+      }
+    }
+    return [nombreDe(estado, idRouter) + " tiene el servidor DHCP habilitado, pero su rango (" + router.dhcp.desde +
+      " – " + router.dhcp.hasta + ") no pertenece a la red de ninguna de sus interfaces: no va a responder a nadie."];
   }
 
   /* ---------------- Tablas ---------------- */
@@ -3336,6 +3548,86 @@ var Motor = (function () {
       comparar("DHCP cuatro mensajes",
         res.mensajes.map(function (m) { return m.tipo; }),
         ["discover", "offer", "request", "ack"]);
+      comparar("DHCP servidor elegido", res.servidor, "r1");
+      comparar("DHCP sin avisos", res.avisos, []);
+    })();
+
+    // 20b. DHCP sobre los cables: la difusión se queda en el segmento y el
+    // OFFER recorre router → switch → PC. La concesión sobrevive a
+    // reconstruir el estado y una renovación conserva la dirección.
+    (function () {
+      var r = fabRouter("r1", [{ id: "g0/0", ip: "192.168.1.1", prefijo: 24 }, { id: "g0/1", ip: "10.0.0.1", prefijo: 30 }], [], {
+        dhcp: { habilitado: true, desde: "192.168.1.50", hasta: "192.168.1.60", prefijo: 24, gateway: "192.168.1.1" }
+      });
+      var r2 = fabRouter("r2", [{ id: "g0/0", ip: "10.0.0.2", prefijo: 30 }], []);
+      var c1 = fabPc("c1", null, 24, null, { modo: "dhcp" });
+      var c2 = fabPc("c2", "192.168.1.50", 24, "192.168.1.1");
+      var sw = fabSwitch("sw1");
+      var topo = fabTopo([r, r2, c1, c2, sw],
+        [fabEnlace("l1", "r1", "g0/0", "sw1", "fa0/1"),
+         fabEnlace("l2", "c1", "eth0", "sw1", "fa0/2"),
+         fabEnlace("l3", "c2", "eth0", "sw1", "fa0/3"),
+         fabEnlace("l9", "r1", "g0/1", "r2", "g0/0")]);
+      var est = crearEstado(topo);
+      var res = dhcpSolicitar(est, "c1", "eth0");
+      var porTipo = {};
+      res.mensajes.forEach(function (m) { porTipo[m.tipo] = m; });
+      comparar("DHCP salta la IP estática ocupada", res.ip, "192.168.1.51");
+      comparar("DHCP discover es difusión", porTipo.discover.difusion, true);
+      comparar("DHCP discover inunda el segmento", porTipo.discover.inundados.slice().sort(), ["l1", "l2", "l3"]);
+      comparar("DHCP offer sigue los cables", porTipo.offer.enlaces, ["l1", "l2"]);
+      comparar("DHCP offer lleva la IP", porTipo.offer.ip, "192.168.1.51");
+      comparar("DHCP request en difusión nombra al servidor",
+        [porTipo.request.destino, porTipo.request.servidor, porTipo.request.enlaces], ["broadcast", "r1", ["l2", "l1"]]);
+      comparar("DHCP concesión registrada", est.concesiones.r1["192.168.1.51"].cliente, "c1");
+      var est2 = crearEstado(est.topologia);
+      comparar("DHCP concesión reconstruida", est2.concesiones.r1 && est2.concesiones.r1["192.168.1.51"] &&
+        est2.concesiones.r1["192.168.1.51"].cliente, "c1");
+      var otra = dhcpSolicitar(est2, "c1", "eth0");
+      comparar("DHCP renovación conserva la IP", otra.ip, "192.168.1.51");
+      est2.topologia.dispositivos.forEach(function (d) {
+        if (d.id === "c1") { d.interfaces[0].modo = "estatico"; }
+      });
+      comparar("DHCP estática libera la concesión", Object.keys(crearEstado(est2.topologia).concesiones.r1 || {}), []);
+    })();
+
+    // 20c. Rango de otra red: el router no responde y el D16 dice por qué.
+    // Gateway fuera de la red del rango: se entrega igual, con aviso.
+    (function () {
+      function armar(dhcp) {
+        var r = fabRouter("r1", [{ id: "g0/0", ip: "192.168.1.1", prefijo: 24 }], [], { dhcp: dhcp });
+        var c1 = fabPc("c1", null, 24, null, { modo: "dhcp" });
+        return crearEstado(fabTopo([r, c1], [fabEnlace("l1", "r1", "g0/0", "c1", "eth0")]));
+      }
+      var est = armar({ habilitado: true, desde: "192.168.2.10", hasta: "192.168.2.20", prefijo: 24, gateway: "192.168.2.1" });
+      var res = dhcpSolicitar(est, "c1", "eth0");
+      comparar("DHCP rango ajeno D16", res.diagnostico && res.diagnostico.codigo, "D16");
+      comparar("DHCP rango ajeno explica", /no pertenece a la red/.test(res.diagnostico.explicacion), true);
+      comparar("DHCP rango ajeno sólo discover", res.mensajes.map(function (m) { return m.tipo; }), ["discover"]);
+      comparar("DHCP rango ajeno aviso del servidor", avisosServidorDhcp(est, "r1").length > 0, true);
+      var est2 = armar({ habilitado: true, desde: "192.168.1.10", hasta: "192.168.1.20", prefijo: 24, gateway: "192.168.5.1" });
+      var res2 = dhcpSolicitar(est2, "c1", "eth0");
+      comparar("DHCP gateway ajeno igual entrega", res2.exito, true);
+      comparar("DHCP gateway ajeno avisa", /no está en la red/.test((res2.avisos || []).join(" ")), true);
+    })();
+
+    // 20d. Dos servidores en el mismo segmento: dos OFFER, el cliente acepta
+    // el primero y el ACK viene sólo de ése.
+    (function () {
+      var dhcpA = { habilitado: true, desde: "192.168.1.50", hasta: "192.168.1.60", prefijo: 24, gateway: "192.168.1.1" };
+      var dhcpB = { habilitado: true, desde: "192.168.1.100", hasta: "192.168.1.110", prefijo: 24, gateway: "192.168.1.2" };
+      var ra = fabRouter("ra", [{ id: "g0/0", ip: "192.168.1.1", prefijo: 24 }], [], { dhcp: dhcpA });
+      var rb = fabRouter("rb", [{ id: "g0/0", ip: "192.168.1.2", prefijo: 24 }], [], { dhcp: dhcpB });
+      var c1 = fabPc("c1", null, 24, null, { modo: "dhcp" });
+      var sw = fabSwitch("sw1");
+      var est = crearEstado(fabTopo([c1, sw, ra, rb],
+        [fabEnlace("l1", "c1", "eth0", "sw1", "fa0/1"),
+         fabEnlace("l2", "ra", "g0/0", "sw1", "fa0/2"),
+         fabEnlace("l3", "rb", "g0/0", "sw1", "fa0/3")]));
+      var res = dhcpSolicitar(est, "c1", "eth0");
+      comparar("DHCP dos ofertas", res.mensajes.map(function (m) { return m.tipo + ":" + m.origen; }),
+        ["discover:c1", "offer:ra", "offer:rb", "request:c1", "ack:ra"]);
+      comparar("DHCP acepta la primera", [res.servidor, res.ip, res.gateway], ["ra", "192.168.1.50", "192.168.1.1"]);
     })();
 
     // 21. advertenciasDe detecta D06 y se apaga en modo docente.
@@ -3697,6 +3989,7 @@ var Motor = (function () {
     diagnosticar: diagnosticar,
     advertenciasDe: advertenciasDe,
     dhcpSolicitar: dhcpSolicitar,
+    avisosDhcp: avisosServidorDhcp,
     rutaElegida: rutaElegida,
     tablaArp: tablaArp,
     tablaMac: tablaMac,
@@ -5632,7 +5925,8 @@ var UI = (function () {
     abajo: null,
     ultimo: null,
     ultimaVerif: null,
-    ultimoAutotest: null,
+    dhcpSel: null,
+    ultimoDhcp: null,
     panelRes: "ping",
     verTodos: false,
     consolaAbierta: false,
@@ -7543,8 +7837,9 @@ var UI = (function () {
     selModo.innerHTML = "<option value='estatico'>estática</option><option value='dhcp'>DHCP</option>";
     selModo.value = editada.modo || "estatico";
     selModo.addEventListener("change", function () {
+      // Pedir por DHCP ya guarda el historial y vuelve a dibujar todo.
+      if (selModo.value === "dhcp") { solicitarDhcp(d.id, editada.id); return; }
       empujarHistorial(); editada.modo = selModo.value;
-      if (selModo.value === "dhcp") { solicitarDhcp(d.id, editada.id); }
       reconstruirEstado(); renderTodo();
     });
     c.appendChild(etiqueta("Modo", selModo)); c.appendChild(selModo);
@@ -7754,9 +8049,16 @@ var UI = (function () {
       var n = parseInt(v, 10);
       if (!isNaN(n) && n >= 0 && n <= 32) { cfg.prefijo = n; d.dhcp = cfg; reconstruirEstado(); }
     });
+    if (S.estado) {
+      Motor.avisosDhcp(S.estado, d.id).forEach(function (a) {
+        c.appendChild(el("div", "advertencia", escapar(a)));
+      });
+    }
     var conc = (S.estado && S.estado.concesiones && S.estado.concesiones[d.id]) || {};
     var claves = Object.keys(conc);
-    c.appendChild(el("p", "", "<b>Concesiones otorgadas:</b> " + (claves.length ? escapar(claves.join(", ")) : "ninguna")));
+    c.appendChild(el("p", "", "<b>Concesiones otorgadas:</b> " + (claves.length
+      ? claves.map(function (ip) { return escapar(ip + " → " + nombreDe(conc[ip].cliente)); }).join(", ")
+      : "ninguna")));
   }
 
   function panelEstado(c, d) {
@@ -7940,13 +8242,12 @@ var UI = (function () {
     var bVer = boton("Verificar");
     bVer.disabled = !(esc && esc.objetivos && esc.objetivos.length);
     if (bVer.disabled) { bVer.title = "Esta red no tiene objetivos para verificar"; }
-    var hayResultado = !!(S.ultimo || S.ultimaVerif || S.ultimoAutotest);
+    var hayResultado = !!(S.ultimo || S.ultimaVerif);
     var bCopiar = boton("Copiar registro");
     var bExp = boton("Exportar registro");
     bCopiar.disabled = !hayResultado;
     bExp.disabled = !hayResultado;
-    var bAuto = boton("Autotest");
-    [bVer, bCopiar, bExp, bAuto].forEach(function (b) { ctrl.appendChild(b); });
+    [bVer, bCopiar, bExp].forEach(function (b) { ctrl.appendChild(b); });
     c.appendChild(ctrl);
     c.appendChild(renderResultado());
 
@@ -7988,20 +8289,6 @@ var UI = (function () {
       } catch (e) { registrar("registro", "No se pudo exportar el registro."); }
     });
     bVer.addEventListener("click", verificarActual);
-    bAuto.addEventListener("click", function () {
-      var r1 = Red.autopruebas(), r2 = Motor.autopruebas(), r3 = Escenarios.autopruebas();
-      var fallos = r1.fallos.concat(r2.fallos).concat(r3.fallos);
-      S.ultimoAutotest = {
-        total: r1.total + r2.total + r3.total,
-        pasadas: r1.pasadas + r2.pasadas + r3.pasadas,
-        fallos: fallos
-      };
-      consolaAgregar("Autotest: " + S.ultimoAutotest.pasadas + "/" + S.ultimoAutotest.total + " pruebas pasadas.", fallos.length > 0);
-      fallos.slice(0, 10).forEach(function (f) { consolaAgregar("- " + f.nombre, true); });
-      S.panelRes = "autotest";
-      renderInferior();
-      anunciar("Autotest: " + S.ultimoAutotest.pasadas + " de " + S.ultimoAutotest.total + " pruebas pasadas.");
-    });
     if (S.enfocarPing) {
       S.enfocarPing = false;
       try { bPing.focus(); } catch (e) { /* sin foco: se sigue igual */ }
@@ -8023,7 +8310,6 @@ var UI = (function () {
   function renderResultado() {
     var cont = el("div", "simres");
     if (S.panelRes === "verificacion" && S.ultimaVerif) { return renderVerificacion(cont); }
-    if (S.panelRes === "autotest" && S.ultimoAutotest) { return renderAutotest(cont); }
     if (!S.ultimo) {
       cont.appendChild(el("div", "vacio",
         "<b>Elegí un origen y un destino, y apretá Ping</b>" +
@@ -8163,27 +8449,6 @@ var UI = (function () {
       });
     }
     caja.insertBefore(cab, caja.firstChild);
-    caja.appendChild(lista);
-    cont.appendChild(caja);
-    var lado = el("div", "lado");
-    lado.appendChild(renderConsola());
-    cont.appendChild(lado);
-    return cont;
-  }
-
-  function renderAutotest(cont) {
-    var a = S.ultimoAutotest;
-    var caja = el("div", "recorrido");
-    var cab = el("div", "cab", "<span>Autotest de las capas 1 a 3</span>");
-    cab.appendChild(el("span", a.fallos.length ? "mal" : "ok", a.pasadas + " de " + a.total + " pruebas pasadas"));
-    caja.appendChild(cab);
-    var lista = el("div", "pasos");
-    if (!a.fallos.length) {
-      lista.appendChild(el("div", "linpaso", "<span class='marca' aria-hidden='true'>✓</span>Todas las pruebas pasaron."));
-    }
-    a.fallos.forEach(function (f) {
-      lista.appendChild(el("div", "pasofallo", "<span class='marca' aria-hidden='true'>✗</span>" + escapar(f.nombre)));
-    });
     caja.appendChild(lista);
     cont.appendChild(caja);
     var lado = el("div", "lado");
@@ -8357,28 +8622,47 @@ var UI = (function () {
     caja.innerHTML = html;
   }
 
+  // Sólo los hosts piden dirección: routers, switches, AP y la nube no.
+  function esClienteDhcp(d) {
+    return !!d && ["router", "switch-l2", "ap", "internet"].indexOf(d.tipo) < 0;
+  }
+
   function panelDhcpInf(c) {
     c.innerHTML = "";
-    c.appendChild(el("p", "", "<b>DHCP</b> <span style='font-size:12px'>— la animación DORA ocurre sobre la topología del lienzo.</span>"));
+    c.appendChild(el("p", "", "<b>DHCP</b> <span style='font-size:12px'>— la animación DORA recorre los cables del lienzo.</span>"));
+    var clientes = (S.topologia.dispositivos || []).filter(esClienteDhcp);
+    if (!clientes.length) {
+      c.appendChild(el("p", "", "Agregá una PC (u otro equipo final) para pedir una dirección por DHCP."));
+      return;
+    }
+    var sel = S.dhcpSel || {};
+    var inicial = buscarDisp(sel.equipo) || buscarDisp(S.seleccionado);
+    if (!esClienteDhcp(inicial)) { inicial = clientes[0]; }
     var selC = document.createElement("select");
-    (S.topologia.dispositivos || []).forEach(function (d) {
+    clientes.forEach(function (d) {
       var op = document.createElement("option");
       op.value = d.id; op.textContent = (d.nombre || d.id);
       selC.appendChild(op);
     });
-    if (S.seleccionado) { selC.value = S.seleccionado; }
+    selC.value = inicial.id;
     var selI = document.createElement("select");
-    function cargarIfaces() {
+    function cargarIfaces(preferida) {
       selI.innerHTML = "";
       var d = buscarDisp(selC.value);
-      ((d && d.interfaces) || []).forEach(function (f) {
+      var lista = (d && d.interfaces) || [];
+      lista.forEach(function (f) {
         var op = document.createElement("option");
-        op.value = f.id; op.textContent = f.id;
+        op.value = f.id; op.textContent = f.id + (enlaceEnPuerto(d.id, f.id) ? "" : " (sin cable)");
         selI.appendChild(op);
       });
+      var conCable = lista.filter(function (f) { return enlaceEnPuerto(d.id, f.id); })[0];
+      if (preferida && buscarIface(d, preferida)) { selI.value = preferida; }
+      else if (conCable) { selI.value = conCable.id; }
     }
-    cargarIfaces();
-    selC.addEventListener("change", cargarIfaces);
+    cargarIfaces(sel.equipo === inicial.id ? sel.interfaz : null);
+    function recordar() { S.dhcpSel = { equipo: selC.value, interfaz: selI.value }; }
+    selC.addEventListener("change", function () { cargarIfaces(null); recordar(); });
+    selI.addEventListener("change", recordar);
     var b = boton("Solicitar dirección (DORA)", "primario");
     var out = el("div", "");
     out.setAttribute("aria-live", "polite");
@@ -8387,25 +8671,81 @@ var UI = (function () {
     fila.appendChild(etiqueta("Interfaz", selI)); fila.appendChild(selI);
     fila.appendChild(b);
     c.appendChild(fila); c.appendChild(out);
+    // El resultado vive en S.ultimoDhcp: renderTodo() rehace este panel y lo
+    // vuelve a mostrar.
+    var u = S.ultimoDhcp;
+    if (u && u.equipo === selC.value && u.interfaz === selI.value) {
+      out.innerHTML = htmlResultadoDhcp(u.res, u.equipo);
+    }
     b.addEventListener("click", function () {
-      if (!S.estado) { reconstruirEstado(); }
-      var res;
-      try { res = Motor.dhcpSolicitar(S.estado, selC.value, selI.value); }
-      catch (e) { out.textContent = "Error: " + e.message; return; }
-      S.topologia = clonar(S.estado.topologia);
-      reconstruirEstado();
-      var orden = { discover: 0, offer: 1, request: 2, ack: 3 };
-      var msgs = (res.mensajes || []).slice().sort(function (a, b2) { return (orden[a.tipo] || 0) - (orden[b2.tipo] || 0); });
-      out.innerHTML = msgs.map(function (m) {
-        return "<div class='paso ok'><b>" + escapar(m.tipo) + "</b> " + escapar(m.origen) + " → " + escapar(m.destino) + "</div>";
-      }).join("") + (res.exito
-        ? "<p>Dirección otorgada: <b>" + escapar(res.ip + "/" + res.prefijo) + "</b>, puerta de enlace " + escapar(res.gateway || "—") + ".</p>"
-        : "<div class='diagnostico'><span class='tit'>" + escapar(res.diagnostico ? res.diagnostico.titulo : "") + "</span>" +
-          "<span class='cod'>" + escapar(res.diagnostico ? res.diagnostico.codigo : "D16") + "</span><div>" +
-          escapar(res.diagnostico ? res.diagnostico.explicacion : "") + "</div></div>");
-      renderTodo();
-      animarDhcp(res);
+      recordar();
+      pedirDhcp(selC.value, selI.value);
     });
+  }
+
+  // Pide una dirección, guarda el resultado y anima el DORA. Lo usan el
+  // panel inferior y el selector de modo del panel de propiedades.
+  function pedirDhcp(idDisp, idIf) {
+    if (!S.estado) { reconstruirEstado(); }
+    if (!S.estado) { avisar("La topología tiene errores: no se puede simular DHCP."); return null; }
+    var res;
+    try { res = Motor.dhcpSolicitar(S.estado, idDisp, idIf); }
+    catch (e) { registrar("D16", "DHCP falló: " + e.message); avisar("DHCP falló: " + e.message); return null; }
+    empujarHistorial();
+    S.topologia = clonar(S.estado.topologia);
+    reconstruirEstado();
+    S.dhcpSel = { equipo: idDisp, interfaz: idIf };
+    S.ultimoDhcp = { equipo: idDisp, interfaz: idIf, res: res };
+    renderTodo();
+    avisar(res.exito
+      ? nombreDe(idDisp) + " obtuvo " + res.ip + "/" + res.prefijo + " por DHCP."
+      : nombreDe(idDisp) + " no obtuvo dirección por DHCP" + (res.ip ? " (quedó en " + res.ip + ")" : "") + ".");
+    animarDhcp(res);
+    return res;
+  }
+
+  function textoMensajeDhcp(m, res) {
+    var o = escapar(nombreDe(m.origen));
+    var d = escapar(nombreDe(m.destino));
+    if (m.tipo === "discover") {
+      return "<b>DISCOVER</b> — " + o + " pregunta en difusión a toda su red: ¿hay algún servidor DHCP?";
+    }
+    if (m.tipo === "offer") {
+      var aceptada = res.exito && res.servidor === m.origen;
+      return "<b>OFFER</b> — " + o + " le ofrece <b>" + escapar(m.ip) + "</b> a " + d +
+        " (en difusión: " + d + " todavía no tiene IP)" +
+        (res.mensajes.filter(function (x) { return x.tipo === "offer"; }).length > 1
+          ? (aceptada ? " · <b>aceptada</b>" : " · descartada") : "");
+    }
+    if (m.tipo === "request") {
+      return "<b>REQUEST</b> — " + o + " anuncia en difusión que acepta la oferta de " +
+        escapar(nombreDe(m.servidor)) + " (" + escapar(m.ip) + ")";
+    }
+    if (m.tipo === "ack") {
+      return "<b>ACK</b> — " + o + " confirma: " + escapar(m.ip + "/" + res.prefijo) + " queda concedida a " + d;
+    }
+    return "<b>" + escapar(String(m.tipo).toUpperCase()) + "</b> " + o + " → " + d;
+  }
+
+  function htmlResultadoDhcp(res, idDisp) {
+    var html = (res.mensajes || []).map(function (m) {
+      var descartada = m.tipo === "offer" && res.exito && res.servidor !== m.origen;
+      return "<div class='paso " + (descartada ? "" : "ok") + "'>" + textoMensajeDhcp(m, res) + "</div>";
+    }).join("");
+    if (res.exito) {
+      html += "<p>Dirección otorgada a " + escapar(nombreDe(idDisp)) + ": <b>" + escapar(res.ip + "/" + res.prefijo) +
+        "</b>, puerta de enlace " + escapar(res.gateway || "—") + ".</p>";
+    } else {
+      var dg = res.diagnostico;
+      html += "<div class='diagnostico'><span class='tit'>" + escapar(dg ? dg.titulo : "No se obtuvo una IP por DHCP") + "</span>" +
+        (dg ? "<span class='cod' title='Código del diagnóstico'>" + escapar(dg.codigo) + "</span>" : "") +
+        "<div>" + escapar(dg ? dg.explicacion : "") + "</div>" +
+        (dg && dg.sugerencia ? "<div class='rev'><b>Sugerencia:</b> " + escapar(dg.sugerencia) + "</div>" : "") + "</div>";
+    }
+    (res.avisos || []).forEach(function (a) {
+      html += "<div class='advertencia'>" + escapar(a) + "</div>";
+    });
+    return html;
   }
 
   function panelAyuda(c) {
@@ -8523,64 +8863,136 @@ var UI = (function () {
     registrar("animacion", "Animación del ping sobre " + resultado.saltos.length + " saltos (" + S.velocidad + ", cancelable con Esc o nuevo ping).");
   }
 
+  // Extremos de un enlace en el lienzo, en el sentido desde→hacia: la misma
+  // geometría con la que renderLienzo dibuja el cable.
+  function tramoEnlace(e, idDesde) {
+    var a = buscarDisp(e.a.dispositivo), b = buscarDisp(e.b.dispositivo);
+    if (!a || !b) { return null; }
+    var pa = puntoPuerto(a, e.a.interfaz), pb = puntoPuerto(b, e.b.interfaz);
+    return e.a.dispositivo === idDesde ? { de: pa, a: pb } : { de: pb, a: pa };
+  }
+
+  // Ondas de una trama que inunda: los enlaces se ordenan por distancia (en
+  // saltos) al equipo que la emite, y cada onda avanza un enlace más.
+  function ondasDifusion(idOrigen, idsEnlaces) {
+    var pendientes = idsEnlaces.map(buscarEnlace).filter(Boolean);
+    var alcanzados = {}; alcanzados[idOrigen] = true;
+    var ondas = [];
+    while (pendientes.length) {
+      var onda = [], resto = [];
+      pendientes.forEach(function (e) {
+        if (alcanzados[e.a.dispositivo]) { onda.push({ e: e, desde: e.a.dispositivo }); }
+        else if (alcanzados[e.b.dispositivo]) { onda.push({ e: e, desde: e.b.dispositivo }); }
+        else { resto.push(e); }
+      });
+      if (!onda.length) { break; }
+      onda.forEach(function (x) { alcanzados[x.e.a.dispositivo] = true; alcanzados[x.e.b.dispositivo] = true; });
+      ondas.push(onda.map(function (x) { return tramoEnlace(x.e, x.desde); }).filter(Boolean));
+      pendientes = resto;
+    }
+    return ondas;
+  }
+
+  function etiquetaDhcp(m) {
+    var t = String(m.tipo).toUpperCase();
+    if (m.ip && m.tipo !== "request") { t += " " + m.ip; }
+    return t + (m.difusion ? " (difusión)" : "");
+  }
+
   function animarDhcp(resultado) {
     var miToken = ++S.animToken;
     limpiarAnim();
     var svgNS = "http://www.w3.org/2000/svg";
     var msgs = (resultado && resultado.mensajes) || [];
     if (!msgs.length) { return; }
+    function linea(p, q, color, ancho, punteada) {
+      var l = document.createElementNS(svgNS, "line");
+      l.setAttribute("x1", p.x); l.setAttribute("y1", p.y);
+      l.setAttribute("x2", q.x); l.setAttribute("y2", q.y);
+      l.setAttribute("stroke", color); l.setAttribute("stroke-width", ancho);
+      l.setAttribute("stroke-linecap", "round");
+      if (punteada) { l.setAttribute("stroke-dasharray", "6 5"); l.setAttribute("opacity", "0.7"); }
+      S.capaAnim.appendChild(l);
+    }
+    // Dibujo fijo de un mensaje: la inundación punteada, el camino útil en
+    // trazo firme y el nombre del mensaje sobre quien lo emite.
+    function dibujarFijo(m, color) {
+      var ondas = ondasDifusion(m.origen, (m.inundados && m.inundados.length) ? m.inundados : (m.enlaces || []));
+      ondas.forEach(function (onda) { onda.forEach(function (t) { linea(t.de, t.a, color, 2, true); }); });
+      var actual = m.origen;
+      (m.enlaces || []).forEach(function (id) {
+        var e = buscarEnlace(id);
+        var t = e && tramoEnlace(e, actual);
+        if (!t) { return; }
+        linea(t.de, t.a, color, 4, false);
+        actual = e.a.dispositivo === actual ? e.b.dispositivo : e.a.dispositivo;
+      });
+      var o = buscarDisp(m.origen);
+      if (o) {
+        var tx = document.createElementNS(svgNS, "text");
+        tx.setAttribute("x", o.x + 14); tx.setAttribute("y", o.y - 38);
+        tx.setAttribute("font-size", "14"); tx.setAttribute("font-weight", "700");
+        tx.setAttribute("fill", color); tx.setAttribute("stroke", "#fff");
+        tx.setAttribute("stroke-width", "3"); tx.setAttribute("paint-order", "stroke");
+        tx.textContent = etiquetaDhcp(m);
+        S.capaAnim.appendChild(tx);
+      }
+      return ondas;
+    }
+    function colorDe(m) {
+      if (m.tipo === "offer" && resultado.exito && resultado.servidor !== m.origen) { return "#6b7280"; }
+      // Cliente en azul, servidor en violeta: el verde ya es el de los cables en up.
+      return (m.tipo === "discover" || m.tipo === "request") ? "#0b5fa5" : "#7c3aed";
+    }
+    if (movimientoReducido()) {
+      // Sin animación: queda dibujado el último mensaje con su recorrido.
+      dibujarFijo(msgs[msgs.length - 1], colorDe(msgs[msgs.length - 1]));
+      return;
+    }
     var i = 0;
     function siguiente() {
       if (miToken !== S.animToken) { return; }
       if (i >= msgs.length) { return; }
       limpiarAnim();
       var m = msgs[i];
-      var o = buscarDisp(m.origen);
-      var dt = (m.destino === "broadcast") ? null : buscarDisp(m.destino);
-      if (m.destino === "broadcast" && o) {
-        (S.topologia.dispositivos || []).forEach(function (d) {
-          if (d.id === o.id) { return; }
-          var l = document.createElementNS(svgNS, "line");
-          l.setAttribute("x1", o.x); l.setAttribute("y1", o.y - 30);
-          l.setAttribute("x2", d.x); l.setAttribute("y2", d.y - 30);
-          l.setAttribute("stroke", "#0b5fa5"); l.setAttribute("stroke-width", 2);
-          l.setAttribute("stroke-dasharray", "5 4");
-          S.capaAnim.appendChild(l);
+      var color = colorDe(m);
+      var ondas = dibujarFijo(m, color);
+      registrar("dhcp", "DORA sobre el lienzo: " + etiquetaDhcp(m) + ", " + nombreDe(m.origen) + " → " +
+        (m.destino === "broadcast" ? "toda la red" : nombreDe(m.destino)) + ".");
+      var puntos = [];
+      var dur = msVelocidad();
+      var onda = 0, t0 = null;
+      function cuadro(t) {
+        if (miToken !== S.animToken) { return; }
+        if (t0 === null) { t0 = t; }
+        var avance = (t - t0) / dur;
+        if (avance >= 1) { onda += 1; t0 = t; avance = 0; }
+        puntos.forEach(function (p) { S.capaAnim.removeChild(p); });
+        puntos = [];
+        if (onda >= ondas.length) {
+          i += 1;
+          setTimeout(siguiente, dur);
+          return;
+        }
+        ondas[onda].forEach(function (tr) {
+          var c = document.createElementNS(svgNS, "circle");
+          c.setAttribute("r", 7); c.setAttribute("fill", color);
+          c.setAttribute("stroke", "#fff"); c.setAttribute("stroke-width", 2);
+          c.setAttribute("cx", tr.de.x + (tr.a.x - tr.de.x) * avance);
+          c.setAttribute("cy", tr.de.y + (tr.a.y - tr.de.y) * avance);
+          S.capaAnim.appendChild(c);
+          puntos.push(c);
         });
-        var t = document.createElementNS(svgNS, "text");
-        t.setAttribute("x", o.x + 12); t.setAttribute("y", o.y - 36);
-        t.setAttribute("font-size", "14"); t.textContent = m.tipo + " (difusión: así se ve un broadcast)";
-        S.capaAnim.appendChild(t);
-      } else if (o && dt) {
-        var l2 = document.createElementNS(svgNS, "line");
-        l2.setAttribute("x1", o.x); l2.setAttribute("y1", o.y - 30);
-        l2.setAttribute("x2", dt.x); l2.setAttribute("y2", dt.y - 30);
-        l2.setAttribute("stroke", "#1a7f37"); l2.setAttribute("stroke-width", 3);
-        S.capaAnim.appendChild(l2);
-        var t2 = document.createElementNS(svgNS, "text");
-        t2.setAttribute("x", (o.x + dt.x) / 2 + 8); t2.setAttribute("y", (o.y + dt.y) / 2 - 34);
-        t2.setAttribute("font-size", "14"); t2.textContent = m.tipo;
-        S.capaAnim.appendChild(t2);
+        requestAnimationFrame(cuadro);
       }
-      registrar("dhcp", "DORA sobre el lienzo: " + m.tipo + " " + m.origen + " → " + m.destino + ".");
-      i += 1;
-      setTimeout(siguiente, msVelocidad());
+      requestAnimationFrame(cuadro);
     }
-    // Con movimiento reducido se muestra sólo el último mensaje (el ACK o el
-    // último que se llegó a enviar), sin la secuencia animada.
-    if (movimientoReducido()) { i = msgs.length - 1; }
     siguiente();
   }
 
   function solicitarDhcp(idDisp, idIf) {
-    if (!S.estado) { reconstruirEstado(); }
-    var res;
-    try { res = Motor.dhcpSolicitar(S.estado, idDisp, idIf); }
-    catch (e) { registrar("D16", "DHCP falló: " + e.message); return res; }
-    S.topologia = clonar(S.estado.topologia);
-    reconstruirEstado(); renderTodo();
-    animarDhcp(res);
-    return res;
+    S.pestañaInf = "dhcp";
+    return pedirDhcp(idDisp, idIf);
   }
 
   /* ---------------- Registro, persistencia, importar/exportar ---------------- */
@@ -8786,8 +9198,85 @@ var Autotest = (function () {
     return null;
   }
 
+  /* Cada caso de redes se cuenta en tres partes: qué se armó, qué tiene que
+   * pasar y qué hizo el simulador. Varios casos son errores puestos a
+   * propósito: ahí lo correcto es que el simulador los detecte, y el informe
+   * lo aclara para que el verde no se lea como "la red está bien". */
+  var CASOS = {
+    2: {
+      conError: false,
+      situacion: "La red del Complejo turístico tal como viene: PC-Admin (10.45.7.66/27) hace ping al Servidor " +
+        "(10.45.7.122/29), que está detrás de dos routers.",
+      esperado: "El ping responde."
+    },
+    3: {
+      conError: true,
+      situacion: "PC-Admin en 10.45.7.94 con puerta de enlace 10.45.7.65. Con /27 su red va de 10.45.7.64 a .95 y la " +
+        "puerta de enlace está adentro; si la máscara pasa a /28, la red es 10.45.7.80 – .95 y 10.45.7.65 queda afuera.",
+      esperado: "Con /27 el ping al Servidor responde; con /28 falla con D09 (la puerta de enlace está fuera de tu red)."
+    },
+    4: {
+      conError: true,
+      situacion: "Se deshabilita la interfaz g0/0 de R1, la que tiene la dirección 10.45.7.65.",
+      esperado: "R1 no puede usar esa dirección: D01 (interfaz deshabilitada)."
+    },
+    5: {
+      conError: true,
+      situacion: "Se borra de R2 la ruta hacia 10.45.7.64/27, la red de PC-Admin. La ida hacia el Servidor sigue teniendo camino.",
+      esperado: "El ping llega al Servidor, pero R2 no sabe cómo devolver la respuesta: D12 (falla la vuelta), " +
+        "no D11 (fallaría la ida)."
+    },
+    6: {
+      conError: true,
+      situacion: "PC-1 en 192.168.1.0/24 y PC-2 en 192.168.2.0/24, conectadas al mismo switch.",
+      esperado: "No se comunican: D15. El switch no mira direcciones IP y no enruta; para pasar de una subred a otra " +
+        "hace falta un router."
+    },
+    7: {
+      conError: false,
+      situacion: "Cálculo de la subred de 10.45.7.66/27, con puerta de enlace 10.45.7.65.",
+      esperado: "Máscara 255.255.255.224, red 10.45.7.64, broadcast 10.45.7.95, hosts de 10.45.7.65 a 10.45.7.94 " +
+        "(30 hosts), y la puerta de enlace dentro de la subred."
+    },
+    8: {
+      conError: false,
+      situacion: "R-DHCP reparte el rango 192.168.1.50 – .60; una PC conectada al switch pide dirección.",
+      esperado: "La PC recibe una dirección del rango tras los cuatro mensajes: DISCOVER, OFFER, REQUEST y ACK."
+    },
+    12: {
+      conError: true,
+      situacion: "En el desafío VLSM, el sector Cámaras se arma con el router en 10.45.7.41/28, al lado del Wi-Fi " +
+        "en 10.45.7.0/26 (.0 – .63).",
+      esperado: "El verificador marca dos errores de diseño: una /28 empieza en múltiplos de 16, así que una subred " +
+        "pensada desde .40 no está alineada; y .41/28 pertenece a 10.45.7.32/28, que cae adentro del Wi-Fi."
+    }
+  };
+
   function fila(n, criterio, pasa, detalle) {
-    return { n: n, criterio: criterio, pasa: !!pasa, detalle: detalle || "" };
+    var r = { n: n, criterio: criterio, pasa: !!pasa, detalle: detalle || "" };
+    var caso = CASOS[n];
+    if (caso) {
+      r.conError = caso.conError;
+      r.situacion = caso.situacion;
+      r.esperado = caso.esperado;
+    }
+    return r;
+  }
+
+  // Recorrido de un ping con los nombres visibles, sin repeticiones seguidas.
+  function recorridoPorNombre(topo, res) {
+    var nombres = [];
+    (res.saltos || []).forEach(function (s) {
+      var d = dispEn(topo, s.dispositivo);
+      var n = d ? (d.nombre || d.id) : s.dispositivo;
+      if (nombres[nombres.length - 1] !== n) { nombres.push(n); }
+    });
+    return nombres.join(" → ");
+  }
+
+  function diagnosticoTexto(res) {
+    var dg = res && res.diagnostico;
+    return dg ? dg.codigo + " (" + dg.titulo + ")" : "sin diagnóstico";
   }
 
   function modoActualDom() {
@@ -8862,26 +9351,25 @@ var Autotest = (function () {
   }
 
   function crit02() {
-    var nombre = "La topología complejo permite un ping exitoso de punta a punta";
+    var nombre = "Ping de punta a punta: PC-Admin llega al Servidor atravesando dos routers";
     try {
       var ej = ejemploPorId("complejo");
       if (!ej) {
-        return fila(2, nombre, false, "No se encontró el ejemplo de id complejo en Escenarios.EJEMPLOS.");
+        return fila(2, nombre, false, "No se encontró el ejemplo «Complejo turístico».");
       }
-      var estado = Motor.crearEstado(clonar(ej.topologia));
-      var res = Motor.ping(estado, "pc-admin", "10.45.7.122");
+      var topo = clonar(ej.topologia);
+      var res = Motor.ping(Motor.crearEstado(topo), "pc-admin", "10.45.7.122");
       if (res.exito) {
-        return fila(2, nombre, true, "Ping de pc-admin a 10.45.7.122 con exito true y " + res.saltos.length + " saltos.");
+        return fila(2, nombre, true, "Responde, recorriendo " + recorridoPorNombre(topo, res) + ".");
       }
-      var cod = res.diagnostico ? res.diagnostico.codigo : "sin diagnóstico";
-      return fila(2, nombre, false, "Se esperaba exito true y se obtuvo falla con código " + cod + ".");
+      return fila(2, nombre, false, "No respondió: " + diagnosticoTexto(res) + ".");
     } catch (e) {
       return fila(2, nombre, false, "Excepción: " + e.message);
     }
   }
 
   function crit03() {
-    var nombre = "Cambiar la máscara de un PC de /27 a /28 rompe el ping al gateway con D09";
+    var nombre = "Una máscara mal elegida deja la puerta de enlace fuera de la subred (D09)";
     try {
       var ej = ejemploPorId("complejo");
       var topo = clonar(ej.topologia);
@@ -8898,25 +9386,21 @@ var Autotest = (function () {
       eth.prefijo = 28;
       var roto = Motor.ping(Motor.crearEstado(topo), "pc-admin", "10.45.7.122");
       var cod = roto.diagnostico ? roto.diagnostico.codigo : "sin diagnóstico";
-      var aclara = "Se partió de 10.45.7.94/27 (última del rango 65–94): con /27 el ping al servidor anda; con /28 cae. " +
-        "El destino verificado es el servidor y no el propio gateway porque el Motor antepone el chequeo de máscaras " +
-        "del segmento (D14) cuando se pinguea al gateway en forma directa; el D09 aparece contra destino externo. ";
       if (!sano.exito) {
-        return fila(3, nombre, false, aclara + "El caso sano ya fallaba con " +
-          (sano.diagnostico ? sano.diagnostico.codigo : "?") + "; revisar la topología base.");
+        return fila(3, nombre, false, "Con /27 el ping ya fallaba: " + diagnosticoTexto(sano) + ".");
       }
       if (!roto.exito && cod === "D09") {
-        return fila(3, nombre, true, aclara + "Con /28 el ping falla con D09 como se esperaba.");
+        return fila(3, nombre, true, "Con /27 respondió y con /28 falló con " + diagnosticoTexto(roto) + ".");
       }
-      return fila(3, nombre, false, aclara + "Se esperaba falla D09 y se obtuvo " +
-        (roto.exito ? "exito true" : "código " + cod) + ".");
+      return fila(3, nombre, false, "Con /28 " +
+        (roto.exito ? "el ping respondió igual" : "el diagnóstico fue " + diagnosticoTexto(roto)) + ".");
     } catch (e) {
       return fila(3, nombre, false, "Excepción: " + e.message);
     }
   }
 
   function crit04() {
-    var nombre = "Deshabilitar una interfaz del router produce D01";
+    var nombre = "Una interfaz del router deshabilitada no envía ni recibe (D01)";
     try {
       var ej = ejemploPorId("complejo");
       var topo = clonar(ej.topologia);
@@ -8928,17 +9412,16 @@ var Autotest = (function () {
       var res = Motor.ping(Motor.crearEstado(topo), "r1", "10.45.7.65");
       var cod = res.diagnostico ? res.diagnostico.codigo : "sin diagnóstico";
       if (!res.exito && cod === "D01") {
-        return fila(4, nombre, true, "Se deshabilitó r1:g0/0 y el ping desde r1 a su propia 10.45.7.65 falla con D01.");
+        return fila(4, nombre, true, "Diagnosticó " + diagnosticoTexto(res) + ".");
       }
-      return fila(4, nombre, false, "Se esperaba falla D01 y se obtuvo " +
-        (res.exito ? "exito true" : "código " + cod) + ".");
+      return fila(4, nombre, false, res.exito ? "El ping respondió igual." : "Diagnosticó " + diagnosticoTexto(res) + ".");
     } catch (e) {
       return fila(4, nombre, false, "Excepción: " + e.message);
     }
   }
 
   function crit05() {
-    var nombre = "Borrar una ruta de retorno produce D12, no D11";
+    var nombre = "Sin ruta de vuelta, el pedido llega pero la respuesta no vuelve (D12, no D11)";
     try {
       var ej = ejemploPorId("complejo");
       var topo = clonar(ej.topologia);
@@ -8949,17 +9432,16 @@ var Autotest = (function () {
       var res = Motor.ping(Motor.crearEstado(topo), "pc-admin", "10.45.7.122");
       var cod = res.diagnostico ? res.diagnostico.codigo : "sin diagnóstico";
       if (!res.exito && cod === "D12") {
-        return fila(5, nombre, true, "Sin la ruta 10.45.7.64/27 en r2 la ida llega y la vuelta no: D12.");
+        return fila(5, nombre, true, "Diagnosticó " + diagnosticoTexto(res) + ".");
       }
-      return fila(5, nombre, false, "Se esperaba D12 (y distinto de D11) y se obtuvo " +
-        (res.exito ? "exito true" : "código " + cod) + ".");
+      return fila(5, nombre, false, res.exito ? "El ping respondió igual." : "Diagnosticó " + diagnosticoTexto(res) + ".");
     } catch (e) {
       return fila(5, nombre, false, "Excepción: " + e.message);
     }
   }
 
   function crit06() {
-    var nombre = "Dos PC en el mismo switch con subredes distintas producen D15";
+    var nombre = "Dos PC en el mismo switch pero en subredes distintas no se comunican (D15)";
     try {
       var ej = ejemploPorId("basica");
       var topo = clonar(ej.topologia);
@@ -8970,17 +9452,16 @@ var Autotest = (function () {
       var res = Motor.ping(Motor.crearEstado(topo), "pc1", "192.168.2.20");
       var cod = res.diagnostico ? res.diagnostico.codigo : "sin diagnóstico";
       if (!res.exito && cod === "D15") {
-        return fila(6, nombre, true, "Mismo switch con 192.168.1.0/24 contra 192.168.2.0/24: D15, el switch no enruta.");
+        return fila(6, nombre, true, "Diagnosticó " + diagnosticoTexto(res) + ".");
       }
-      return fila(6, nombre, false, "Se esperaba D15 y se obtuvo " +
-        (res.exito ? "exito true" : "código " + cod) + ".");
+      return fila(6, nombre, false, res.exito ? "El ping respondió igual." : "Diagnosticó " + diagnosticoTexto(res) + ".");
     } catch (e) {
       return fila(6, nombre, false, "Excepción: " + e.message);
     }
   }
 
   function crit07() {
-    var nombre = "Red.desglose coincide con el cálculo hecho a mano";
+    var nombre = "El cálculo de subred coincide con el hecho a mano";
     try {
       var det = Red.desglose("10.45.7.66", 27, "10.45.7.65");
       var esperado = {
@@ -8992,19 +9473,23 @@ var Autotest = (function () {
         ultimoHost: "10.45.7.94",
         cantidadHosts: 30
       };
+      var rotulos = {
+        direccionDeRed: "dirección de red", broadcast: "broadcast", rangoTexto: "rango de hosts",
+        mascaraDecimal: "máscara", primerHost: "primer host", ultimoHost: "último host", cantidadHosts: "cantidad de hosts"
+      };
       var fallas = [];
       Object.keys(esperado).forEach(function (k) {
         if (det[k] !== esperado[k]) {
-          fallas.push(k + ": esperado " + esperado[k] + ", obtenido " + det[k]);
+          fallas.push(rotulos[k] + ": a mano da " + esperado[k] + " y el simulador dice " + det[k]);
         }
       });
       if (!det.gateway || det.gateway.coinciden !== true) {
-        fallas.push("gateway: se esperaba que 10.45.7.65 coincida con la subred");
+        fallas.push("puerta de enlace: 10.45.7.65 debería estar dentro de la subred");
       }
       if (fallas.length === 0) {
-        return fila(7, nombre, true, "Desglose de 10.45.7.66/27 con red .64, broadcast .95, rango 65–94 y máscara .224.");
+        return fila(7, nombre, true, "Coincide en todos los valores.");
       }
-      return fila(7, nombre, false, "Diferencias: " + fallas.join(" | "));
+      return fila(7, nombre, false, "Diferencias con el cálculo a mano: " + fallas.join(" | "));
     } catch (e) {
       return fila(7, nombre, false, "Excepción: " + e.message);
     }
@@ -9053,7 +9538,7 @@ var Autotest = (function () {
   }
 
   function crit08() {
-    var nombre = "DHCP entrega una dirección del rango configurado y devuelve los cuatro mensajes DORA";
+    var nombre = "DHCP: la PC obtiene una dirección del rango con los cuatro mensajes DORA";
     try {
       var estado = Motor.crearEstado(armarMiniDhcp());
       var res = Motor.dhcpSolicitar(estado, "c1", "eth0");
@@ -9066,10 +9551,10 @@ var Autotest = (function () {
         enRango = false;
       }
       if (res.exito && enRango && tipos === "discover,offer,request,ack") {
-        return fila(8, nombre, true, "Se otorgó " + res.ip + "/24 con mensajes " + tipos + ".");
+        return fila(8, nombre, true, "La PC recibió " + res.ip + "/24 tras DISCOVER, OFFER, REQUEST y ACK.");
       }
-      return fila(8, nombre, false, "Se esperaba ip entre 192.168.1.50 y .60 con discover,offer,request,ack; se obtuvo ip " +
-        res.ip + " y mensajes [" + tipos + "], exito " + res.exito + ".");
+      return fila(8, nombre, false, "La PC quedó con " + res.ip + " y los mensajes fueron " + (tipos ? tipos.toUpperCase().split(",").join(", ") : "ninguno") +
+        (res.diagnostico ? " (" + res.diagnostico.codigo + ": " + res.diagnostico.titulo + ")" : "") + ".");
     } catch (e) {
       return fila(8, nombre, false, "Excepción: " + e.message);
     }
@@ -9143,7 +9628,7 @@ var Autotest = (function () {
   }
 
   function crit12() {
-    var nombre = "El modo desafío detecta un solapamiento y una subred desalineada";
+    var nombre = "Desafío VLSM: se detectan una subred solapada y una desalineada";
     try {
       /* Sobre equipos realmente direccionados: el router de Cámaras en
        * .41/28 hace pensar una subred que arranca en .40 (desalineada), y la
@@ -9165,11 +9650,11 @@ var Autotest = (function () {
       var haySolape = texto.indexOf("Se superpone") >= 0;
       var hayAline = texto.indexOf("no está alineada") >= 0;
       if (informe.porSector.length === 5 && informe.resumen.errores > 0 && haySolape && hayAline) {
-        return fila(12, nombre, true, "Cámaras con el router en 10.45.7.41/28: desalineada y solapada con el Wi-Fi; errores: " +
-          informe.resumen.errores + ".");
+        return fila(12, nombre, true, "Marcó el solapamiento y la desalineación (" + informe.resumen.errores +
+          " errores en todo el diseño, porque los demás sectores están sin direccionar).");
       }
-      return fila(12, nombre, false, "Se esperaba al menos un error de solape y uno de alineación; se obtuvo " +
-        JSON.stringify(informe.resumen) + " y hallazgos " + texto + ".");
+      return fila(12, nombre, false, "No marcó " + (haySolape ? "la desalineación" : hayAline ? "el solapamiento" : "ninguno de los dos") +
+        " (" + informe.resumen.errores + " errores y " + informe.resumen.advertencias + " advertencias en total).");
     } catch (e) {
       return fila(12, nombre, false, "Excepción: " + e.message);
     }
@@ -9462,6 +9947,10 @@ var Autotest = (function () {
     }
   }
 
+  function escaparHtml(texto) {
+    return String(texto || "").replace(/&/g, "&amp;").replace(/</g, "&lt;");
+  }
+
   function mostrarInforme(salida) {
     try {
       var previos = document.querySelectorAll("[data-autotest-informe]");
@@ -9485,8 +9974,13 @@ var Autotest = (function () {
       caja.style.fontFamily = "system-ui, Arial, sans-serif";
       caja.style.fontSize = "13px";
       var titulo = document.createElement("div");
-      titulo.innerHTML = "<b>Autotest: " + salida.pasadas + "/" + salida.total + " criterios</b> " +
-        "<span>(" + salida.fallos + " fallos primero)</span>";
+      titulo.innerHTML = salida.tecnico
+        ? "<b>Autotest técnico: " + salida.pasadas + "/" + salida.total + "</b> <span>(" + salida.fallos + " fallos, primero)</span>" +
+          "<br><span>" + String(salida.detalleCapas).replace(/&/g, "&amp;").replace(/</g, "&lt;") + "</span>"
+        : "<b>El simulador resuelve bien " + salida.pasadas + " de " + salida.total + " casos de redes</b>" +
+          (salida.fallos ? " <span>(los que fallan, primero)</span>" : "") +
+          "<div style='font-size:12px;color:#4a5866;margin-top:2px'>Varios casos rompen la red a propósito: " +
+          "ahí el resultado es correcto si el simulador detecta el error.</div>";
       caja.appendChild(titulo);
       var lista = document.createElement("div");
       salida.resultados.forEach(function (r) {
@@ -9496,9 +9990,25 @@ var Autotest = (function () {
         div.style.borderRadius = "6px";
         div.style.padding = "4px 8px";
         div.style.margin = "6px 0";
-        var safeC = String(r.criterio).replace(/&/g, "&amp;").replace(/</g, "&lt;");
-        var safeD = String(r.detalle || "").replace(/&/g, "&amp;").replace(/</g, "&lt;");
-        div.innerHTML = "<b>" + r.n + ". " + safeC + "</b> " + (r.pasa ? "pasa" : "falla") + "<br>" + safeD;
+        var safeC = escaparHtml(r.criterio);
+        var safeD = escaparHtml(r.detalle);
+        if (r.situacion) {
+          var etiqueta = r.conError
+            ? "<span style='background:#fff4d6;color:#7a4b00;border:1px solid #d9a400;border-radius:4px;padding:0 6px;font-size:12px;white-space:nowrap;display:inline-block'>" +
+              "error puesto a propósito</span>"
+            : "<span style='background:#eef2f6;color:#3a4a5a;border:1px solid #c9d3dc;border-radius:4px;padding:0 6px;font-size:12px;white-space:nowrap;display:inline-block'>" +
+              "red bien configurada</span>";
+          var veredicto = r.pasa
+            ? (r.conError ? "Lo detectó correctamente. " : "Funcionó como debe. ")
+            : (r.conError ? "No lo detectó como debía. " : "No funcionó como debe. ");
+          div.innerHTML = "<b>" + r.n + ". " + safeC + "</b> " + etiqueta +
+            "<div style='margin-top:4px'><b>Situación:</b> " + escaparHtml(r.situacion) + "</div>" +
+            "<div><b>Qué debe pasar:</b> " + escaparHtml(r.esperado) + "</div>" +
+            "<div style='color:" + (r.pasa ? "#1a7f37" : "#b42318") + "'><b>" + (r.pasa ? "✓ " : "✗ ") + "Resultado:</b> " +
+            veredicto + safeD + "</div>";
+        } else {
+          div.innerHTML = "<b>" + (r.pasa ? "✓ " : "✗ ") + r.n + ". " + safeC + "</b><br>" + safeD;
+        }
         lista.appendChild(div);
       });
       caja.appendChild(lista);
@@ -9515,7 +10025,15 @@ var Autotest = (function () {
     }
   }
 
-  function correr() {
+  /* El botón muestra sólo lo que se verifica de redes: lo que la cátedra
+   * puede leer y discutir. Los criterios de la interfaz y del archivo, y las
+   * pruebas internas de las capas, quedan para quien programa:
+   * Autotest.correr({ tecnico: true }) desde la consola. */
+  var CRITERIOS_DIDACTICOS = [crit02, crit03, crit04, crit05, crit06, crit07, crit08, crit12];
+  var CRITERIOS_TECNICOS = [crit01, crit09, crit10, crit11, crit13, crit14, crit15, crit16];
+
+  function correr(opciones) {
+    var tecnico = !!(opciones && opciones.tecnico);
     if (typeof Red === "undefined" || typeof Motor === "undefined" ||
         typeof Escenarios === "undefined" || typeof UI === "undefined") {
       try {
@@ -9558,37 +10076,30 @@ var Autotest = (function () {
     var pasadasCapas = 0;
     var totalCapas = 0;
     var detalleCapas = "";
-    try {
-      var r1 = Red.autopruebas();
-      var r2 = Motor.autopruebas();
-      var r3 = Escenarios.autopruebas();
-      totalCapas = r1.total + r2.total + r3.total;
-      pasadasCapas = r1.pasadas + r2.pasadas + r3.pasadas;
-      var fallosCapas = r1.fallos.concat(r2.fallos).concat(r3.fallos).slice(0, 8);
-      detalleCapas = "Capas 1–3: " + pasadasCapas + "/" + totalCapas + " pruebas internas." +
-        (fallosCapas.length ? " Primeros fallos: " + fallosCapas.map(function (f) { return f.nombre; }).join(" | ") + "." : " Sin fallos internos.");
-    } catch (e) {
-      detalleCapas = "No se pudieron correr las autopruebas internas: " + e.message;
+    if (tecnico) {
+      try {
+        var r1 = Red.autopruebas();
+        var r2 = Motor.autopruebas();
+        var r3 = Escenarios.autopruebas();
+        totalCapas = r1.total + r2.total + r3.total;
+        pasadasCapas = r1.pasadas + r2.pasadas + r3.pasadas;
+        var fallosCapas = r1.fallos.concat(r2.fallos).concat(r3.fallos).slice(0, 8);
+        detalleCapas = "Capas 1–3: " + pasadasCapas + "/" + totalCapas + " pruebas internas." +
+          (fallosCapas.length ? " Primeros fallos: " + fallosCapas.map(function (f) { return f.nombre; }).join(" | ") + "." : " Sin fallos internos.");
+      } catch (e) {
+        detalleCapas = "No se pudieron correr las autopruebas internas: " + e.message;
+      }
     }
 
     try {
-      resultados.push(crit01());
-      resultados.push(crit02());
-      resultados.push(crit03());
-      resultados.push(crit04());
-      resultados.push(crit05());
-      resultados.push(crit06());
-      resultados.push(crit07());
-      resultados.push(crit08());
-      resultados.push(crit09());
-      resultados.push(crit10());
-      resultados.push(crit11());
-      resultados.push(crit12());
-      resultados.push(crit13());
-      resultados.push(crit14());
-      resultados.push(crit15());
-      resultados.push(crit16());
+      (tecnico ? CRITERIOS_DIDACTICOS.concat(CRITERIOS_TECNICOS) : CRITERIOS_DIDACTICOS).forEach(function (crit) {
+        resultados.push(crit());
+      });
     } finally {
+      if (!tecnico) {
+        /* Sin los criterios técnicos, los números del informe van corridos. */
+        resultados.forEach(function (r, i) { r.n = i + 1; });
+      }
       try {
         if (UI) {
           if (originalPing) {
@@ -9625,6 +10136,7 @@ var Autotest = (function () {
       return a.pasa ? 1 : -1;
     });
     var salida = {
+      tecnico: tecnico,
       total: totalCapas + resultados.length,
       pasadas: pasadasCapas + pasadas,
       resultados: ordenados,
@@ -9650,8 +10162,8 @@ var Autotest = (function () {
       }
       var b = document.createElement("button");
       b.setAttribute("data-boton-autotest5", "1");
-      b.textContent = "Autotest completo";
-      b.title = "Corre los 16 criterios de aceptación sin perder el trabajo cargado";
+      b.textContent = "Autotest";
+      b.title = "Comprueba que el simulador resuelve bien casos de la materia (máscaras, rutas, DHCP, VLSM) sin perder el trabajo cargado";
       b.addEventListener("click", function () {
         correr();
       });
