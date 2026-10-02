@@ -851,12 +851,17 @@ var Motor = (function () {
         if (ctx.enLaVuelta) {
           return "El paquete llegó a " + (ctx.destinoNombre || "destino") + ", pero la respuesta (de " +
             (ctx.ipOrigen || "?") + " hacia " + (ctx.ipDestino || "?") + ") pasa por " + (ctx.router || "un router") +
-            ", que tiene " + regla + ", y la descarta. Un router revisa cada paquete por separado: " +
-            "un firewall, en cambio, recuerda las conversaciones y deja volver la respuesta de una que ya permitió.";
+            ", que tiene " + regla + ", y la descarta. " + (ctx.esFirewall
+              // Un firewall sólo recuerda lo que vio pasar: si la ida fue por
+              // otro camino (rutas asimétricas), la respuesta le es nueva.
+              ? (ctx.router || "Ese equipo") + " es un firewall, pero el pedido no pasó por él a la ida: la respuesta vuelve " +
+                "por otro camino, así que no conoce esa conversación y le aplica su regla."
+              : "Un router revisa cada paquete por separado: un firewall, en cambio, recuerda las conversaciones y deja " +
+                "volver la respuesta de una que ya permitió.");
         }
         return (ctx.router || "El router") + " tiene " + regla + ". El paquete de " + (ctx.ipOrigen || "?") +
-          " hacia " + (ctx.ipDestino || "?") + " coincide con ella y el router lo descarta: " +
-          "la ruta existe, pero una regla prohíbe que pase.";
+          " hacia " + (ctx.ipDestino || "?") + " coincide con ella y " + (ctx.esFirewall ? "el firewall" : "el router") +
+          " lo descarta: la ruta existe, pero una regla prohíbe que pase.";
       },
       sugerencia: "Si ese bloqueo es el que buscabas, el aislamiento funciona. Si no, revisá la pestaña Filtrado del router: las reglas se leen en orden y gana la primera que coincide."
     },
@@ -1998,7 +2003,7 @@ var Motor = (function () {
         ", y el paquete de " + ipOrigen + " hacia " + destinoIp + " coincide: " + nombreRouter + " lo descarta.", false);
       var ctxFiltro = {
         router: nombreRouter, reglaOrigen: aplica.origen, reglaDestino: aplica.destino,
-        ipOrigen: ipOrigen, ipDestino: destinoIp
+        ipOrigen: ipOrigen, ipDestino: destinoIp, esFirewall: esFirewall(router)
       };
       return {
         exito: false,
@@ -4021,6 +4026,39 @@ var Motor = (function () {
         ping(crearEstado(conFirewall()), "h1", "10.0.2.10").diagnostico.codigo, "D27");
       comparar("router sin estado: la misma respuesta se bloquea",
         ping(crearEstado(conFiltro(bloqueo)), "s1", "10.0.1.10").diagnostico.codigo, "D27");
+    })();
+
+    // Rutas asimétricas: la ida va directo de r1 a r2 y la vuelta pasa por un
+    // firewall que no vio el pedido. No conoce la conversación y aplica su regla.
+    (function () {
+      var r1 = fabRouter("r1", [
+        { id: "g0/0", ip: "10.0.1.1", prefijo: 24 },
+        { id: "g0/1", ip: "10.0.12.1", prefijo: 30 },
+        { id: "g0/2", ip: "10.0.13.1", prefijo: 30 }
+      ], [{ destino: "10.0.2.0", prefijo: 24, siguienteSalto: "10.0.12.2" }]);
+      var r2 = fabRouter("r2", [
+        { id: "g0/0", ip: "10.0.2.1", prefijo: 24 },
+        { id: "g0/1", ip: "10.0.12.2", prefijo: 30 },
+        { id: "g0/2", ip: "10.0.23.2", prefijo: 30 }
+      ], [{ destino: "10.0.1.0", prefijo: 24, siguienteSalto: "10.0.23.1" }]);
+      var fw = fabRouter("fw", [
+        { id: "lan1", ip: "10.0.13.2", prefijo: 30 },
+        { id: "wan", ip: "10.0.23.1", prefijo: 30 }
+      ], [{ destino: "10.0.1.0", prefijo: 24, siguienteSalto: "10.0.13.1" },
+          { destino: "10.0.2.0", prefijo: 24, siguienteSalto: "10.0.23.2" }]);
+      fw.modelo = "firewall";
+      fw.reglas = [{ accion: "bloquear", origen: "10.0.2.0/24", destino: "10.0.1.0/24" }];
+      var topo = fabTopo(
+        [fabPc("h1", "10.0.1.10", 24, "10.0.1.1"), fabPc("h2", "10.0.2.10", 24, "10.0.2.1"), r1, r2, fw],
+        [fabEnlace("l1", "h1", "eth0", "r1", "g0/0"), fabEnlace("l2", "h2", "eth0", "r2", "g0/0"),
+         fabEnlace("l3", "r1", "g0/1", "r2", "g0/1"), fabEnlace("l4", "r1", "g0/2", "fw", "lan1"),
+         fabEnlace("l5", "fw", "wan", "r2", "g0/2")]);
+      var res = ping(crearEstado(topo), "h1", "10.0.2.10");
+      comparar("asimétrico: la respuesta la frena el firewall (D27)", res.diagnostico && res.diagnostico.codigo, "D27");
+      comparar("asimétrico: el D27 explica que el firewall no vio la ida",
+        /no pasó por él a la ida/.test(res.diagnostico.explicacion), true);
+      comparar("asimétrico: no dice que el firewall deja volver la respuesta",
+        /deja volver la respuesta/.test(res.diagnostico.explicacion), false);
     })();
 
     // 36. Un destino mal escrito no es un diagnóstico de red.
