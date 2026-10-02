@@ -27,14 +27,14 @@ Para un origen `A` que quiere alcanzar la IP `D`:
 5. Si `redA == redD` → entrega directa: resolver `D` por ARP dentro del segmento.
 6. Si `redA != redD` → ¿hay gateway configurado? Si no → `D08`.
 7. ¿El gateway pertenece a `redA`? Si no → `D09`. El detalle del paso muestra el mismo AND del paso 4 aplicado al gateway.
-8. Resolver el gateway por ARP. Si nadie responde → `D10`.
+8. Averiguar la MAC de la puerta de enlace por ARP. Si nadie responde → `D10`.
 9. En el router: buscar en la tabla de rutas la **coincidencia más específica** (prefijo más largo), y usar la ruta por defecto sólo si no hay otra. Si no hay ninguna → `D11`.
 10. Repetir desde el paso 4 en cada salto, decrementando TTL.
 11. Al llegar al destino, **verificar que el destino pueda responder**, repitiendo el algoritmo en sentido inverso. Si el eco llega pero la respuesta no encuentra camino de vuelta → `D12`.
 
 El paso 11 no es un detalle: `D12` es el diagnóstico más instructivo de todo el catálogo, porque explica el caso en que "el ping falla" aunque la ida esté perfecta. Asegurate de que no se confunda con `D11`: si el router de ida no tiene ruta, es `D11`; si la ida funciona y falla la vuelta, es `D12`.
 
-Cada elemento de `pasos` tiene la forma `{ n, titulo, detalle, ok }`, donde `titulo` es corto (`"Comparar redes de origen y destino"`) y `detalle` puede ser multilínea e incluir binario.
+Cada elemento de `pasos` tiene la forma `{ n, titulo, detalle, ok }`, donde `titulo` es corto y en infinitivo (`"Decidir si el destino está en la misma red"`) y `detalle` puede ser multilínea e incluir binario: la primera línea es la cuenta y la última, la conclusión. Los textos nombran a los equipos por su nombre visible, nunca por su id, y no mencionan códigos D: el código va aparte, en el diagnóstico.
 
 ---
 

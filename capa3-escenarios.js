@@ -127,6 +127,12 @@ var Escenarios = (function () {
     return JSON.parse(JSON.stringify(obj));
   }
 
+  var PALABRA_MEDIO = { ethernet: "de cobre", fibra: "de fibra", wireless: "inalámbrico" };
+
+  function palabraMedio(medio) {
+    return PALABRA_MEDIO[medio] || String(medio);
+  }
+
   function esEnteroPrefijo(valor) {
     return typeof valor === "number" && Number.isInteger(valor) && valor >= 0 && valor <= 32;
   }
@@ -203,26 +209,26 @@ var Escenarios = (function () {
     }
 
     if (!obj || typeof obj !== "object" || Array.isArray(obj)) {
-      anotar("topologia", "La topología no es un objeto válido.");
+      anotar("topologia", "El archivo no tiene el formato de una red del simulador.");
       return { ok: false, errores: errores };
     }
 
     // Versión presente y soportada.
     if (obj.version === undefined || obj.version === null) {
-      anotar("version", "Falta el campo version de la topología.");
+      anotar("version", "El archivo no indica su versión: puede no ser un archivo del simulador.");
     } else if (VERSIONES_SOPORTADAS.indexOf(obj.version) < 0) {
-      anotar("version", "Versión no soportada: " + JSON.stringify(obj.version) + ".");
+      anotar("version", "El archivo es de una versión del simulador que esta no reconoce (versión " + JSON.stringify(obj.version) + ").");
     }
 
     // Sin mutar el objeto recibido: se trabaja sobre listas locales.
     var listaDispositivos = Array.isArray(obj.dispositivos) ? obj.dispositivos : null;
     var listaEnlaces = Array.isArray(obj.enlaces) ? obj.enlaces : null;
     if (!listaDispositivos) {
-      anotar("dispositivos", "El campo dispositivos debe ser una lista.");
+      anotar("dispositivos", "El archivo no trae la lista de equipos.");
       listaDispositivos = [];
     }
     if (!listaEnlaces) {
-      anotar("enlaces", "El campo enlaces debe ser una lista.");
+      anotar("enlaces", "El archivo no trae la lista de cables.");
       listaEnlaces = [];
     }
 
@@ -233,11 +239,11 @@ var Escenarios = (function () {
       var dev = listaDispositivos[i];
       var idDev = dev && dev.id;
       if (!textoNoVacio(idDev)) {
-        anotar("dispositivos[" + i + "].id", "Hay un dispositivo sin id.");
+        anotar("dispositivos[" + i + "].id", "Hay un equipo sin identificador.");
         continue;
       }
       if (vistosDisp[idDev]) {
-        anotar("dispositivos", "Id de dispositivo duplicado: \"" + idDev + "\".");
+        anotar("dispositivos", "Hay dos equipos con el mismo identificador (\"" + idDev + "\").");
       } else {
         vistosDisp[idDev] = true;
       }
@@ -252,18 +258,19 @@ var Escenarios = (function () {
       var etiqueta = "dispositivos." + d.id;
 
       if (TIPOS_VALIDOS.indexOf(d.tipo) < 0) {
-        anotar(etiqueta + ".tipo", "Tipo de dispositivo desconocido en \"" + d.id + "\": " + JSON.stringify(d.tipo) + ".");
+        anotar(etiqueta + ".tipo", "El equipo \"" + d.id + "\" es de un tipo que el simulador no conoce (" + JSON.stringify(d.tipo) + "). " +
+          "Los tipos válidos son PC, router, switch, cámara, IoT, punto de acceso e internet.");
         continue;
       }
       if (typeof d.encendido !== "boolean") {
-        anotar(etiqueta + ".encendido", "El estado encendido de \"" + d.id + "\" debe ser booleano.");
+        anotar(etiqueta + ".encendido", "El equipo \"" + d.id + "\" no indica bien si está encendido (va true o false).");
       }
       if (typeof d.x !== "number" || !isFinite(d.x) || typeof d.y !== "number" || !isFinite(d.y)) {
-        anotar(etiqueta, "Las coordenadas x e y de \"" + d.id + "\" deben ser números finitos.");
+        anotar(etiqueta, "El equipo \"" + d.id + "\" no tiene una posición válida en el lienzo (x e y tienen que ser números).");
       }
 
       if (!Array.isArray(d.interfaces)) {
-        anotar(etiqueta + ".interfaces", "El dispositivo \"" + d.id + "\" no trae lista de interfaces.");
+        anotar(etiqueta + ".interfaces", "El equipo \"" + d.id + "\" no trae sus puertos.");
         continue;
       }
 
@@ -274,11 +281,11 @@ var Escenarios = (function () {
         var iface = d.interfaces[j];
         var idIf = iface && iface.id;
         if (!textoNoVacio(idIf)) {
-          anotar(etiqueta + ".interfaces[" + j + "].id", "Hay una interfaz sin id en \"" + d.id + "\".");
+          anotar(etiqueta + ".interfaces[" + j + "].id", "Un puerto del equipo \"" + d.id + "\" no tiene nombre.");
           continue;
         }
         if (vistasIf[idIf]) {
-          anotar(etiqueta + ".interfaces", "Id de interfaz duplicado en \"" + d.id + "\": \"" + idIf + "\".");
+          anotar(etiqueta + ".interfaces", "El equipo \"" + d.id + "\" tiene dos puertos llamados \"" + idIf + "\".");
         } else {
           vistasIf[idIf] = true;
         }
@@ -287,23 +294,23 @@ var Escenarios = (function () {
       // Juego de interfaces coherente con la tabla del §4 del BASE.
       if (d.modelo !== undefined && d.modelo !== null) {
         if (d.tipo !== "router") {
-          anotar(etiqueta + ".modelo", "Sólo los routers tienen modelo (\"" + d.id + "\" es " + d.tipo + ").");
+          anotar(etiqueta + ".modelo", "Solo los routers tienen modelo, y \"" + d.id + "\" es " + d.tipo + ".");
         } else if (!MODELOS_ROUTER[d.modelo]) {
-          anotar(etiqueta + ".modelo", "Modelo de router desconocido en \"" + d.id + "\": tiene que ser \"8-puertos\" o no indicarse.");
+          anotar(etiqueta + ".modelo", "El router \"" + d.id + "\" tiene un modelo que no existe: puede ser el estándar (sin modelo) o \"8-puertos\".");
         }
       }
       var esperadas = interfacesEsperadas(d);
       var nombresEsperados = esperadas.map(function (e) { return e.id; }).join(", ");
       if (d.interfaces.length !== esperadas.length) {
-        anotar(etiqueta + ".interfaces", "El dispositivo \"" + d.id + "\" de tipo \"" + d.tipo + "\" debería tener interfaces " + nombresEsperados + ".");
+        anotar(etiqueta + ".interfaces", "El equipo \"" + d.id + "\" (" + d.tipo + ") no tiene los puertos esperados: " + nombresEsperados + ".");
       } else {
         for (j = 0; j < esperadas.length; j++) {
           var esp = esperadas[j];
           var real = buscarInterfaz(d, esp.id);
           if (!real) {
-            anotar(etiqueta + ".interfaces", "Al dispositivo \"" + d.id + "\" le falta la interfaz \"" + esp.id + "\" (debería tener " + nombresEsperados + ").");
+            anotar(etiqueta + ".interfaces", "Al equipo \"" + d.id + "\" le falta el puerto " + esp.id + " (tendría que tener " + nombresEsperados + ").");
           } else if (real.medio !== esp.medio) {
-            anotar(etiqueta + ".interfaces." + esp.id, "La interfaz \"" + esp.id + "\" de \"" + d.id + "\" debería ser de medio \"" + esp.medio + "\".");
+            anotar(etiqueta + ".interfaces." + esp.id, "El puerto " + esp.id + " del equipo \"" + d.id + "\" tendría que ser " + palabraMedio(esp.medio) + ".");
           }
         }
       }
@@ -316,35 +323,35 @@ var Escenarios = (function () {
         }
         var campoBase = etiqueta + ".interfaces." + f.id;
         if (typeof f.habilitada !== "boolean") {
-          anotar(campoBase + ".habilitada", "El estado habilitada de \"" + d.id + ":" + f.id + "\" debe ser booleano.");
+          anotar(campoBase + ".habilitada", "El puerto " + f.id + " del equipo \"" + d.id + "\" no indica bien si está habilitado (va true o false).");
         }
         if (f.ip !== undefined && f.ip !== null && String(f.ip).trim() !== "") {
           if (!Red.esIpValida(String(f.ip))) {
-            anotar(campoBase + ".ip", "IP inválida en \"" + d.id + ":" + f.id + "\": " + JSON.stringify(f.ip) + ".");
+            anotar(campoBase + ".ip", "El puerto " + f.id + " del equipo \"" + d.id + "\" tiene una IP que no es válida (" + JSON.stringify(f.ip) + ").");
           }
         }
         if (!esEnteroPrefijo(f.prefijo)) {
-          anotar(campoBase + ".prefijo", "Prefijo inválido en \"" + d.id + ":" + f.id + "\": tiene que ser un entero entre 0 y 32.");
+          anotar(campoBase + ".prefijo", "El puerto " + f.id + " del equipo \"" + d.id + "\" tiene un prefijo inválido: tiene que ser un número entre 0 y 32.");
         } else {
           var mascaraDerivada = Red.prefijoAMascara(f.prefijo);
           if (mascaraDerivada === null || !Red.esMascaraValida(mascaraDerivada)) {
-            anotar(campoBase + ".prefijo", "La máscara derivada del prefijo " + f.prefijo + " en \"" + d.id + ":" + f.id + "\" no es válida.");
+            anotar(campoBase + ".prefijo", "El puerto " + f.id + " del equipo \"" + d.id + "\" tiene una máscara inválida (prefijo " + f.prefijo + ").");
           }
         }
         if (f.mascara !== undefined && f.mascara !== null && String(f.mascara).trim() !== "") {
           if (!Red.esMascaraValida(String(f.mascara))) {
-            anotar(campoBase + ".mascara", "Máscara inválida en \"" + d.id + ":" + f.id + "\": los unos no son contiguos.");
+            anotar(campoBase + ".mascara", "El puerto " + f.id + " del equipo \"" + d.id + "\" tiene una máscara inválida: los unos no son contiguos.");
           }
         }
         if (f.medio !== undefined && MEDIOS_VALIDOS.indexOf(f.medio) < 0) {
-          anotar(campoBase + ".medio", "Medio desconocido en \"" + d.id + ":" + f.id + "\": " + JSON.stringify(f.medio) + ".");
+          anotar(campoBase + ".medio", "El puerto " + f.id + " del equipo \"" + d.id + "\" es de un medio que no existe (" + JSON.stringify(f.medio) + "): puede ser ethernet, fibra o wireless.");
         }
         // El modo de radio sólo existe en interfaces wireless.
         if (f.modoRadio !== undefined && f.modoRadio !== null && String(f.modoRadio).trim() !== "") {
           if (f.medio !== "wireless") {
-            anotar(campoBase + ".modoRadio", "El modo de radio sólo existe en interfaces wireless (\"" + d.id + ":" + f.id + "\" es " + f.medio + ").");
+            anotar(campoBase + ".modoRadio", "El modo de radio solo se usa en puertos inalámbricos, y " + f.id + " del equipo \"" + d.id + "\" es " + palabraMedio(f.medio) + ".");
           } else if (["ap", "cliente", "bridge"].indexOf(f.modoRadio) < 0) {
-            anotar(campoBase + ".modoRadio", "Modo de radio desconocido en \"" + d.id + ":" + f.id + "\": tiene que ser ap, cliente o bridge.");
+            anotar(campoBase + ".modoRadio", "El puerto " + f.id + " del equipo \"" + d.id + "\" tiene un modo de radio que no existe: puede ser ap, cliente o bridge.");
           }
         }
       }
@@ -352,32 +359,32 @@ var Escenarios = (function () {
       // Puerta de enlace y DNS, cuando están presentes.
       if (d.gateway !== undefined && d.gateway !== null && String(d.gateway).trim() !== "") {
         if (!Red.esIpValida(String(d.gateway))) {
-          anotar(etiqueta + ".gateway", "Puerta de enlace inválida en \"" + d.id + "\": " + JSON.stringify(d.gateway) + ".");
+          anotar(etiqueta + ".gateway", "La puerta de enlace del equipo \"" + d.id + "\" no es una IP válida (" + JSON.stringify(d.gateway) + ").");
         }
       }
       if (d.dns !== undefined && d.dns !== null && String(d.dns).trim() !== "") {
         if (!Red.esIpValida(String(d.dns))) {
-          anotar(etiqueta + ".dns", "DNS inválido en \"" + d.id + "\": " + JSON.stringify(d.dns) + ".");
+          anotar(etiqueta + ".dns", "El servidor DNS del equipo \"" + d.id + "\" no es una IP válida (" + JSON.stringify(d.dns) + ").");
         }
       }
 
       // Rutas de los routers.
       if (d.rutas !== undefined && d.rutas !== null) {
         if (!Array.isArray(d.rutas)) {
-          anotar(etiqueta + ".rutas", "Las rutas de \"" + d.id + "\" deben ser una lista.");
+          anotar(etiqueta + ".rutas", "La tabla de rutas del router \"" + d.id + "\" no tiene el formato correcto (tiene que ser una lista).");
         } else {
           for (var r = 0; r < d.rutas.length; r++) {
             var ruta = d.rutas[r];
             var campoRuta = etiqueta + ".rutas[" + r + "]";
             if (!ruta || !Red.esIpValida(String(ruta.destino || ""))) {
-              anotar(campoRuta, "Destino de ruta inválido en \"" + d.id + "\".");
+              anotar(campoRuta, "Una ruta del router \"" + d.id + "\" tiene un destino que no es una IP válida.");
             }
             if (!ruta || !esEnteroPrefijo(ruta.prefijo)) {
-              anotar(campoRuta, "Prefijo de ruta inválido en \"" + d.id + "\": tiene que ser un entero entre 0 y 32.");
+              anotar(campoRuta, "Una ruta del router \"" + d.id + "\" tiene un prefijo inválido: tiene que ser un número entre 0 y 32.");
             }
             if (ruta && ruta.siguienteSalto !== undefined && ruta.siguienteSalto !== null && String(ruta.siguienteSalto).trim() !== "") {
               if (!Red.esIpValida(String(ruta.siguienteSalto))) {
-                anotar(campoRuta, "Siguiente salto inválido en \"" + d.id + "\": " + JSON.stringify(ruta.siguienteSalto) + ".");
+                anotar(campoRuta, "Una ruta del router \"" + d.id + "\" tiene un siguiente salto que no es una IP válida (" + JSON.stringify(ruta.siguienteSalto) + ").");
               }
             }
           }
@@ -387,10 +394,10 @@ var Escenarios = (function () {
       // Reglas de filtrado de los routers: acción y dos redes en formato CIDR.
       if (d.reglas !== undefined && d.reglas !== null) {
         if (!Array.isArray(d.reglas)) {
-          anotar(etiqueta + ".reglas", "Las reglas de filtrado de \"" + d.id + "\" deben ser una lista.");
+          anotar(etiqueta + ".reglas", "Las reglas de filtrado del router \"" + d.id + "\" no tienen el formato correcto (tiene que ser una lista).");
         } else {
           if (d.reglas.length > 0 && d.tipo !== "router") {
-            anotar(etiqueta + ".reglas", "Sólo los routers tienen reglas de filtrado (\"" + d.id + "\" es " + d.tipo + ").");
+            anotar(etiqueta + ".reglas", "Solo los routers tienen reglas de filtrado, y \"" + d.id + "\" es " + d.tipo + ".");
           }
           for (var g = 0; g < d.reglas.length; g++) {
             var regla = d.reglas[g];
@@ -413,10 +420,10 @@ var Escenarios = (function () {
         var cfg = d.dhcp;
         if (cfg.habilitado) {
           if (!Red.esIpValida(String(cfg.desde || "")) || !Red.esIpValida(String(cfg.hasta || ""))) {
-            anotar(etiqueta + ".dhcp", "Rango DHCP inválido en \"" + d.id + "\": revisá las direcciones desde y hasta.");
+            anotar(etiqueta + ".dhcp", "El rango del servidor DHCP de \"" + d.id + "\" no es válido: revisá las direcciones desde y hasta.");
           }
           if (!esEnteroPrefijo(cfg.prefijo)) {
-            anotar(etiqueta + ".dhcp", "Prefijo DHCP inválido en \"" + d.id + "\".");
+            anotar(etiqueta + ".dhcp", "La máscara del servidor DHCP de \"" + d.id + "\" no es válida.");
           }
         }
       }
@@ -430,14 +437,14 @@ var Escenarios = (function () {
       var e = listaEnlaces[i];
       var idE = (e && e.id) || ("enlaces[" + i + "]");
       if (!e || !textoNoVacio(e.id)) {
-        anotar("enlaces[" + i + "].id", "Hay un enlace sin id.");
+        anotar("enlaces[" + i + "].id", "Hay un cable sin identificador.");
       } else if (vistosEnlaces[e.id]) {
-        anotar("enlaces", "Id de enlace duplicado: \"" + e.id + "\".");
+        anotar("enlaces", "Hay dos cables con el mismo identificador (\"" + e.id + "\").");
       } else {
         vistosEnlaces[e.id] = true;
       }
       if (!e || !e.a || !e.b) {
-        anotar("enlaces." + idE, "El enlace \"" + idE + "\" no tiene sus dos extremos.");
+        anotar("enlaces." + idE, "El cable \"" + idE + "\" no tiene sus dos puntas.");
         continue;
       }
       var devA = buscarDispositivo(obj, e.a.dispositivo);
@@ -445,14 +452,14 @@ var Escenarios = (function () {
       var ifA = devA ? buscarInterfaz(devA, e.a.interfaz) : null;
       var ifB = devB ? buscarInterfaz(devB, e.b.interfaz) : null;
       if (!devA) {
-        anotar("enlaces." + idE, "El enlace \"" + idE + "\" apunta a un dispositivo inexistente: \"" + e.a.dispositivo + "\".");
+        anotar("enlaces." + idE, "El cable \"" + idE + "\" va a un equipo que no existe (\"" + e.a.dispositivo + "\").");
       } else if (!ifA) {
-        anotar("enlaces." + idE, "El enlace \"" + idE + "\" apunta a una interfaz inexistente: \"" + e.a.dispositivo + ":" + e.a.interfaz + "\".");
+        anotar("enlaces." + idE, "El cable \"" + idE + "\" va al puerto " + e.a.interfaz + " de \"" + e.a.dispositivo + "\", que no existe.");
       }
       if (!devB) {
-        anotar("enlaces." + idE, "El enlace \"" + idE + "\" apunta a un dispositivo inexistente: \"" + e.b.dispositivo + "\".");
+        anotar("enlaces." + idE, "El cable \"" + idE + "\" va a un equipo que no existe (\"" + e.b.dispositivo + "\").");
       } else if (!ifB) {
-        anotar("enlaces." + idE, "El enlace \"" + idE + "\" apunta a una interfaz inexistente: \"" + e.b.dispositivo + ":" + e.b.interfaz + "\".");
+        anotar("enlaces." + idE, "El cable \"" + idE + "\" va al puerto " + e.b.interfaz + " de \"" + e.b.dispositivo + "\", que no existe.");
       }
 
       // Uso acumulado por puerto: un puerto ap sostiene un enlace por cliente.
@@ -472,10 +479,14 @@ var Escenarios = (function () {
 
       // Medios compatibles con el tipo del enlace.
       if (e.tipo !== undefined && MEDIOS_VALIDOS.indexOf(e.tipo) < 0) {
-        anotar("enlaces." + idE, "Tipo de enlace desconocido en \"" + idE + "\": " + JSON.stringify(e.tipo) + ".");
+        anotar("enlaces." + idE, "El cable \"" + idE + "\" es de un tipo que no existe (" + JSON.stringify(e.tipo) + "): puede ser ethernet, fibra o wireless.");
       } else if (ifA && ifB) {
         if (e.tipo !== ifA.medio || e.tipo !== ifB.medio) {
-          anotar("enlaces." + idE, "Medios incompatibles en el enlace \"" + idE + "\": " + ifA.medio + " con " + ifB.medio + " para un enlace " + e.tipo + ".");
+          anotar("enlaces." + idE, (ifA.medio === ifB.medio
+            ? "El cable \"" + idE + "\" es " + palabraMedio(e.tipo) + ", pero los dos puertos son " + palabraMedio(ifA.medio) +
+              ": el tipo de cable tiene que coincidir con el de los puertos."
+            : "El cable \"" + idE + "\" une un puerto " + palabraMedio(ifA.medio) + " con uno " + palabraMedio(ifB.medio) +
+              ": cada puerto acepta un solo tipo de cable."));
         } else if (e.tipo === "wireless") {
           // Pares válidos: cliente contra ap, o bridge contra bridge.
           var modoA = modoEfectivo(obj, e.a.dispositivo, e.a.interfaz);
@@ -484,8 +495,8 @@ var Escenarios = (function () {
             (modoA === "cliente" && modoB === "ap") ||
             (modoA === "bridge" && modoB === "bridge");
           if (!parOk) {
-            anotar("enlaces." + idE, "Modos de radio incompatibles en el enlace \"" + idE + "\": " +
-              modoA + " con " + modoB + ". Un cliente sólo se asocia a un ap; bridge sólo con bridge.");
+            anotar("enlaces." + idE, "El enlace inalámbrico \"" + idE + "\" une dos equipos en modos que no se entienden (" +
+              modoA + " con " + modoB + "): solo funcionan cliente con ap, o bridge con bridge.");
           }
         }
       }
@@ -509,7 +520,8 @@ var Escenarios = (function () {
         return enl && enl.tipo === "wireless";
       });
       if (!(esAp && todosWireless)) {
-        anotar("enlaces." + ids[1], "La interfaz \"" + clave + "\" participa en dos enlaces (\"" + ids[0] + "\" y \"" + ids[1] + "\").");
+        anotar("enlaces." + ids[1], "El puerto " + clave.split(":").slice(1).join(":") + " de \"" + clave.split(":")[0] + "\" tiene dos cables (\"" + ids[0] + "\" y \"" + ids[1] + "\"): " +
+          "un puerto de cobre o de fibra admite uno solo.");
       }
     });
 
@@ -796,13 +808,13 @@ var Escenarios = (function () {
     var idIf = corte >= 0 ? texto.slice(corte + 1) : null;
     var disp = buscarDispositivo(topologia, idDisp);
     if (!disp) {
-      return { etiqueta: texto, error: "El equipo \"" + idDisp + "\" no existe en la topología." };
+      return { etiqueta: texto, error: "El desafío nombra al equipo \"" + idDisp + "\", que no está en la red." };
     }
     var iface = null;
     if (idIf !== null) {
       iface = buscarInterfaz(disp, idIf);
       if (!iface) {
-        return { etiqueta: texto, error: "La interfaz \"" + texto + "\" no existe en la topología." };
+        return { etiqueta: texto, error: "El desafío nombra el puerto " + idIf + " de " + (disp.nombre || disp.id) + ", que no existe." };
       }
     } else {
       var prim = primeraIpDe(disp);
@@ -811,7 +823,7 @@ var Escenarios = (function () {
     var conIp = !!iface && iface.habilitada !== false && textoNoVacio(iface.ip) &&
       Red.esIpValida(iface.ip.trim()) && esEnteroPrefijo(iface.prefijo);
     return {
-      etiqueta: texto,
+      etiqueta: (disp.nombre || disp.id) + (idIf !== null ? ", puerto " + idIf : ""),
       dispositivo: disp,
       esInterfazDeclarada: idIf !== null,
       ip: conIp ? iface.ip.trim() : null,
@@ -859,7 +871,7 @@ var Escenarios = (function () {
       }
       var direccionados = info.miembros.filter(function (x) { return x.ip !== null; });
       if (direccionados.length === 0) {
-        hallazgo(info, "error", "El sector no está direccionado.");
+        hallazgo(info, "error", "Ningún equipo de este sector tiene IP todavía.");
       } else {
         info.red = Red.direccionDeRed(direccionados[0].ip, direccionados[0].prefijo);
         info.prefijo = direccionados[0].prefijo;
@@ -868,7 +880,7 @@ var Escenarios = (function () {
           var otro = direccionados[k];
           var redOtro = Red.direccionDeRed(otro.ip, otro.prefijo);
           if (redOtro !== info.red || otro.prefijo !== info.prefijo) {
-            hallazgo(info, "error", "Los equipos del sector no están todos en la misma subred: " +
+            hallazgo(info, "error", "Los equipos del sector no están en la misma subred: " +
               direccionados[0].etiqueta + " está en " + info.red + "/" + info.prefijo + " y " +
               otro.etiqueta + " en " + redOtro + "/" + otro.prefijo + ".");
             break;
@@ -896,12 +908,12 @@ var Escenarios = (function () {
 
       // 2. La subred cae dentro del bloque base.
       if (!base || inicioBase === null || finBase === null) {
-        hallazgo(cur, "error", "No hay bloque base declarado para verificar el sector.");
+        hallazgo(cur, "error", "El desafío no indica el bloque de direcciones a repartir.");
       } else {
         var ini = Red.aNumero(cur.red);
         var fin = Red.aNumero(Red.broadcast(cur.red, cur.prefijo));
         if (ini < inicioBase || fin > finBase) {
-          hallazgo(cur, "error", "La subred " + etiquetaRed + " no entra en el bloque base " + base.red + "/" + base.prefijo + ".");
+          hallazgo(cur, "error", "La subred " + etiquetaRed + " se sale del bloque asignado (" + base.red + "/" + base.prefijo + ").");
         }
       }
 
@@ -922,9 +934,9 @@ var Escenarios = (function () {
         var bloque = Red.tamanoBloque(cur.prefijo);
         var inicioPensado = Red.aNumero(referencia.ip) - 1;
         if (inicioPensado % bloque !== 0) {
-          hallazgo(cur, "error", "La subred no arranca en un múltiplo de " + bloque + ": si " +
-            referencia.ip + " (" + referencia.etiqueta + ") es la primera dirección asignable, la subred " +
-            "arrancaría en " + Red.aTexto(inicioPensado) + ", y con /" + cur.prefijo + " eso no está alineado.");
+          hallazgo(cur, "error", "La subred no está alineada: si la puerta de enlace " + referencia.ip + " (" +
+            referencia.etiqueta + ") es la primera dirección asignable, la subred empezaría en " + Red.aTexto(inicioPensado) +
+            ", que no es múltiplo de " + bloque + " (el tamaño de un bloque /" + cur.prefijo + ").");
         }
       }
 
@@ -934,8 +946,8 @@ var Escenarios = (function () {
         disponibles = 2;
       }
       if (cur.hosts > 0 && disponibles < cur.hosts) {
-        hallazgo(cur, "error", "El prefijo /" + cur.prefijo + " sólo permite " + disponibles +
-          " hosts y el sector pide " + cur.hosts + ".");
+        hallazgo(cur, "error", "Una /" + cur.prefijo + " alcanza para " + disponibles +
+          " equipos, y el sector necesita " + cur.hosts + ".");
       }
 
       // 5. Ninguna IP configurada es la de red ni la de broadcast.
@@ -943,7 +955,7 @@ var Escenarios = (function () {
         var md = cur.direccionados[d];
         if (md.prefijo < 31 && !Red.esAsignable(md.ip, md.prefijo)) {
           var rol = Red.esDireccionDeRed(md.ip, md.prefijo) ? "la dirección de red" : "la dirección de broadcast";
-          hallazgo(cur, "error", "La IP " + md.ip + " de " + md.etiqueta + " es " + rol +
+          hallazgo(cur, "error", md.etiqueta + " tiene " + md.ip + ", que es " + rol +
             " de su subred: no se puede asignar a un equipo.");
         }
       }
@@ -958,8 +970,8 @@ var Escenarios = (function () {
           continue;
         }
         if (Red.solapan(a.red, a.prefijo, b.red, b.prefijo)) {
-          hallazgo(a, "error", "Se solapa con la subred de " + b.nombre + " (" + b.red + "/" + b.prefijo + ").");
-          hallazgo(b, "error", "Se solapa con la subred de " + a.nombre + " (" + a.red + "/" + a.prefijo + ").");
+          hallazgo(a, "error", "Se superpone con la subred de " + b.nombre + ", " + b.red + "/" + b.prefijo + ": comparten direcciones.");
+          hallazgo(b, "error", "Se superpone con la subred de " + a.nombre + ", " + a.red + "/" + a.prefijo + ": comparten direcciones.");
         }
       }
     }
@@ -983,16 +995,15 @@ var Escenarios = (function () {
         var gw = eq.dispositivo.gateway;
         if (!textoNoVacio(gw)) {
           if (ipsRouter.length > 0) {
-            hallazgo(sec, "error", eq.etiqueta + " no tiene puerta de enlace configurada.");
+            hallazgo(sec, "error", eq.etiqueta + " no tiene puerta de enlace.");
           }
           continue;
         }
         gw = gw.trim();
         if (!Red.esIpValida(gw) || !Red.mismaRed(eq.ip, gw, eq.prefijo)) {
-          hallazgo(sec, "error", "El gateway " + gw + " de " + eq.etiqueta + " no pertenece a su subred.");
+          hallazgo(sec, "error", "La puerta de enlace de " + eq.etiqueta + " (" + gw + ") está fuera de su subred.");
         } else if (ipsRouter.length > 0 && ipsRouter.indexOf(gw) < 0) {
-          hallazgo(sec, "error", "El gateway " + gw + " de " + eq.etiqueta +
-            " no coincide con la interfaz del router del sector.");
+          hallazgo(sec, "error", "La puerta de enlace de " + eq.etiqueta + " (" + gw + ") no es la IP del router de su sector.");
         }
       }
 
@@ -1001,8 +1012,8 @@ var Escenarios = (function () {
       if (sec.hosts > 0 && ofrecidos >= sec.hosts && ofrecidos > 0) {
         var desperdicio = (ofrecidos - sec.hosts) / ofrecidos;
         if (desperdicio > 0.6) {
-          hallazgo(sec, "advertencia", "El bloque está sobredimensionado: se piden " + sec.hosts +
-            " hosts pero /" + sec.prefijo + " ofrece " + ofrecidos + " (desperdicio " +
+          hallazgo(sec, "advertencia", "La subred es más grande de lo necesario: el sector pide " + sec.hosts +
+            " equipos y una /" + sec.prefijo + " tiene " + ofrecidos + " (se desperdicia el " +
             Math.round(desperdicio * 100) + " %).");
         }
       }
@@ -1527,7 +1538,7 @@ var Escenarios = (function () {
       copia.enlaces[0].tipo = "fibra";
       var res = validarTopologia(copia);
       comparar("fibra contra ethernet no pasa", res.ok, false);
-      comparar("fibra contra ethernet habla de medios", contieneCodigo(res.errores, "incompatibles"), true);
+      comparar("fibra contra ethernet habla de medios", contieneCodigo(res.errores, "tipo de cable"), true);
     })();
 
     // Importar sintaxis rota: sin excepción, con mensaje.
@@ -1659,7 +1670,7 @@ var Escenarios = (function () {
       var inf = informeDe(topologiaDesafioComplejo());
       comparar("desafío con requerimientos: un informe por sector", inf.porSector.length, 5);
       comparar("desafío sin direccionar: todos con error",
-        inf.porSector.every(function (x) { return dice(x, "no está direccionado"); }), true);
+        inf.porSector.every(function (x) { return dice(x, "tiene IP todavía"); }), true);
     })();
 
     (function () {
@@ -1675,7 +1686,7 @@ var Escenarios = (function () {
       poner(topo, "cam1:eth0", "10.45.7.42", 28, "10.45.7.41");
       var cam = sectorDe(informeDe(topo), "Cámaras (CCTV)");
       comparar("desafío desalineada da error", cam.ok, false);
-      comparar("desafío desalineada menciona el múltiplo", dice(cam, "no arranca en un múltiplo de 16"), true);
+      comparar("desafío desalineada menciona el múltiplo", dice(cam, "no es múltiplo de 16"), true);
       comparar("desafío desalineada no da la respuesta", dice(cam, "10.45.7.32/28"), false);
     })();
 
@@ -1685,8 +1696,8 @@ var Escenarios = (function () {
       poner(topo, "r2:g0/0", "10.45.7.105", 29);
       poner(topo, "srv1:eth0", "10.45.7.106", 29, "10.45.7.105");
       var inf = informeDe(topo);
-      comparar("desafío solape en Cámaras", dice(sectorDe(inf, "Cámaras (CCTV)"), "Se solapa"), true);
-      comparar("desafío solape en Servidores", dice(sectorDe(inf, "Servidores"), "Se solapa"), true);
+      comparar("desafío solape en Cámaras", dice(sectorDe(inf, "Cámaras (CCTV)"), "Se superpone"), true);
+      comparar("desafío solape en Servidores", dice(sectorDe(inf, "Servidores"), "Se superpone"), true);
     })();
 
     (function () {
@@ -1694,7 +1705,7 @@ var Escenarios = (function () {
       poner(topo, "r1:g0/0", "10.45.7.65", 28);
       poner(topo, "pc-admin:eth0", "10.45.7.66", 28, "10.45.7.65");
       comparar("desafío prefijo insuficiente",
-        dice(sectorDe(informeDe(topo), "Administración"), "sólo permite 14 hosts"), true);
+        dice(sectorDe(informeDe(topo), "Administración"), "alcanza para 14 equipos"), true);
     })();
 
     (function () {
@@ -1708,14 +1719,14 @@ var Escenarios = (function () {
       var topo = disenoCorrecto();
       buscarDispositivo(topo, "pc-admin").gateway = "10.45.7.97";
       comparar("desafío gateway fuera de su subred",
-        dice(sectorDe(informeDe(topo), "Administración"), "no pertenece a su subred"), true);
+        dice(sectorDe(informeDe(topo), "Administración"), "está fuera de su subred"), true);
     })();
 
     (function () {
       var topo = disenoCorrecto();
       poner(topo, "iot1:wlan0", "10.45.7.70", 26, "10.45.7.1");
       comparar("desafío sector inconsistente",
-        dice(sectorDe(informeDe(topo), "Wi-Fi de huéspedes"), "no están todos en la misma subred"), true);
+        dice(sectorDe(informeDe(topo), "Wi-Fi de huéspedes"), "no están en la misma subred"), true);
     })();
 
     (function () {
@@ -1723,7 +1734,7 @@ var Escenarios = (function () {
       poner(topo, "srv1:eth0", null, 24, null);
       poner(topo, "r2:g0/0", null, 24);
       comparar("desafío sector sin direccionar",
-        dice(sectorDe(informeDe(topo), "Servidores"), "no está direccionado"), true);
+        dice(sectorDe(informeDe(topo), "Servidores"), "tiene IP todavía"), true);
     })();
 
     (function () {
@@ -1767,7 +1778,7 @@ var Escenarios = (function () {
       var resCli = validarTopologia(cliCli);
       comparar("cliente-cliente no pasa", resCli.ok, false);
       comparar("cliente-cliente habla de modos",
-        resCli.errores.some(function (x) { return x.mensaje.indexOf("Modos de radio") >= 0; }), true);
+        resCli.errores.some(function (x) { return x.mensaje.indexOf("modos que no se entienden") >= 0; }), true);
       var apAp = clonar(complejo);
       buscarInterfaz(buscarDispositivo(apAp, "pc-wifi"), "wlan0").modoRadio = "ap";
       var resAp = validarTopologia(apAp);

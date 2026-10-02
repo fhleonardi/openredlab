@@ -73,8 +73,8 @@ Un objetivo con `esperado: "falla"` se cumple cuando el ping efectivamente falla
   resumen: { errores: 2, advertencias: 1 },
   porSector: [
     { sector: "Wi-Fi de huéspedes", ok: false, hallazgos: [
-        { nivel: "error", mensaje: "La subred 10.45.7.50/27 no arranca en un múltiplo de 32." },
-        { nivel: "error", mensaje: "Se solapa con la subred de Administración." }
+        { nivel: "error", mensaje: "La subred no está alineada: … empezaría en 10.45.7.50, que no es múltiplo de 32 (el tamaño de un bloque /27)." },
+        { nivel: "error", mensaje: "Se superpone con la subred de Administración, 10.45.7.64/27: comparten direcciones." }
     ]},
     { sector: "Servidores", ok: true, hallazgos: [] }
   ]
@@ -91,7 +91,7 @@ Comprobaciones, en este orden:
 6. El gateway declarado para el sector está dentro de esa subred.
 7. **Advertencia, no error**, si el desperdicio supera el 60 % del bloque asignado.
 
-El informe dice **qué está mal y por qué, sin dar la respuesta correcta**. "La subred no arranca en un múltiplo de 32" enseña; "debería ser 10.45.7.64" resuelve el ejercicio por el alumno.
+El informe dice **qué está mal y por qué, sin dar la respuesta correcta**. "Empezaría en 10.45.7.50, que no es múltiplo de 32" enseña; "debería ser 10.45.7.64" resuelve el ejercicio por el alumno.
 
 ---
 

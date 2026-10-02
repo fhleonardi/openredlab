@@ -438,8 +438,8 @@ var Autotest = (function () {
       poner("cam1", "eth0", "10.45.7.42", 28, "10.45.7.41");
       var informe = Escenarios.verificarDesafio(topo, topo.escenario);
       var texto = JSON.stringify(informe.porSector);
-      var haySolape = texto.indexOf("solapa") >= 0;
-      var hayAline = texto.indexOf("no arranca en un múltiplo") >= 0;
+      var haySolape = texto.indexOf("Se superpone") >= 0;
+      var hayAline = texto.indexOf("no está alineada") >= 0;
       if (informe.porSector.length === 5 && informe.resumen.errores > 0 && haySolape && hayAline) {
         return fila(12, nombre, true, "Cámaras con el router en 10.45.7.41/28: desalineada y solapada con el Wi-Fi; errores: " +
           informe.resumen.errores + ".");

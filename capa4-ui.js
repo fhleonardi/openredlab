@@ -359,7 +359,7 @@ var UI = (function () {
     ".banda-ok b{font-size:16px;color:var(--sim-ok);}",
     ".banda-ok .ruta{font-family:ui-monospace,Consolas,monospace;font-size:13px;margin-top:2px;}",
     ".diagnostico{border:1px solid var(--sim-mal);border-left:6px solid var(--sim-mal);background:var(--sim-malfondo);border-radius:8px;padding:8px 12px;font-size:13px;line-height:1.45;flex:0 0 auto;}",
-    ".diagnostico .cod{display:inline-block;background:var(--sim-mal);color:#fff;font-family:ui-monospace,Consolas,monospace;font-weight:700;border-radius:4px;padding:1px 6px;margin-right:6px;}",
+    ".diagnostico .cod{display:inline-block;color:var(--sim-tenue);border:1px solid var(--sim-borde);font-family:ui-monospace,Consolas,monospace;font-size:11px;border-radius:4px;padding:0 5px;margin-left:8px;vertical-align:middle;}",
     ".diagnostico .tit{font-weight:700;font-size:15px;color:var(--sim-mal);}",
     ".diagnostico .rev{border-top:1px solid var(--sim-borde);margin-top:6px;padding-top:6px;}",
     ".advertencia{border:1px solid var(--sim-aviso);border-radius:8px;padding:6px;margin:6px 0;font-size:12px;}",
@@ -640,7 +640,8 @@ var UI = (function () {
     S.selectCable = selCable;
     pal.appendChild(etiqueta("Tipo de cable", selCable));
     pal.appendChild(selCable);
-    var bCable = boton("Cable: clic en dos puertos (Esc cancela)", "herramienta");
+    var bCable = boton("Conectar con un cable", "herramienta");
+    bCable.title = "Hacé clic en dos puertos para unirlos (Esc cancela)";
     bCable.setAttribute("aria-pressed", "false");
     bCable.addEventListener("click", function () {
       S.herramientaCable = !S.herramientaCable; S.cableOrigen = null;
@@ -885,8 +886,8 @@ var UI = (function () {
       g.setAttribute("class", "enlace");
       g.setAttribute("tabindex", "0");
       g.setAttribute("role", "button");
-      g.setAttribute("aria-label", "Enlace " + e.id + ", " + e.tipo + ", " + (e.estado === "up" ? "activo" : "caído") +
-        ", entre " + e.a.dispositivo + ":" + e.a.interfaz + " y " + e.b.dispositivo + ":" + e.b.interfaz);
+      g.setAttribute("aria-label", mayus(cableTexto(e)) + ", " + palabraCable(e.tipo) + ", " + (e.estado === "up" ? "activo" : "caído") +
+        ", de " + puertoTexto(e.a.dispositivo, e.a.interfaz) + " a " + puertoTexto(e.b.dispositivo, e.b.interfaz));
       var pa = puntoPuerto(a, e.a.interfaz);
       var pb = puntoPuerto(b, e.b.interfaz);
       var x1 = pa.x, y1 = pa.y, x2 = pb.x, y2 = pb.y;
@@ -1201,8 +1202,8 @@ var UI = (function () {
 
   function mostrarTipPuerto(ev, d, iface) {
     var enl = enlaceEnPuerto(d.id, iface.id);
-    S.tooltip.innerHTML = "<b>" + escapar(d.id + ":" + iface.id) + "</b><br>medio " +
-      escapar(iface.medio) + "<br>" + (enl ? "enlace " + escapar(enl.id) : "puerto libre");
+    S.tooltip.innerHTML = "<b>" + escapar((d.nombre || d.id) + " · " + iface.id) + "</b><br>puerto " +
+      escapar(palabraCable(iface.medio)) + "<br>" + (enl ? escapar("conectado a " + nombreDe(enl.a.dispositivo === d.id && enl.a.interfaz === iface.id ? enl.b.dispositivo : enl.a.dispositivo)) : "libre");
     S.tooltip.style.display = "block";
     posicionarTip(ev);
   }
@@ -1395,7 +1396,8 @@ var UI = (function () {
       S.hojaCuerpo.appendChild(el("p", "", "<small>Verde: activo; rojo y cortado: caído. La forma del trazo indica el medio.</small>"));
     } else if (tipo === "configurar") {
       var d = S.seleccionado ? buscarDisp(S.seleccionado) : null;
-      S.hojaTitulo.textContent = d ? (d.nombre || d.id) : (S.enlaceSel ? "Enlace " + S.enlaceSel : "Configurar");
+      var eHoja = !d && S.enlaceSel ? buscarEnlace(S.enlaceSel) : null;
+      S.hojaTitulo.textContent = d ? (d.nombre || d.id) : (eHoja ? mayus(cableTexto(eHoja)) : "Configurar");
       S.hojaCuerpo.appendChild(S.prop);
       renderPropiedades();
     } else {
@@ -1430,7 +1432,7 @@ var UI = (function () {
     var todos = S.paleta ? S.paleta.querySelectorAll(".palitem") : [];
     for (var i = 0; i < todos.length; i++) { todos[i].classList.remove("armado"); }
     renderLienzo();
-    avisar("Cancelado");
+    avisar("Listo, se canceló.");
   }
 
   // Mensaje breve sobre el lienzo; también se anuncia al lector de pantalla.
@@ -1505,14 +1507,15 @@ var UI = (function () {
       return "Las dos puntas del cable no pueden ir al mismo puerto.";
     }
     if (iface.medio !== e.tipo) {
-      return "El cable " + e.id + " es " + e.tipo + " y " + d.id + ":" + iface.id + " es un puerto " + iface.medio + ".";
+      return "Ese cable es " + palabraCable(e.tipo) + " y " + puertoTexto(d.id, iface.id) + " es " + palabraCable(iface.medio) +
+        ": cada puerto acepta un solo tipo de cable.";
     }
     if (!iface.habilitada) {
-      return "La interfaz " + d.id + ":" + iface.id + " está deshabilitada: habilitala primero.";
+      return mayus(puertoTexto(d.id, iface.id)) + " está deshabilitado: habilitalo primero en la pestaña Interfaces.";
     }
     var otros = enlacesEnPuerto(d.id, iface.id).filter(function (x) { return x.id !== e.id; });
     if (otros.length && !puertoAdmiteMultiplesEnlaces(d, iface)) {
-      return "El puerto " + d.id + ":" + iface.id + " ya tiene el cable " + otros[0].id + ".";
+      return mayus(puertoTexto(d.id, iface.id)) + " ya tiene " + cableTexto(otros[0]) + ".";
     }
     return null;
   }
@@ -1521,7 +1524,7 @@ var UI = (function () {
     S.moviendoExtremo = { enlace: idEnlace, lado: lado };
     S.herramientaCable = false; S.cableOrigen = null; S.colocando = null;
     renderLienzo();
-    avisar("Elegí el puerto nuevo para esta punta del cable · Esc cancela");
+    avisar("Hacé clic en el puerto nuevo para esta punta del cable (Esc cancela).");
   }
 
   function cancelarMovimiento() {
@@ -1539,7 +1542,7 @@ var UI = (function () {
     S.lineaTemporal = null;
     reconstruirEstado(); renderTodo();
     registrar("cable", "Cable " + e.id + ": la punta pasó de " + antes + " a " + idDisp + ":" + idIf + ".");
-    avisar("Cable " + e.id + " conectado en " + idDisp + ":" + idIf);
+    avisar("Cable movido: ahora llega a " + nombreDe(idDisp) + " por " + idIf + ".");
   }
 
   function moverExtremo(d, iface) {
@@ -1603,7 +1606,7 @@ var UI = (function () {
       asa.setAttribute("stroke-width", 3);
       asa.setAttribute("tabindex", "0");
       asa.setAttribute("role", "button");
-      asa.setAttribute("aria-label", "Mover la punta del cable " + e.id + " que está en " + punta.dispositivo + ":" + punta.interfaz);
+      asa.setAttribute("aria-label", "Mover la punta de " + cableTexto(e) + " que está en " + puertoTexto(punta.dispositivo, punta.interfaz));
       var tit = document.createElementNS(svgNS, "title");
       tit.textContent = "Mover esta punta: clic acá y después en el puerto nuevo";
       asa.appendChild(tit);
@@ -1631,7 +1634,7 @@ var UI = (function () {
     if (S.moviendoExtremo) { moverExtremo(d, iface); return; }
     if (!S.herramientaCable && !S.cableOrigen) { return; }
     if (!iface.habilitada) {
-      avisoCable("D01", "La interfaz " + d.id + ":" + iface.id + " está deshabilitada: habilitala en la pestaña Interfaces.");
+      avisoCable("D01", mayus(puertoTexto(d.id, iface.id)) + " está deshabilitado: habilitalo en la pestaña Interfaces.");
       S.cableOrigen = null;
       renderLienzo();
       return;
@@ -1645,8 +1648,8 @@ var UI = (function () {
         if (S.selectCable) { S.selectCable.value = iface.medio; }
       }
       S.cableOrigen = { dispositivo: d.id, interfaz: iface.id };
-      avisoCable("cable", "Cable " + S.cableTipo + " desde " + d.id + ":" + iface.id +
-        (ajustado ? " (el tipo se ajustó al puerto)" : "") + ". Elegí el puerto destino.");
+      avisoCable("cable", "Cable " + palabraCable(S.cableTipo) + " desde " + (d.nombre || d.id) + " (" + iface.id + "): elegí el otro puerto." +
+        (ajustado ? " El tipo de cable se ajustó a ese puerto." : ""));
       renderLienzo();
       return;
     }
@@ -1658,15 +1661,17 @@ var UI = (function () {
     var origenComparte = puertoAdmiteMultiplesEnlaces(od, oi);
     var destinoComparte = puertoAdmiteMultiplesEnlaces(d, iface);
     if (enlaceEnPuerto(d.id, iface.id) && !destinoComparte) {
-      avisoCable("D02", "El puerto " + d.id + ":" + iface.id + " ya tiene cable. Elegí un puerto libre.");
+      avisoCable("D02", mayus(puertoTexto(d.id, iface.id)) + " ya tiene un cable. Elegí uno libre.");
       S.cableOrigen = null; renderLienzo(); return;
     }
     if (enlaceEnPuerto(o.dispositivo, o.interfaz) && !origenComparte) {
-      avisoCable("D02", "El puerto " + o.dispositivo + ":" + o.interfaz + " ya tiene cable. Elegí un puerto libre.");
+      avisoCable("D02", mayus(puertoTexto(o.dispositivo, o.interfaz)) + " ya tiene un cable. Elegí uno libre.");
       S.cableOrigen = null; renderLienzo(); return;
     }
     if (oi.medio !== S.cableTipo || iface.medio !== S.cableTipo) {
-      avisoCable("D03", "Medios incompatibles: el cable es " + S.cableTipo + " y une " + oi.medio + " con " + iface.medio + ".");
+      avisoCable("D03", "Ese cable no va: " + (oi.medio === iface.medio
+        ? "los dos puertos son " + palabraCable(oi.medio) + " y el cable es " + palabraCable(S.cableTipo) + "."
+        : "un puerto es " + palabraCable(oi.medio) + " y el otro " + palabraCable(iface.medio) + ". Cada puerto acepta un solo tipo de cable."));
       S.cableOrigen = null; renderLienzo(); return;
     }
     empujarHistorial();
@@ -1686,9 +1691,10 @@ var UI = (function () {
     if (nuevo.tipo === "wireless") {
       var dist = Math.round(Math.sqrt(Math.pow(od.x - d.x, 2) + Math.pow(od.y - d.y, 2)));
       var umbral = (S.estado && S.estado.umbralWireless) || 250;
-      if (dist > umbral) { extra = " Ojo: están a " + dist + " de distancia y el alcance es " + umbral + "; el ping va a fallar con D17."; }
+      if (dist > umbral) { extra = " Ojo: están a " + dist + " m y el alcance es de " + umbral + " m, así que la señal no va a llegar."; }
     }
-    avisoCable("cable", "Enlace " + nuevo.id + " creado entre " + o.dispositivo + ":" + o.interfaz + " y " + d.id + ":" + iface.id + "." + extra);
+    avisoCable("cable", "Cable " + palabraCable(nuevo.tipo) + " conectado entre " + nombreDe(o.dispositivo) + " (" + o.interfaz + ") y " +
+      (d.nombre || d.id) + " (" + iface.id + ")." + extra);
   }
 
   function idUnicoEnlace(base) {
@@ -1833,9 +1839,9 @@ var UI = (function () {
       var e = buscarEnlace(S.enlaceSel);
       if (!e) { S.enlaceSel = null; }
       else {
-        c.appendChild(el("h2", "", "Enlace " + escapar(e.id)));
+        c.appendChild(el("h2", "", escapar(mayus(cableTexto(e)))));
         var sel = document.createElement("select");
-        sel.innerHTML = "<option value='up'>activo (up)</option><option value='down'>caído (down)</option>";
+        sel.innerHTML = "<option value='up'>activo</option><option value='down'>caído</option>";
         sel.value = e.estado;
         sel.addEventListener("change", function () { empujarHistorial(); e.estado = sel.value; reconstruirEstado(); renderLienzo(); });
         c.appendChild(etiqueta("Estado", sel)); c.appendChild(sel);
@@ -1868,13 +1874,14 @@ var UI = (function () {
           if (da && db) {
             var dist = Math.round(Math.sqrt(Math.pow(da.x - db.x, 2) + Math.pow(da.y - db.y, 2)));
             var umbral = (S.estado && S.estado.umbralWireless) || 250;
-            extra = "<br>Distancia: " + dist + " de " + umbral + " como máximo" + (dist > umbral ? " (fuera de alcance)" : "");
+            extra = "<br>Distancia: " + dist + " m (máximo " + umbral + " m)" + (dist > umbral ? ": fuera de alcance" : "");
           }
         }
-        c.appendChild(el("p", "", escapar(e.a.dispositivo + ":" + e.a.interfaz) + " — " + escapar(e.b.dispositivo + ":" + e.b.interfaz) +
-          "<br>Tipo: " + escapar(e.tipo) + "<br>Velocidad: " + escapar(String(e.velocidadMbps)) + " Mbps<br>Retardo: " +
+        c.appendChild(el("p", "", escapar(nombreDe(e.a.dispositivo) + " (" + e.a.interfaz + ")") + " — " +
+          escapar(nombreDe(e.b.dispositivo) + " (" + e.b.interfaz + ")") +
+          "<br>Tipo: " + escapar(palabraCable(e.tipo)) + "<br>Velocidad: " + escapar(String(e.velocidadMbps)) + " Mbps<br>Retardo: " +
           escapar(String(e.retardoMs)) + " ms" + extra));
-        var bB = boton("Borrar enlace (Supr)", "borrar");
+        var bB = boton("Borrar cable (Supr)", "borrar");
         bB.addEventListener("click", borrarSeleccion);
         c.appendChild(bB);
         return;
@@ -1882,7 +1889,7 @@ var UI = (function () {
     }
     var d = S.seleccionado ? buscarDisp(S.seleccionado) : null;
     if (!d) {
-      c.innerHTML = "<h2>Propiedades</h2><p style='font-size:13px'>Seleccioná un dispositivo o un enlace del lienzo para configurarlo. Con el teclado: Tab hasta el equipo y Enter.</p>";
+      c.innerHTML = "<h2>Propiedades</h2><p style='font-size:13px'>Seleccioná un equipo o un cable del lienzo para configurarlo. Con el teclado: Tab hasta el equipo y Enter.</p>";
       return;
     }
     var tabs = el("div", "tabs");
@@ -2016,8 +2023,9 @@ var UI = (function () {
     (d.interfaces || []).forEach(function (f) {
       var fila = el("div", "filaif");
       var enl = enlaceEnPuerto(d.id, f.id);
-      fila.appendChild(el("span", "datos", "<b>" + escapar(f.id) + "</b> · " + escapar(f.medio) +
-        "<br>" + (f.ip ? escapar(f.ip + "/" + f.prefijo) + " · " : "") + (enl ? "enlace " + escapar(enl.id) : "sin enlace")));
+      var vecinoIf = enl ? (enl.a.dispositivo === d.id && enl.a.interfaz === f.id ? enl.b.dispositivo : enl.a.dispositivo) : null;
+      fila.appendChild(el("span", "datos", "<b>" + escapar(f.id) + "</b> · " + escapar(palabraCable(f.medio)) +
+        "<br>" + (f.ip ? escapar(f.ip + "/" + f.prefijo) + " · " : "") + (enl ? "conectado a " + escapar(nombreDe(vecinoIf)) : "sin cable")));
       if (f.medio === "wireless") {
         // Modo de radio (Parche 1): ap sostiene la celda, cliente se asocia a
         // un ap, bridge une dos puntos.
@@ -2161,7 +2169,7 @@ var UI = (function () {
     });
     lab.appendChild(chk); lab.appendChild(document.createTextNode("Servidor DHCP habilitado"));
     c.appendChild(lab);
-    [["desde", "Desde"], ["hasta", "Hasta"], ["gateway", "Gateway que entrega"]].forEach(function (par) {
+    [["desde", "Desde"], ["hasta", "Hasta"], ["gateway", "Puerta de enlace que entrega"]].forEach(function (par) {
       campoTexto(c, par[1], cfg[par[0]] || "", function (v) {
         cfg[par[0]] = v.trim(); d.dhcp = cfg; reconstruirEstado();
       }, function (v) { return v.trim() === "" || Red.esIpValida(v.trim()); }, true);
@@ -2197,10 +2205,10 @@ var UI = (function () {
         avisos = Motor.advertenciasDe(S.estado, d.id, S.modo === "docente" ? { modoDocente: true } : undefined) || [];
       } catch (e) { avisos = []; }
       if (S.modo === "docente") {
-        c.appendChild(el("p", "", "Advertencias preventivas apagadas en modo docente: el alumno debe descubrir el problema."));
+        c.appendChild(el("p", "", "En modo Docente no se muestran avisos: encontrar el problema es parte del ejercicio."));
       } else if (avisos.length) {
         avisos.forEach(function (a) {
-          c.appendChild(el("div", "advertencia", "<b>" + escapar(a.codigo + " · " + a.titulo) + "</b><br>" +
+          c.appendChild(el("div", "advertencia", "<b>" + escapar(a.titulo) + "</b> <small>" + escapar(a.codigo) + "</small><br>" +
             escapar(a.explicacion) + "<br><i>" + escapar(a.sugerencia) + "</i>"));
         });
       } else {
@@ -2288,6 +2296,25 @@ var UI = (function () {
     return d ? (d.nombre || d.id) : id;
   }
 
+  var PALABRA_CABLE = { ethernet: "de cobre", fibra: "de fibra", wireless: "inalámbrico" };
+
+  function palabraCable(medio) {
+    return PALABRA_CABLE[medio] || medio;
+  }
+
+  // "el puerto fa0/2 de SW-Admin"
+  function puertoTexto(idDisp, idIf) {
+    return "el puerto " + idIf + " de " + nombreDe(idDisp);
+  }
+
+  // "el cable entre PC-Admin y SW-Admin"
+  function cableTexto(e) {
+    return (e.tipo === "wireless" ? "el enlace inalámbrico entre " : "el cable entre ") +
+      nombreDe(e.a.dispositivo) + " y " + nombreDe(e.b.dispositivo);
+  }
+
+  function mayus(t) { return t.charAt(0).toUpperCase() + t.slice(1); }
+
   // Recorrido del paquete por nombre de equipo, sin repeticiones seguidas.
   function rutaNombres(res) {
     var nombres = [];
@@ -2306,7 +2333,7 @@ var UI = (function () {
     (S.topologia.dispositivos || []).forEach(function (d) {
       if (excluirSwitches && d.tipo === "switch-l2") { return; }
       var op = document.createElement("option");
-      op.value = d.id; op.textContent = (d.nombre || d.id) + " (" + d.id + ")";
+      op.value = d.id; op.textContent = d.nombre || d.id;
       sel.appendChild(op);
     });
   }
@@ -2336,7 +2363,7 @@ var UI = (function () {
     var esc = S.topologia.escenario;
     var bVer = boton("Verificar");
     bVer.disabled = !(esc && esc.objetivos && esc.objetivos.length);
-    if (bVer.disabled) { bVer.title = "Esta topología no trae objetivos para verificar"; }
+    if (bVer.disabled) { bVer.title = "Esta red no tiene objetivos para verificar"; }
     var hayResultado = !!(S.ultimo || S.ultimaVerif || S.ultimoAutotest);
     var bCopiar = boton("Copiar registro");
     var bExp = boton("Exportar registro");
@@ -2451,7 +2478,8 @@ var UI = (function () {
   function renderDiagnostico(dg) {
     if (!dg) { return el("div", "diagnostico", "<span class='tit'>El ping falló sin diagnóstico.</span>"); }
     var caja = el("div", "diagnostico",
-      "<span class='cod'>" + escapar(dg.codigo) + "</span><span class='tit'>" + escapar(dg.titulo) + "</span>" +
+      "<span class='tit'>" + escapar(dg.titulo) + "</span>" +
+      (dg.codigo && dg.codigo !== "ENTRADA" ? "<span class='cod' title='Código del diagnóstico'>" + escapar(dg.codigo) + "</span>" : "") +
       "<div>" + escapar(dg.explicacion) + "</div>" +
       "<div class='rev'><b>Sugerencia:</b> " + escapar(dg.sugerencia) + "</div>");
     var origen = S.ultimo && S.ultimo.origen;
@@ -2473,7 +2501,7 @@ var UI = (function () {
     return lineas.length ? lineas[lineas.length - 1].trim() : "";
   }
 
-  var PASOS_CLAVE = /^(Resolver el nombre|Comparar redes|Buscar ruta|Llegar a internet|Verificar que el destino)/;
+  var PASOS_CLAVE = /^(Averiguar la IP de|Decidir si el destino|Buscar ruta|Llegar a internet|Comprobar que la respuesta)/;
 
   function renderRecorrido(res) {
     var caja = el("div", "recorrido");
@@ -2510,10 +2538,10 @@ var UI = (function () {
         var f = el("div", "pasofallo",
           "<span class='marca' aria-hidden='true'>✗</span><b>" + p.n + ". " + escapar(p.titulo) + "</b>");
         var pre = document.createElement("pre");
-        // En el resumen van las dos primeras líneas del detalle (la cuenta
-        // que falló); el detalle completo, con los binarios, en "Ver los pasos".
+        // En el resumen van la primera línea del detalle (la cuenta) y la
+        // última (la conclusión); los binarios, en "Ver los pasos".
         var det = String(p.detalle || "").split("\n");
-        pre.textContent = (S.verTodos ? det : det.slice(0, 2)).join("\n");
+        pre.textContent = (S.verTodos || det.length <= 2 ? det : [det[0], det[det.length - 1]]).join("\n");
         f.appendChild(pre);
         lista.appendChild(f);
       }
@@ -2642,11 +2670,11 @@ var UI = (function () {
       consolaAgregar("Estadísticas: 1 enviados, 1 recibidos, 0 perdidos.");
       anunciar("Ping a " + destino + ": el eco volvió en " + r.ms + " milisegundos.");
     } else {
-      consolaAgregar("El ping de " + origen + " a " + destino + " falló.", true);
+      consolaAgregar("El ping de " + nombreDe(origen) + " a " + destino + " falló.", true);
       if (res.diagnostico) {
-        consolaAgregar(res.diagnostico.codigo + " · " + res.diagnostico.titulo, true);
+        consolaAgregar(res.diagnostico.titulo + " (" + res.diagnostico.codigo + ")", true);
       }
-      anunciar("Ping a " + destino + " falló" + (res.diagnostico ? ": " + res.diagnostico.codigo + ", " + res.diagnostico.titulo : "") + ".");
+      anunciar("Ping a " + destino + " falló" + (res.diagnostico ? ": " + res.diagnostico.titulo : "") + ".");
     }
     registrar("resultado",
       "Ping " + origen + " → " + destino + ": " + (res.exito ? "éxito." : ("falla " + (res.diagnostico ? res.diagnostico.codigo : "") + ".")));
@@ -2658,7 +2686,7 @@ var UI = (function () {
   function verificarActual() {
     var esc = S.topologia.escenario;
     if (!esc || !esc.objetivos) {
-      S.ultimaVerif = { error: "Esta topología no trae objetivos. Cargá el ejemplo docente para practicar." };
+      S.ultimaVerif = { error: "Esta red no tiene objetivos para verificar. Los traen los laboratorios y el ejemplo \"Complejo roto\"." };
     } else {
       if (!S.estado) { reconstruirEstado(); }
       try { S.ultimaVerif = { res: Escenarios.verificarObjetivos(S.estado, esc.objetivos) }; }
@@ -2738,15 +2766,17 @@ var UI = (function () {
     if (det.advertencia) { html += "<div class='advertencia'>" + escapar(det.advertencia) + "</div>"; }
     // El AND de la propia IP se muestra siempre; la comparación con el
     // gateway, sólo si el equipo tiene uno.
-    html += "<p><b>¿Tu gateway está en tu subred?</b><br>";
-    html += "IP&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;" + escapar(det.ip) + " AND máscara → " + escapar((det.gateway && det.gateway.andIp) || det.direccionDeRed) + "<br>";
+    html += "<p><b>¿Tu puerta de enlace (gateway) está en tu red?</b><br>";
+    html += "Tu IP " + escapar(det.ip) + " AND máscara → " + escapar((det.gateway && det.gateway.andIp) || det.direccionDeRed) + "<br>";
     if (det.gateway) {
-      html += "Gateway " + escapar(det.gateway.ip) + " AND máscara → " + escapar(det.gateway.andGateway || "?") + "<br>";
+      html += "Puerta de enlace " + escapar(det.gateway.ip) + " AND máscara → " + escapar(det.gateway.andGateway || "?") + "<br>";
       html += escapar(det.gateway.veredicto) + "</p>";
-    } else if (d.tipo === "router" || d.tipo === "internet") {
-      html += "Un router no necesita gateway para llegar a sus propias redes: para las demás decide con su tabla de rutas.</p>";
+    } else if (d.tipo === "internet") {
+      html += "Internet no usa puerta de enlace: responde por las direcciones públicas.</p>";
+    } else if (d.tipo === "router") {
+      html += "Un router no usa puerta de enlace para sus propias redes: para las demás decide con su tabla de rutas.</p>";
     } else {
-      html += "Sin gateway configurado: este equipo sólo puede comunicarse con los de su propia red.</p>";
+      html += "Sin puerta de enlace: este equipo solo puede comunicarse con los de su propia red.</p>";
     }
     caja.innerHTML = html;
   }
@@ -2793,9 +2823,10 @@ var UI = (function () {
       out.innerHTML = msgs.map(function (m) {
         return "<div class='paso ok'><b>" + escapar(m.tipo) + "</b> " + escapar(m.origen) + " → " + escapar(m.destino) + "</div>";
       }).join("") + (res.exito
-        ? "<p>Dirección otorgada: <b>" + escapar(res.ip + "/" + res.prefijo) + "</b> gateway " + escapar(res.gateway || "—") + ".</p>"
-        : "<div class='diagnostico'><b>" + escapar(res.diagnostico ? res.diagnostico.codigo : "D16") + "</b> " +
-          escapar(res.diagnostico ? res.diagnostico.explicacion : "") + "</div>");
+        ? "<p>Dirección otorgada: <b>" + escapar(res.ip + "/" + res.prefijo) + "</b>, puerta de enlace " + escapar(res.gateway || "—") + ".</p>"
+        : "<div class='diagnostico'><span class='tit'>" + escapar(res.diagnostico ? res.diagnostico.titulo : "") + "</span>" +
+          "<span class='cod'>" + escapar(res.diagnostico ? res.diagnostico.codigo : "D16") + "</span><div>" +
+          escapar(res.diagnostico ? res.diagnostico.explicacion : "") + "</div></div>");
       renderTodo();
       animarDhcp(res);
     });
@@ -2803,7 +2834,7 @@ var UI = (function () {
 
   function panelAyuda(c) {
     c.innerHTML = "<b>Ayuda</b>" +
-      "<p><b>Ideas clave:</b> el sistema operativo decide con IP AND máscara; el gateway debe estar en tu subred; " +
+      "<p><b>Ideas clave:</b> el sistema operativo decide con IP AND máscara; la puerta de enlace tiene que estar en tu red; " +
       "el switch no mira IP y no enruta; la vuelta del ping también necesita camino; el prefijo es la fuente de verdad.</p>" +
       "<p><b>Simplificaciones declaradas:</b> sin STP ni bucles reales, sin enrutamiento dinámico (OSPF, BGP, RIP), " +
       "sin VLAN ni switch L3, sin NAT, sin HTTP, sin fragmentación, sin IPv6, sin TCP real, sin cifrado ni TLS, " +
@@ -3098,7 +3129,7 @@ var UI = (function () {
     else { S.pestañaInf = "simulacion"; }
     renderTodo();
     registrar("modo", "Modo " + modo + ". La topología cargada no cambió." +
-      (modo === "docente" ? " Advertencias preventivas apagadas." : ""));
+      (modo === "docente" ? " No se muestran avisos de configuración." : ""));
   }
 
   return {
