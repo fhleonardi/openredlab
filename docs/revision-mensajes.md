@@ -27,7 +27,7 @@ Los ejemplos salen de pings reales sobre los ejemplos `complejo` y `complejo-rot
 
 ## 1. Diagnósticos D01–D26
 
-D27 (regla de filtrado, SRE-988) ya se escribió con estos criterios y no hace falta revisarlo.
+D27 (regla de filtrado) ya se escribió con estos criterios y no hace falta revisarlo.
 
 Formato de cada fila: **título** · explicación · *sugerencia*. Los datos son de ejemplo.
 

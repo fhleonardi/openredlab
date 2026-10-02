@@ -25,7 +25,7 @@ Estructura exacta:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Simulador de Redes — Sistemas Operativos y Redes, Unidad 9</title>
+  <title>OpenRedLab · Simulador de Redes</title>
   <style> /* sólo el reset mínimo; el resto del CSS lo inyecta la capa 4 */ </style>
 </head>
 <body>

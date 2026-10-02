@@ -373,6 +373,8 @@ var UI = (function () {
     ".recorrido .tenue{color:var(--sim-tenue);font-size:12px;}",
     ".agregarpuerto{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:8px;padding-top:8px;border-top:1px solid var(--sim-borde);font-size:12px;}",
     ".filaif select{max-width:120px;}",
+    ".simbarra h1 .subtitulo{font-weight:400;font-size:.72em;opacity:.8;margin-left:6px;}",
+    "@media (max-width:640px){.simbarra h1 .subtitulo{display:none;}}",
     ".ayuda{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:8px;padding:2px 0;font-size:12px;line-height:1.35;}",
     ".ayuda section{background:var(--sim-fondo);border:1px solid var(--sim-borde);border-radius:10px;padding:6px 10px;min-width:0;}",
     ".ayuda h3{margin:0 0 3px;font-size:12.5px;color:var(--sim-acento);}",
@@ -626,7 +628,7 @@ var UI = (function () {
       bMenu.setAttribute("aria-expanded", String(abierto));
     });
     barra.appendChild(bMenu);
-    barra.appendChild(el("h1", "", "Simulador de Redes"));
+    barra.appendChild(el("h1", "", "OpenRedLab <span class='subtitulo'>Simulador de Redes</span>"));
     S.barra = barra;
     var modos = el("div", "modos");
     modos.setAttribute("role", "group");
