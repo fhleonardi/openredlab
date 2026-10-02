@@ -1,0 +1,1155 @@
+{
+  "version": 1,
+  "nombre": "Complejo Termal Río Verde — diagrama del punto 6",
+  "dispositivos": [
+    {
+      "id": "fw",
+      "tipo": "router",
+      "modelo": "8-puertos",
+      "nombre": "FW",
+      "x": 520,
+      "y": 90,
+      "encendido": true,
+      "interfaces": [
+        {
+          "id": "ether1",
+          "nombre": "ether1",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "ether2",
+          "nombre": "ether2",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": "10.45.7.130",
+          "prefijo": 30
+        },
+        {
+          "id": "ether3",
+          "nombre": "ether3",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "ether4",
+          "nombre": "ether4",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "ether5",
+          "nombre": "ether5",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "ether6",
+          "nombre": "ether6",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "ether7",
+          "nombre": "ether7",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "ether8",
+          "nombre": "ether8",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "sfp1",
+          "nombre": "sfp1",
+          "medio": "fibra",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "wlan1",
+          "nombre": "wlan1",
+          "medio": "wireless",
+          "habilitada": false,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24,
+          "modoRadio": "ap"
+        }
+      ],
+      "gateway": null,
+      "dns": null,
+      "rutas": [
+        {
+          "destino": "10.45.7.0",
+          "prefijo": 24,
+          "siguienteSalto": "10.45.7.129"
+        }
+      ],
+      "dhcp": null
+    },
+    {
+      "id": "r1",
+      "tipo": "router",
+      "modelo": "8-puertos",
+      "nombre": "R-Central",
+      "x": 520,
+      "y": 290,
+      "encendido": true,
+      "interfaces": [
+        {
+          "id": "ether1",
+          "nombre": "ether1",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": "10.45.7.129",
+          "prefijo": 30
+        },
+        {
+          "id": "ether2",
+          "nombre": "ether2",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": "10.45.7.1",
+          "prefijo": 26
+        },
+        {
+          "id": "ether3",
+          "nombre": "ether3",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": "10.45.7.65",
+          "prefijo": 27
+        },
+        {
+          "id": "ether4",
+          "nombre": "ether4",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": "10.45.7.97",
+          "prefijo": 28
+        },
+        {
+          "id": "ether5",
+          "nombre": "ether5",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": "10.45.7.113",
+          "prefijo": 29
+        },
+        {
+          "id": "ether6",
+          "nombre": "ether6",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": "10.45.7.121",
+          "prefijo": 29
+        },
+        {
+          "id": "ether7",
+          "nombre": "ether7",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "ether8",
+          "nombre": "ether8",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "sfp1",
+          "nombre": "sfp1",
+          "medio": "fibra",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "wlan1",
+          "nombre": "wlan1",
+          "medio": "wireless",
+          "habilitada": false,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24,
+          "modoRadio": "ap"
+        }
+      ],
+      "gateway": "10.45.7.130",
+      "dns": null,
+      "rutas": [],
+      "dhcp": null
+    },
+    {
+      "id": "sw-huesp",
+      "tipo": "switch-l2",
+      "nombre": "SW-Huéspedes 10.45.7.0/26",
+      "x": 0,
+      "y": 640,
+      "encendido": true,
+      "interfaces": [
+        {
+          "id": "fa0/1",
+          "nombre": "fa0/1",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "fa0/2",
+          "nombre": "fa0/2",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "fa0/3",
+          "nombre": "fa0/3",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "fa0/4",
+          "nombre": "fa0/4",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "fa0/5",
+          "nombre": "fa0/5",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "fa0/6",
+          "nombre": "fa0/6",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "fa0/7",
+          "nombre": "fa0/7",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "fa0/8",
+          "nombre": "fa0/8",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "fib0",
+          "nombre": "fib0",
+          "medio": "fibra",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        }
+      ],
+      "gateway": null,
+      "dns": null,
+      "rutas": [],
+      "dhcp": null
+    },
+    {
+      "id": "sw-admin",
+      "tipo": "switch-l2",
+      "nombre": "SW-Admin 10.45.7.64/27",
+      "x": 260,
+      "y": 640,
+      "encendido": true,
+      "interfaces": [
+        {
+          "id": "fa0/1",
+          "nombre": "fa0/1",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "fa0/2",
+          "nombre": "fa0/2",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "fa0/3",
+          "nombre": "fa0/3",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "fa0/4",
+          "nombre": "fa0/4",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "fa0/5",
+          "nombre": "fa0/5",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "fa0/6",
+          "nombre": "fa0/6",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "fa0/7",
+          "nombre": "fa0/7",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "fa0/8",
+          "nombre": "fa0/8",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "fib0",
+          "nombre": "fib0",
+          "medio": "fibra",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        }
+      ],
+      "gateway": null,
+      "dns": null,
+      "rutas": [],
+      "dhcp": null
+    },
+    {
+      "id": "sw-cctv",
+      "tipo": "switch-l2",
+      "nombre": "SW-CCTV 10.45.7.96/28",
+      "x": 520,
+      "y": 640,
+      "encendido": true,
+      "interfaces": [
+        {
+          "id": "fa0/1",
+          "nombre": "fa0/1",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "fa0/2",
+          "nombre": "fa0/2",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "fa0/3",
+          "nombre": "fa0/3",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "fa0/4",
+          "nombre": "fa0/4",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "fa0/5",
+          "nombre": "fa0/5",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "fa0/6",
+          "nombre": "fa0/6",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "fa0/7",
+          "nombre": "fa0/7",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "fa0/8",
+          "nombre": "fa0/8",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "fib0",
+          "nombre": "fib0",
+          "medio": "fibra",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        }
+      ],
+      "gateway": null,
+      "dns": null,
+      "rutas": [],
+      "dhcp": null
+    },
+    {
+      "id": "sw-pos",
+      "tipo": "switch-l2",
+      "nombre": "SW-POS 10.45.7.112/29",
+      "x": 780,
+      "y": 640,
+      "encendido": true,
+      "interfaces": [
+        {
+          "id": "fa0/1",
+          "nombre": "fa0/1",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "fa0/2",
+          "nombre": "fa0/2",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "fa0/3",
+          "nombre": "fa0/3",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "fa0/4",
+          "nombre": "fa0/4",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "fa0/5",
+          "nombre": "fa0/5",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "fa0/6",
+          "nombre": "fa0/6",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "fa0/7",
+          "nombre": "fa0/7",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "fa0/8",
+          "nombre": "fa0/8",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "fib0",
+          "nombre": "fib0",
+          "medio": "fibra",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        }
+      ],
+      "gateway": null,
+      "dns": null,
+      "rutas": [],
+      "dhcp": null
+    },
+    {
+      "id": "sw-srv",
+      "tipo": "switch-l2",
+      "nombre": "SW-Servidores 10.45.7.120/29",
+      "x": 1040,
+      "y": 640,
+      "encendido": true,
+      "interfaces": [
+        {
+          "id": "fa0/1",
+          "nombre": "fa0/1",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "fa0/2",
+          "nombre": "fa0/2",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "fa0/3",
+          "nombre": "fa0/3",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "fa0/4",
+          "nombre": "fa0/4",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "fa0/5",
+          "nombre": "fa0/5",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "fa0/6",
+          "nombre": "fa0/6",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "fa0/7",
+          "nombre": "fa0/7",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "fa0/8",
+          "nombre": "fa0/8",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "fib0",
+          "nombre": "fib0",
+          "medio": "fibra",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        }
+      ],
+      "gateway": null,
+      "dns": null,
+      "rutas": [],
+      "dhcp": null
+    },
+    {
+      "id": "ap-huesp",
+      "tipo": "ap",
+      "nombre": "AP-Huéspedes",
+      "x": 0,
+      "y": 840,
+      "encendido": true,
+      "interfaces": [
+        {
+          "id": "wlan0",
+          "nombre": "wlan0",
+          "medio": "wireless",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24,
+          "modoRadio": "ap"
+        },
+        {
+          "id": "eth0",
+          "nombre": "eth0",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        }
+      ],
+      "gateway": null,
+      "dns": null,
+      "rutas": [],
+      "dhcp": null
+    },
+    {
+      "id": "celular",
+      "tipo": "pc",
+      "nombre": "Celular-Huésped",
+      "x": -210,
+      "y": 840,
+      "encendido": true,
+      "interfaces": [
+        {
+          "id": "eth0",
+          "nombre": "eth0",
+          "medio": "ethernet",
+          "habilitada": false,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        },
+        {
+          "id": "wlan0",
+          "nombre": "wlan0",
+          "medio": "wireless",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": "10.45.7.10",
+          "prefijo": 26,
+          "modoRadio": "cliente"
+        }
+      ],
+      "gateway": "10.45.7.1",
+      "dns": null,
+      "rutas": [],
+      "dhcp": null
+    },
+    {
+      "id": "pc-recepcion",
+      "tipo": "pc",
+      "nombre": "PC-Recepción",
+      "x": 260,
+      "y": 840,
+      "encendido": true,
+      "interfaces": [
+        {
+          "id": "eth0",
+          "nombre": "eth0",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": "10.45.7.66",
+          "prefijo": 27
+        },
+        {
+          "id": "wlan0",
+          "nombre": "wlan0",
+          "medio": "wireless",
+          "habilitada": false,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        }
+      ],
+      "gateway": "10.45.7.65",
+      "dns": null,
+      "rutas": [],
+      "dhcp": null
+    },
+    {
+      "id": "camara-hall",
+      "tipo": "camara",
+      "nombre": "Cámara-Hall",
+      "x": 520,
+      "y": 840,
+      "encendido": true,
+      "interfaces": [
+        {
+          "id": "eth0",
+          "nombre": "eth0",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": "10.45.7.98",
+          "prefijo": 28
+        },
+        {
+          "id": "wlan0",
+          "nombre": "wlan0",
+          "medio": "wireless",
+          "habilitada": false,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        }
+      ],
+      "gateway": "10.45.7.97",
+      "dns": null,
+      "rutas": [],
+      "dhcp": null
+    },
+    {
+      "id": "terminal-resto",
+      "tipo": "pc",
+      "nombre": "Terminal-Restaurante",
+      "x": 780,
+      "y": 840,
+      "encendido": true,
+      "interfaces": [
+        {
+          "id": "eth0",
+          "nombre": "eth0",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": "10.45.7.114",
+          "prefijo": 29
+        },
+        {
+          "id": "wlan0",
+          "nombre": "wlan0",
+          "medio": "wireless",
+          "habilitada": false,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        }
+      ],
+      "gateway": "10.45.7.113",
+      "dns": null,
+      "rutas": [],
+      "dhcp": null
+    },
+    {
+      "id": "srv-reservas",
+      "tipo": "pc",
+      "nombre": "Servidor-Reservas",
+      "x": 1040,
+      "y": 840,
+      "encendido": true,
+      "interfaces": [
+        {
+          "id": "eth0",
+          "nombre": "eth0",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": "10.45.7.122",
+          "prefijo": 29
+        },
+        {
+          "id": "wlan0",
+          "nombre": "wlan0",
+          "medio": "wireless",
+          "habilitada": false,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24
+        }
+      ],
+      "gateway": "10.45.7.121",
+      "dns": null,
+      "rutas": [],
+      "dhcp": null
+    }
+  ],
+  "enlaces": [
+    {
+      "id": "l-r-fw",
+      "a": {
+        "dispositivo": "r1",
+        "interfaz": "ether1"
+      },
+      "b": {
+        "dispositivo": "fw",
+        "interfaz": "ether2"
+      },
+      "tipo": "ethernet",
+      "estado": "up",
+      "velocidadMbps": 100,
+      "retardoMs": 1
+    },
+    {
+      "id": "l-huesp",
+      "a": {
+        "dispositivo": "r1",
+        "interfaz": "ether2"
+      },
+      "b": {
+        "dispositivo": "sw-huesp",
+        "interfaz": "fa0/1"
+      },
+      "tipo": "ethernet",
+      "estado": "up",
+      "velocidadMbps": 100,
+      "retardoMs": 1
+    },
+    {
+      "id": "l-admin",
+      "a": {
+        "dispositivo": "r1",
+        "interfaz": "ether3"
+      },
+      "b": {
+        "dispositivo": "sw-admin",
+        "interfaz": "fa0/1"
+      },
+      "tipo": "ethernet",
+      "estado": "up",
+      "velocidadMbps": 100,
+      "retardoMs": 1
+    },
+    {
+      "id": "l-cctv",
+      "a": {
+        "dispositivo": "r1",
+        "interfaz": "ether4"
+      },
+      "b": {
+        "dispositivo": "sw-cctv",
+        "interfaz": "fa0/1"
+      },
+      "tipo": "ethernet",
+      "estado": "up",
+      "velocidadMbps": 100,
+      "retardoMs": 1
+    },
+    {
+      "id": "l-pos",
+      "a": {
+        "dispositivo": "r1",
+        "interfaz": "ether5"
+      },
+      "b": {
+        "dispositivo": "sw-pos",
+        "interfaz": "fa0/1"
+      },
+      "tipo": "ethernet",
+      "estado": "up",
+      "velocidadMbps": 100,
+      "retardoMs": 1
+    },
+    {
+      "id": "l-srv",
+      "a": {
+        "dispositivo": "r1",
+        "interfaz": "ether6"
+      },
+      "b": {
+        "dispositivo": "sw-srv",
+        "interfaz": "fa0/1"
+      },
+      "tipo": "ethernet",
+      "estado": "up",
+      "velocidadMbps": 100,
+      "retardoMs": 1
+    },
+    {
+      "id": "l-ap",
+      "a": {
+        "dispositivo": "ap-huesp",
+        "interfaz": "eth0"
+      },
+      "b": {
+        "dispositivo": "sw-huesp",
+        "interfaz": "fa0/6"
+      },
+      "tipo": "ethernet",
+      "estado": "up",
+      "velocidadMbps": 100,
+      "retardoMs": 1
+    },
+    {
+      "id": "l-wifi",
+      "a": {
+        "dispositivo": "ap-huesp",
+        "interfaz": "wlan0"
+      },
+      "b": {
+        "dispositivo": "celular",
+        "interfaz": "wlan0"
+      },
+      "tipo": "wireless",
+      "estado": "up",
+      "velocidadMbps": 54,
+      "retardoMs": 3
+    },
+    {
+      "id": "l-recepcion",
+      "a": {
+        "dispositivo": "pc-recepcion",
+        "interfaz": "eth0"
+      },
+      "b": {
+        "dispositivo": "sw-admin",
+        "interfaz": "fa0/6"
+      },
+      "tipo": "ethernet",
+      "estado": "up",
+      "velocidadMbps": 100,
+      "retardoMs": 1
+    },
+    {
+      "id": "l-camara",
+      "a": {
+        "dispositivo": "camara-hall",
+        "interfaz": "eth0"
+      },
+      "b": {
+        "dispositivo": "sw-cctv",
+        "interfaz": "fa0/6"
+      },
+      "tipo": "ethernet",
+      "estado": "up",
+      "velocidadMbps": 100,
+      "retardoMs": 1
+    },
+    {
+      "id": "l-terminal",
+      "a": {
+        "dispositivo": "terminal-resto",
+        "interfaz": "eth0"
+      },
+      "b": {
+        "dispositivo": "sw-pos",
+        "interfaz": "fa0/6"
+      },
+      "tipo": "ethernet",
+      "estado": "up",
+      "velocidadMbps": 100,
+      "retardoMs": 1
+    },
+    {
+      "id": "l-servidor",
+      "a": {
+        "dispositivo": "srv-reservas",
+        "interfaz": "eth0"
+      },
+      "b": {
+        "dispositivo": "sw-srv",
+        "interfaz": "fa0/6"
+      },
+      "tipo": "ethernet",
+      "estado": "up",
+      "velocidadMbps": 100,
+      "retardoMs": 1
+    }
+  ],
+  "escenario": {
+    "modo": "desafio",
+    "bloqueBase": "10.45.7.0/24",
+    "requerimientos": [
+      {
+        "sector": "Wi-Fi de huéspedes",
+        "hosts": 60,
+        "dispositivos": [
+          "celular",
+          "r1:ether2"
+        ]
+      },
+      {
+        "sector": "Administración y reservas",
+        "hosts": 25,
+        "dispositivos": [
+          "pc-recepcion",
+          "r1:ether3"
+        ]
+      },
+      {
+        "sector": "Cámaras de seguridad (CCTV)",
+        "hosts": 12,
+        "dispositivos": [
+          "camara-hall",
+          "r1:ether4"
+        ]
+      },
+      {
+        "sector": "Puntos de venta",
+        "hosts": 6,
+        "dispositivos": [
+          "terminal-resto",
+          "r1:ether5"
+        ]
+      },
+      {
+        "sector": "Servidores internos",
+        "hosts": 3,
+        "dispositivos": [
+          "srv-reservas",
+          "r1:ether6"
+        ]
+      },
+      {
+        "sector": "Enlace router — firewall",
+        "hosts": 2,
+        "dispositivos": [
+          "r1:ether1",
+          "fw:ether2"
+        ]
+      }
+    ],
+    "objetivos": [
+      {
+        "tipo": "ping",
+        "origen": "celular",
+        "destino": "10.45.7.122",
+        "esperado": "exito"
+      },
+      {
+        "tipo": "ping",
+        "origen": "pc-recepcion",
+        "destino": "10.45.7.122",
+        "esperado": "exito"
+      },
+      {
+        "tipo": "ping",
+        "origen": "terminal-resto",
+        "destino": "10.45.7.130",
+        "esperado": "exito"
+      },
+      {
+        "tipo": "ping",
+        "origen": "camara-hall",
+        "destino": "10.45.7.10",
+        "esperado": "exito"
+      }
+    ]
+  }
+}

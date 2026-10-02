@@ -64,7 +64,9 @@ var UI = (function () {
     presExpandida: false,
     origenElegido: null,
     anuncio: null,
-    hoja: null
+    hoja: null,
+    moviendoExtremo: null,
+    lineaTemporal: null
   };
 
   var TIPOS = [
@@ -373,7 +375,8 @@ var UI = (function () {
     ".binario .corte{border-left:2px solid var(--sim-mal);}",
     ".calc{font-size:13px;}",
     ".calc .grid{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;}",
-    "svg .nodo,svg .enlace{cursor:pointer;}",
+    "svg .nodo,svg .enlace,svg .asa{cursor:pointer;}",
+    "svg .asa:focus-visible{outline:3px solid var(--sim-acento);outline-offset:2px;}",
     "svg .enlace:focus{outline:none;}",
     "svg .puerto{cursor:pointer;stroke:#333;stroke-width:1;}",
     "svg text{font-family:system-ui,Arial,sans-serif;}",
@@ -446,7 +449,7 @@ var UI = (function () {
 
   function icono(tipo) {
     if (tipo === "router-8") {
-      return "<rect x='-22' y='-11' width='44' height='22' rx='4' fill='#f6d186' stroke='#8a5a00' stroke-width='2'/>" +
+      return "<rect x='-26' y='-11' width='52' height='22' rx='4' fill='#f6d186' stroke='#8a5a00' stroke-width='2'/>" +
         "<path d='M-9 -5 L9 5 M-9 5 L9 -5' stroke='#8a5a00' stroke-width='2'/>" +
         "<circle cx='0' cy='0' r='2.5' fill='#8a5a00'/>";
     }
@@ -626,6 +629,7 @@ var UI = (function () {
     selCable.id = idCampo("tipo-cable");
     selCable.innerHTML = "<option value='ethernet'>ethernet (cobre)</option><option value='fibra'>fibra</option><option value='wireless'>wireless</option>";
     selCable.addEventListener("change", function () { S.cableTipo = selCable.value; S.herramientaCable = true; renderLienzo(); });
+    S.selectCable = selCable;
     pal.appendChild(etiqueta("Tipo de cable", selCable));
     pal.appendChild(selCable);
     var bCable = boton("Cable: clic en dos puertos (Esc cancela)", "herramienta");
@@ -661,7 +665,8 @@ var UI = (function () {
     var cEn = document.createElementNS(svgNS, "g");
     var cNo = document.createElementNS(svgNS, "g");
     var cAn = document.createElementNS(svgNS, "g");
-    mundo.appendChild(cEn); mundo.appendChild(cNo); mundo.appendChild(cAn);
+    var cAs = document.createElementNS(svgNS, "g");
+    mundo.appendChild(cEn); mundo.appendChild(cNo); mundo.appendChild(cAn); mundo.appendChild(cAs);
     svg.appendChild(mundo);
     zona.appendChild(svg);
     var tools = el("div", "simtools");
@@ -691,7 +696,7 @@ var UI = (function () {
     zona.appendChild(tip);
     S.tooltip = tip;
     cuerpo.appendChild(zona);
-    S.svg = svg; S.capaMundo = mundo; S.capaEnlaces = cEn; S.capaNodos = cNo; S.capaAnim = cAn;
+    S.svg = svg; S.capaMundo = mundo; S.capaEnlaces = cEn; S.capaNodos = cNo; S.capaAnim = cAn; S.capaAsas = cAs;
 
     var prop = el("div", "simprop");
     cuerpo.appendChild(prop);
@@ -821,15 +826,26 @@ var UI = (function () {
     };
   }
 
-  function posicionPuerto(disp, indice, total) {
-    var w = 56, h = 52;
-    if (total === 1) { return { x: disp.x, y: disp.y - h / 2 }; }
-    var porLado = Math.ceil(total / 2);
-    if (indice < porLado) {
-      return { x: disp.x - w / 2 + (indice + 0.5) * (w / porLado), y: disp.y - h / 2 };
+  // Cómo se reparten los puertos en el perímetro: cuántos van arriba y el
+  // ancho de cada fila. El router de 8 puertos imita a un MikroTik: ether1
+  // (la WAN) arriba y el resto en una tira abajo, más ancha que el ícono.
+  function disposicionPuertos(disp, total) {
+    if (disp && disp.tipo === "router" && disp.modelo === "8-puertos" && total > 1) {
+      return { arriba: 1, anchoArriba: 12, anchoAbajo: 12 * (total - 1) };
     }
-    var j = indice - porLado;
-    return { x: disp.x - w / 2 + (j + 0.5) * (w / (total - porLado)), y: disp.y + h / 2 };
+    return { arriba: Math.ceil(total / 2), anchoArriba: 56, anchoAbajo: 56 };
+  }
+
+  function posicionPuerto(disp, indice, total) {
+    var h = 52;
+    if (total === 1) { return { x: disp.x, y: disp.y - h / 2 }; }
+    var dp = disposicionPuertos(disp, total);
+    if (indice < dp.arriba) {
+      return { x: disp.x - dp.anchoArriba / 2 + (indice + 0.5) * (dp.anchoArriba / dp.arriba), y: disp.y - h / 2 };
+    }
+    var j = indice - dp.arriba;
+    var abajo = total - dp.arriba;
+    return { x: disp.x - dp.anchoAbajo / 2 + (j + 0.5) * (dp.anchoAbajo / abajo), y: disp.y + h / 2 };
   }
 
   function colorEnlace(e) { return e.estado === "up" ? "#1a7f37" : "#b42318"; }
@@ -914,8 +930,10 @@ var UI = (function () {
       if (!S.presentacion || e.estado === "down") { g.appendChild(mid); }
       g.addEventListener("pointerenter", function (ev) { mostrarTipEnlace(ev, e); });
       g.addEventListener("pointerleave", ocultarTip);
+      if (S.moviendoExtremo && S.moviendoExtremo.enlace === e.id) { g.setAttribute("opacity", "0.35"); }
       g.addEventListener("click", function (ev) {
         ev.stopPropagation();
+        if (S.moviendoExtremo) { return; }
         seleccionarEnlace(e.id);
         if (esCelular()) { abrirHoja("configurar"); }
       });
@@ -953,7 +971,7 @@ var UI = (function () {
       g.appendChild(cuerpo);
 
       (d.interfaces || []).forEach(function (iface, idx) {
-        var p = posicionPuerto({ x: 0, y: 0 }, idx, d.interfaces.length);
+        var p = posicionPuerto({ x: 0, y: 0, tipo: d.tipo, modelo: d.modelo }, idx, d.interfaces.length);
         var c = document.createElementNS(svgNS, "rect");
         c.setAttribute("x", p.x - 5); c.setAttribute("y", p.y - 5);
         c.setAttribute("width", 10); c.setAttribute("height", 10);
@@ -971,6 +989,11 @@ var UI = (function () {
           var comp = !S.cableOrigen || (iface.medio === S.cableTipo && (!ocupado || comparte) && iface.id !== undefined);
           c.setAttribute("opacity", comp ? "1" : "0.3");
           c.setAttribute("stroke-width", comp ? "2" : "1");
+        } else if (S.moviendoExtremo) {
+          var em = buscarEnlace(S.moviendoExtremo.enlace);
+          var sirve = !!em && !motivoPuertoInvalido(em, S.moviendoExtremo.lado, d, iface);
+          c.setAttribute("opacity", sirve ? "1" : "0.3");
+          c.setAttribute("stroke-width", sirve ? "2" : "1");
         }
         c.addEventListener("pointerenter", function (ev) {
           mostrarTipPuerto(ev, d, iface);
@@ -987,11 +1010,11 @@ var UI = (function () {
         // toque invisible más grande (10 px es poco para un dedo). Mide 28 px
         // de alto y lo que deje la separación con los vecinos, para no
         // pisarlos. Fuera del modo cable no existe: taparía el ícono.
-        if (S.herramientaCable || S.cableOrigen) {
-          var enLado = idx < Math.ceil(d.interfaces.length / 2)
-            ? Math.ceil(d.interfaces.length / 2)
-            : d.interfaces.length - Math.ceil(d.interfaces.length / 2);
-          var anchoToque = Math.max(10, Math.min(28, 56 / Math.max(1, enLado)));
+        if (S.herramientaCable || S.cableOrigen || S.moviendoExtremo) {
+          var dpT = disposicionPuertos(d, d.interfaces.length);
+          var arribaT = idx < dpT.arriba;
+          var enLado = arribaT ? dpT.arriba : d.interfaces.length - dpT.arriba;
+          var anchoToque = Math.max(10, Math.min(28, (arribaT ? dpT.anchoArriba : dpT.anchoAbajo) / Math.max(1, enLado)));
           var toque = document.createElementNS(svgNS, "rect");
           toque.setAttribute("x", p.x - anchoToque / 2); toque.setAttribute("y", p.y - 14);
           toque.setAttribute("width", anchoToque); toque.setAttribute("height", 28);
@@ -1017,7 +1040,7 @@ var UI = (function () {
       g.addEventListener("pointerleave", ocultarTip);
       g.addEventListener("click", function (ev) {
         ev.stopPropagation();
-        if (S.colocando || S.herramientaCable) { return; }
+        if (S.colocando || S.herramientaCable || S.moviendoExtremo) { return; }
         seleccionar(d.id);
         if (esCelular()) { abrirHoja("configurar"); }
       });
@@ -1030,6 +1053,7 @@ var UI = (function () {
       S.capaNodos.appendChild(g);
     });
     resolverSolapes(etiquetas);
+    dibujarAsas();
     aplicarVista();
     actualizarCelular();
   }
@@ -1275,6 +1299,7 @@ var UI = (function () {
       }
     });
     window.addEventListener("pointermove", function (ev) {
+      if (S.moviendoExtremo) { actualizarLineaTemporal(ev); }
       if (S.abajo) {
         S.vista.x = S.abajo.vx + (ev.clientX - S.abajo.x);
         S.vista.y = S.abajo.vy + (ev.clientY - S.abajo.y);
@@ -1295,6 +1320,7 @@ var UI = (function () {
       if (f) { importarTextoDeArchivo(f); }
     });
     svg.addEventListener("click", function () {
+      if (S.moviendoExtremo) { cancelarMovimiento(); return; }
       if (!S.herramientaCable && !S.colocando) { seleccionar(null); }
     });
     // Alternativa de teclado al paneo y al zoom con el mouse.
@@ -1451,17 +1477,168 @@ var UI = (function () {
     return true;
   }
 
+  /* ---------------- Mover la punta de un cable ----------------
+   * Clic en el asa de una punta: queda pegada al puntero. Clic en un puerto
+   * válido: el cable se reconecta ahí. Esc o clic en el fondo: se cancela. */
+
+  function extremoOtro(lado) { return lado === "a" ? "b" : "a"; }
+
+  function enlacesEnPuerto(idDisp, idIf) {
+    return (S.topologia.enlaces || []).filter(function (x) {
+      return (x.a.dispositivo === idDisp && x.a.interfaz === idIf) ||
+        (x.b.dispositivo === idDisp && x.b.interfaz === idIf);
+    });
+  }
+
+  // null si el puerto sirve para esa punta; si no, el motivo en palabras.
+  function motivoPuertoInvalido(e, lado, d, iface) {
+    var otro = e[extremoOtro(lado)];
+    if (d.id === otro.dispositivo && iface.id === otro.interfaz) {
+      return "Las dos puntas del cable no pueden ir al mismo puerto.";
+    }
+    if (iface.medio !== e.tipo) {
+      return "El cable " + e.id + " es " + e.tipo + " y " + d.id + ":" + iface.id + " es un puerto " + iface.medio + ".";
+    }
+    if (!iface.habilitada) {
+      return "La interfaz " + d.id + ":" + iface.id + " está deshabilitada: habilitala primero.";
+    }
+    var otros = enlacesEnPuerto(d.id, iface.id).filter(function (x) { return x.id !== e.id; });
+    if (otros.length && !puertoAdmiteMultiplesEnlaces(d, iface)) {
+      return "El puerto " + d.id + ":" + iface.id + " ya tiene el cable " + otros[0].id + ".";
+    }
+    return null;
+  }
+
+  function iniciarMovimiento(idEnlace, lado) {
+    S.moviendoExtremo = { enlace: idEnlace, lado: lado };
+    S.herramientaCable = false; S.cableOrigen = null; S.colocando = null;
+    renderLienzo();
+    avisar("Elegí el puerto nuevo para esta punta del cable · Esc cancela");
+  }
+
+  function cancelarMovimiento() {
+    if (!S.moviendoExtremo) { return; }
+    S.moviendoExtremo = null;
+    S.lineaTemporal = null;
+    renderLienzo();
+  }
+
+  function aplicarMovimiento(e, lado, idDisp, idIf) {
+    var antes = e[lado].dispositivo + ":" + e[lado].interfaz;
+    empujarHistorial();
+    e[lado] = { dispositivo: idDisp, interfaz: idIf };
+    S.moviendoExtremo = null;
+    S.lineaTemporal = null;
+    reconstruirEstado(); renderTodo();
+    registrar("cable", "Cable " + e.id + ": la punta pasó de " + antes + " a " + idDisp + ":" + idIf + ".");
+    avisar("Cable " + e.id + " conectado en " + idDisp + ":" + idIf);
+  }
+
+  function moverExtremo(d, iface) {
+    var m = S.moviendoExtremo;
+    var e = buscarEnlace(m.enlace);
+    if (!e) { cancelarMovimiento(); return; }
+    var actual = e[m.lado];
+    if (actual.dispositivo === d.id && actual.interfaz === iface.id) { cancelarMovimiento(); return; }
+    var motivo = motivoPuertoInvalido(e, m.lado, d, iface);
+    // Si el puerto no sirve, la punta sigue pegada para elegir otro.
+    if (motivo) { avisar(motivo); return; }
+    aplicarMovimiento(e, m.lado, d.id, iface.id);
+  }
+
+  // Línea punteada desde la punta fija hasta el puntero.
+  function actualizarLineaTemporal(ev) {
+    var m = S.moviendoExtremo;
+    var e = m && buscarEnlace(m.enlace);
+    if (!e) { return; }
+    var fija = e[extremoOtro(m.lado)];
+    var dFija = buscarDisp(fija.dispositivo);
+    if (!dFija) { return; }
+    var desde = puntoPuerto(dFija, fija.interfaz);
+    var hasta = aMundo(ev);
+    if (!S.lineaTemporal || !S.lineaTemporal.isConnected) {
+      S.lineaTemporal = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      S.lineaTemporal.setAttribute("stroke", "#1a5fb4");
+      S.lineaTemporal.setAttribute("stroke-width", 3);
+      S.lineaTemporal.setAttribute("stroke-dasharray", "8 6");
+      S.lineaTemporal.setAttribute("pointer-events", "none");
+      S.capaAsas.appendChild(S.lineaTemporal);
+    }
+    S.lineaTemporal.setAttribute("x1", desde.x); S.lineaTemporal.setAttribute("y1", desde.y);
+    S.lineaTemporal.setAttribute("x2", hasta.x); S.lineaTemporal.setAttribute("y2", hasta.y);
+  }
+
+  // Asas en las dos puntas del cable seleccionado, un poco corridas hacia el
+  // centro del cable para que el puerto siga a la vista.
+  function dibujarAsas() {
+    var svgNS = "http://www.w3.org/2000/svg";
+    while (S.capaAsas.firstChild) { S.capaAsas.removeChild(S.capaAsas.firstChild); }
+    S.lineaTemporal = null;
+    var e = S.enlaceSel ? buscarEnlace(S.enlaceSel) : null;
+    if (!e) { return; }
+    var da = buscarDisp(e.a.dispositivo), db = buscarDisp(e.b.dispositivo);
+    if (!da || !db) { return; }
+    var pa = puntoPuerto(da, e.a.interfaz), pb = puntoPuerto(db, e.b.interfaz);
+    [["a", pa, pb, e.a], ["b", pb, pa, e.b]].forEach(function (t) {
+      var lado = t[0], aqui = t[1], alla = t[2], punta = t[3];
+      var dx = alla.x - aqui.x, dy = alla.y - aqui.y;
+      var largo = Math.sqrt(dx * dx + dy * dy) || 1;
+      var corr = Math.min(16, largo / 3);
+      var activa = S.moviendoExtremo && S.moviendoExtremo.enlace === e.id && S.moviendoExtremo.lado === lado;
+      var asa = document.createElementNS(svgNS, "circle");
+      asa.setAttribute("cx", aqui.x + dx / largo * corr);
+      asa.setAttribute("cy", aqui.y + dy / largo * corr);
+      asa.setAttribute("r", 8);
+      asa.setAttribute("class", "asa");
+      asa.setAttribute("fill", activa ? "#1a5fb4" : "#ffffff");
+      asa.setAttribute("stroke", "#1a5fb4");
+      asa.setAttribute("stroke-width", 3);
+      asa.setAttribute("tabindex", "0");
+      asa.setAttribute("role", "button");
+      asa.setAttribute("aria-label", "Mover la punta del cable " + e.id + " que está en " + punta.dispositivo + ":" + punta.interfaz);
+      var tit = document.createElementNS(svgNS, "title");
+      tit.textContent = "Mover esta punta: clic acá y después en el puerto nuevo";
+      asa.appendChild(tit);
+      var accion = function (ev) {
+        ev.stopPropagation();
+        if (activa) { cancelarMovimiento(); } else { iniciarMovimiento(e.id, lado); }
+      };
+      asa.addEventListener("click", accion);
+      asa.addEventListener("pointerdown", function (ev) { ev.stopPropagation(); });
+      asa.addEventListener("keydown", function (ev) {
+        if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); accion(ev); }
+      });
+      S.capaAsas.appendChild(asa);
+    });
+  }
+
+  // Los mensajes de la herramienta de cable van al registro y también a un
+  // aviso en pantalla: la consola no siempre está a la vista.
+  function avisoCable(codigo, texto) {
+    registrar(codigo, texto);
+    avisar(texto);
+  }
+
   function clicPuerto(d, iface) {
+    if (S.moviendoExtremo) { moverExtremo(d, iface); return; }
     if (!S.herramientaCable && !S.cableOrigen) { return; }
     if (!iface.habilitada) {
-      registrar("D01", "La interfaz " + d.id + ":" + iface.id + " está deshabilitada.");
+      avisoCable("D01", "La interfaz " + d.id + ":" + iface.id + " está deshabilitada: habilitala en la pestaña Interfaces.");
       S.cableOrigen = null;
       renderLienzo();
       return;
     }
     if (!S.cableOrigen) {
+      // El tipo de cable se ajusta al primer puerto: si es una wlan, el cable
+      // es wireless. Si la otra punta es de otro medio, sigue el D03.
+      var ajustado = iface.medio !== S.cableTipo;
+      if (ajustado) {
+        S.cableTipo = iface.medio;
+        if (S.selectCable) { S.selectCable.value = iface.medio; }
+      }
       S.cableOrigen = { dispositivo: d.id, interfaz: iface.id };
-      registrar("cable", "Origen " + d.id + ":" + iface.id + ". Elegí el puerto destino.");
+      avisoCable("cable", "Cable " + S.cableTipo + " desde " + d.id + ":" + iface.id +
+        (ajustado ? " (el tipo se ajustó al puerto)" : "") + ". Elegí el puerto destino.");
       renderLienzo();
       return;
     }
@@ -1472,27 +1649,38 @@ var UI = (function () {
     if (!oi) { S.cableOrigen = null; renderLienzo(); return; }
     var origenComparte = puertoAdmiteMultiplesEnlaces(od, oi);
     var destinoComparte = puertoAdmiteMultiplesEnlaces(d, iface);
-    if ((enlaceEnPuerto(o.dispositivo, o.interfaz) && !origenComparte) ||
-      (enlaceEnPuerto(d.id, iface.id) && !destinoComparte)) {
-      registrar("D02", "Ese puerto ya tiene cable. Elegí un puerto libre.");
+    if (enlaceEnPuerto(d.id, iface.id) && !destinoComparte) {
+      avisoCable("D02", "El puerto " + d.id + ":" + iface.id + " ya tiene cable. Elegí un puerto libre.");
+      S.cableOrigen = null; renderLienzo(); return;
+    }
+    if (enlaceEnPuerto(o.dispositivo, o.interfaz) && !origenComparte) {
+      avisoCable("D02", "El puerto " + o.dispositivo + ":" + o.interfaz + " ya tiene cable. Elegí un puerto libre.");
       S.cableOrigen = null; renderLienzo(); return;
     }
     if (oi.medio !== S.cableTipo || iface.medio !== S.cableTipo) {
-      registrar("D03", "Medios incompatibles: el enlace es " + S.cableTipo +
-        " pero une " + oi.medio + " con " + iface.medio + ".");
+      avisoCable("D03", "Medios incompatibles: el cable es " + S.cableTipo + " y une " + oi.medio + " con " + iface.medio + ".");
       S.cableOrigen = null; renderLienzo(); return;
     }
     empujarHistorial();
     var n = (S.topologia.enlaces || []).length + 1;
-    S.topologia.enlaces.push({
+    var nuevo = {
       id: idUnicoEnlace("l" + n),
       a: { dispositivo: o.dispositivo, interfaz: o.interfaz },
       b: { dispositivo: d.id, interfaz: iface.id },
-      tipo: S.cableTipo, estado: "up", velocidadMbps: S.cableTipo === "fibra" ? 1000 : 100, retardoMs: 1
-    });
+      tipo: S.cableTipo, estado: "up",
+      velocidadMbps: S.cableTipo === "fibra" ? 1000 : (S.cableTipo === "wireless" ? 54 : 100),
+      retardoMs: S.cableTipo === "wireless" ? 3 : 1
+    };
+    S.topologia.enlaces.push(nuevo);
     S.cableOrigen = null;
     reconstruirEstado(); renderLienzo(); renderPropiedades();
-    registrar("cable", "Enlace creado entre " + o.dispositivo + ":" + o.interfaz + " y " + d.id + ":" + iface.id + ".");
+    var extra = "";
+    if (nuevo.tipo === "wireless") {
+      var dist = Math.round(Math.sqrt(Math.pow(od.x - d.x, 2) + Math.pow(od.y - d.y, 2)));
+      var umbral = (S.estado && S.estado.umbralWireless) || 250;
+      if (dist > umbral) { extra = " Ojo: están a " + dist + " de distancia y el alcance es " + umbral + "; el ping va a fallar con D17."; }
+    }
+    avisoCable("cable", "Enlace " + nuevo.id + " creado entre " + o.dispositivo + ":" + o.interfaz + " y " + d.id + ":" + iface.id + "." + extra);
   }
 
   function idUnicoEnlace(base) {
@@ -1583,6 +1771,7 @@ var UI = (function () {
       ev.preventDefault(); borrarSeleccion(); return;
     }
     if (ev.key === "Escape") {
+      if (S.moviendoExtremo) { cancelarMovimiento(); return; }
       if (S.hoja) { cerrarHoja(); return; }
       S.colocando = null; S.cableOrigen = null; S.herramientaCable = false;
       renderLienzo(); return;
@@ -1642,6 +1831,29 @@ var UI = (function () {
         sel.value = e.estado;
         sel.addEventListener("change", function () { empujarHistorial(); e.estado = sel.value; reconstruirEstado(); renderLienzo(); });
         c.appendChild(etiqueta("Estado", sel)); c.appendChild(sel);
+        ["a", "b"].forEach(function (lado) {
+          var selX = document.createElement("select");
+          (S.topologia.dispositivos || []).forEach(function (dev) {
+            (dev.interfaces || []).forEach(function (f) {
+              if (f.medio !== e.tipo) { return; }
+              var esActual = e[lado].dispositivo === dev.id && e[lado].interfaz === f.id;
+              var motivo = esActual ? null : motivoPuertoInvalido(e, lado, dev, f);
+              var op = document.createElement("option");
+              op.value = dev.id + ":" + f.id;
+              op.textContent = (dev.nombre || dev.id) + " · " + f.id + (esActual ? " (actual)" : (motivo ? " (no disponible)" : ""));
+              op.disabled = !!motivo;
+              selX.appendChild(op);
+            });
+          });
+          selX.value = e[lado].dispositivo + ":" + e[lado].interfaz;
+          selX.addEventListener("change", function () {
+            var corte = selX.value.indexOf(":");
+            aplicarMovimiento(e, lado, selX.value.slice(0, corte), selX.value.slice(corte + 1));
+          });
+          c.appendChild(etiqueta("Punta " + lado.toUpperCase(), selX));
+          c.appendChild(selX);
+        });
+        c.appendChild(el("p", "leyenda", "Para mover una punta también podés hacer clic en su asa redonda, en el lienzo, y después en el puerto nuevo."));
         var extra = "";
         if (e.tipo === "wireless") {
           var da = buscarDisp(e.a.dispositivo), db = buscarDisp(e.b.dispositivo);
@@ -2511,7 +2723,9 @@ var UI = (function () {
       "sin QoS real, sin 802.1X y sin radiofrecuencia: el wireless es una abstracción por distancia.</p>" +
       "<p><b>Atajos:</b> Ctrl+Z deshacer, Ctrl+Y rehacer, Supr borra, Esc cancela, F presenta. " +
       "Paneo: arrastrar el fondo, o flechas con el foco en el lienzo. Con el foco en un equipo, las flechas lo mueven. " +
-      "Desde el teclado, Enter sobre un dispositivo de la paleta lo agrega en el centro de la vista.</p>";
+      "Desde el teclado, Enter sobre un dispositivo de la paleta lo agrega en el centro de la vista. " +
+      "Para cambiar un cable de puerto: seleccionalo, hacé clic en el asa redonda de la punta que querés mover " +
+      "y después en el puerto nuevo (también desde las listas Punta A y Punta B del panel).</p>";
     var escD = S.topologia.escenario;
     if (S.modo === "desafio" || (escD && (escD.modo === "desafio" || escD.sectores || escD.requerimientos))) {
       var b = boton("Verificar diseño VLSM", "primario");
@@ -2771,6 +2985,7 @@ var UI = (function () {
   }
 
   function seleccionarEnlace(idEnlace) {
+    S.moviendoExtremo = null;
     S.seleccionado = null;
     S.enlaceSel = idEnlace;
     renderLienzo();
@@ -2778,6 +2993,7 @@ var UI = (function () {
   }
 
   function seleccionar(idDispositivo) {
+    S.moviendoExtremo = null;
     S.seleccionado = idDispositivo;
     S.enlaceSel = null;
     renderLienzo();
