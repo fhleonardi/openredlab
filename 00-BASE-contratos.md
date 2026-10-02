@@ -63,7 +63,7 @@ Todas las capas operan sobre este objeto. El JSON exportado es exactamente este 
     {
       "id": "pc1",
       "tipo": "pc",                    // pc | switch-l2 | router | camara | iot | ap | internet
-      // "modelo": "8-puertos",        // sólo router; si falta es el router estándar
+      // "modelo": "8-puertos",        // router: "8-puertos" | "firewall" (falta = estándar); switch: "24-puertos" | "48-puertos" (falta = 8)
       "nombre": "PC-Admin",
       "x": 160, "y": 240,
       "encendido": true,
@@ -117,7 +117,7 @@ Reglas:
 
   Un router con su `wlan0` en modo `ap` es un router inalámbrico: la celda es una red más del router. El alcance inalámbrico (D17) se evalúa por enlace.
 - **Gateway de un router.** Cada router reenvía por su propia tabla de rutas (prefijo más largo). Si ninguna entrada coincide y el campo `gateway` tiene una dirección que cae en alguna de sus redes conectadas, se usa como ruta por defecto. Una ruta `0.0.0.0/0` explícita le gana.
-- **Reglas de filtrado de un router** (`reglas`, opcional). Es un filtrado mínimo y **sin estado**: cada regla tiene una acción (`bloquear` o `permitir`) y dos redes en CIDR (`0.0.0.0/0` es cualquiera). Se aplica sólo al tráfico que el router **reenvía**, no al que genera él mismo. Las reglas se leen en orden, gana la primera que coincide con el origen y el destino del paquete, y lo que no coincide con ninguna pasa. Como no hay estado, la respuesta de un ping también se revisa: si la bloquea una regla, el diagnóstico es D27 (no D12), con la aclaración de que un firewall real recuerda las conexiones.
+- **Reglas de filtrado de un router** (`reglas`, opcional). Es un filtrado mínimo y **sin estado**: cada regla tiene una acción (`bloquear` o `permitir`) y dos redes en CIDR (`0.0.0.0/0` es cualquiera). Se aplica sólo al tráfico que el router **reenvía**, no al que genera él mismo. Las reglas se leen en orden, gana la primera que coincide con el origen y el destino del paquete, y lo que no coincide con ninguna pasa. En un router común no hay estado, así que la respuesta de un ping también se revisa: si la bloquea una regla, el diagnóstico es D27 (no D12), con la aclaración de que un firewall recuerda las conversaciones. En un firewall (`"modelo": "firewall"`) la respuesta de lo que dejó pasar vuelve sin revisar reglas, y el recorrido lo explica.
 
 **Interfaces por defecto según el tipo de dispositivo**, creadas automáticamente al agregarlo:
 
@@ -130,12 +130,18 @@ Reglas:
 | `iot` | 1 wireless | `wlan0` |
 | `ap` | 1 wireless (modo `ap`) + 1 ethernet | `wlan0`, `eth0` |
 | `router`, `"modelo": "8-puertos"` | 8 ethernet + 1 fibra + 1 wireless (modo `ap`, deshabilitada) | `ether1` … `ether8`, `sfp1`, `wlan1` |
+| `router`, `"modelo": "firewall"` | 5 ethernet | `wan`, `lan1` … `lan3`, `dmz` |
+| `switch-l2`, `"modelo": "24-puertos"` o `"48-puertos"` | 24 o 48 ethernet + 1 fibra | `fa0/1` … `fa0/48`, `fib0` |
 
 | `internet` | 1 ethernet | `eth0` |
 
 **Internet** es una nube que representa todas las direcciones públicas: un paquete que llega a ella con destino público se responde ahí. Para enrutar se comporta como un router, y lo que no conoce lo devuelve por su vecino. **Simplificación declarada:** no se simula NAT; en una red real, el firewall o router de salida traduciría las direcciones privadas.
 
 **Nombres.** Si el destino de un ping es un nombre, el equipo consulta al servidor DNS configurado en su campo `dns` (un viaje de ida y vuelta hasta esa IP) y, si el nombre existe, hace el ping a la IP resultante. El simulador conoce `google.com` y `www.google.com` (142.250.79.46), `dns.google` (8.8.8.8) y `one.one.one.one` (1.1.1.1).
+
+**Puertos de routers y firewalls.** La tabla da el juego **inicial**. En un router (de cualquier modelo) los puertos son libres: entre 1 y 16, con nombres únicos y medio `ethernet`, `fibra` o `wireless`. El modelo fija el **estilo de nombres** de los puertos nuevos (estándar `g0/N`, `fibN`, `wlanN`; 8 puertos `etherN`, `sfpN`, `wlanN`; firewall `lanN`, `sfpN`, `wlanN`). Cambiar el modelo de un router renombra sus puertos en orden, conservando medio, IP y cables, y actualiza las referencias `"equipo:puerto"` del escenario (`Escenarios.cambiarModelo`). Los demás tipos, incluidos los modelos de switch, tienen un juego exacto.
+
+**Firewall.** Es un router con `"modelo": "firewall"`: enruta, sirve DHCP y filtra igual que cualquier router, pero **con estado**: deja volver sin revisar las reglas la respuesta de un paquete que él mismo dejó pasar a la ida. Un router común revisa cada paquete por separado.
 
 El router de 8 puertos replica un equipo de oficina (por ejemplo, un MikroTik): **cada puerto es una interfaz ruteada** que puede tener su propia subred, como cuando en RouterOS se saca un puerto del bridge y se le asigna una dirección. No se simula el bridge entre puertos.
 

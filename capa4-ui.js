@@ -73,7 +73,7 @@ var UI = (function () {
   var TIPOS = [
     { tipo: "pc", etiqueta: "PC" },
     { tipo: "router", etiqueta: "Router" },
-    { tipo: "router-8", etiqueta: "Router 8 puertos" },
+    { tipo: "firewall", etiqueta: "Firewall" },
     { tipo: "switch-l2", etiqueta: "Switch" },
     { tipo: "camara", etiqueta: "Cámara" },
     { tipo: "iot", etiqueta: "IoT" },
@@ -81,7 +81,7 @@ var UI = (function () {
     { tipo: "internet", etiqueta: "Internet" }
   ];
 
-  var PREFIJOS_NOMBRES = { pc: "PC-", router: "R", "switch-l2": "SW", camara: "CAM", iot: "IOT", ap: "AP-", internet: "Internet-" };
+  var PREFIJOS_NOMBRES = { pc: "PC-", router: "R", firewall: "FW-", "switch-l2": "SW", camara: "CAM", iot: "IOT", ap: "AP-", internet: "Internet-" };
 
   /* ---------------- Utilidades ---------------- */
 
@@ -169,17 +169,25 @@ var UI = (function () {
     return lineas;
   }
 
-  var NOMBRES_TIPO = { pc: "PC", router: "router", "router-8": "router de 8 puertos", internet: "internet", "switch-l2": "switch", camara: "cámara", iot: "IoT", ap: "punto de acceso" };
+  var NOMBRES_TIPO = { pc: "PC", router: "router", "router-8": "router de 8 puertos", firewall: "firewall", internet: "internet", "switch-l2": "switch", camara: "cámara", iot: "IoT", ap: "punto de acceso" };
 
-  // Clave de paleta e ícono: el tipo, salvo el router de 8 puertos, que es
-  // tipo "router" con modelo "8-puertos".
+  // Clave de paleta e ícono: el tipo, salvo el router de 8 puertos y el
+  // firewall, que son tipo "router" con modelo "8-puertos" o "firewall".
   function claveDe(d) {
-    return d && d.tipo === "router" && d.modelo === "8-puertos" ? "router-8" : (d ? d.tipo : "");
+    if (d && d.tipo === "router" && d.modelo === "8-puertos") { return "router-8"; }
+    if (d && d.tipo === "router" && d.modelo === "firewall") { return "firewall"; }
+    return d ? d.tipo : "";
   }
 
   function equipoDeClave(clave) {
-    return clave === "router-8" ? { tipo: "router", modelo: "8-puertos" } : { tipo: clave, modelo: null };
+    if (clave === "router-8") { return { tipo: "router", modelo: "8-puertos" }; }
+    if (clave === "firewall") { return { tipo: "router", modelo: "firewall" }; }
+    return { tipo: clave, modelo: null };
   }
+
+  // Contador de nombres automáticos: el router de 8 puertos comparte el del
+  // router (R1, R2…); el firewall tiene el suyo (FW-1…).
+  function claveNombre(clave) { return clave === "router-8" ? "router" : clave; }
   function nombreTipo(tipo) { return NOMBRES_TIPO[tipo] || tipo; }
 
   function momentoRel() {
@@ -235,6 +243,9 @@ var UI = (function () {
     if (tipo === "internet") {
       return [iface("eth0", "ethernet", true)];
     }
+    if (tipo === "firewall") {
+      return ["wan", "lan1", "lan2", "lan3", "dmz"].map(function (id) { return iface(id, "ethernet", true); });
+    }
     if (tipo === "router-8") {
       // Como un equipo de oficina tipo MikroTik: cada puerto es ruteado y
       // puede tener su propia subred.
@@ -252,9 +263,10 @@ var UI = (function () {
     return lista;
   }
 
-  function nombreAutomatico(tipo) {
-    S.contadores[tipo] = (S.contadores[tipo] || 0) + 1;
-    return (PREFIJOS_NOMBRES[tipo] || "EQ") + S.contadores[tipo];
+  function nombreAutomatico(clave) {
+    var k = claveNombre(clave);
+    S.contadores[k] = (S.contadores[k] || 0) + 1;
+    return (PREFIJOS_NOMBRES[k] || "EQ") + S.contadores[k];
   }
 
   function idUnico(base) {
@@ -359,6 +371,8 @@ var UI = (function () {
     ".recorrido .requisito input{width:150px;}",
     ".recorrido input.hosts{width:64px;margin-left:6px;}",
     ".recorrido .tenue{color:var(--sim-tenue);font-size:12px;}",
+    ".agregarpuerto{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:8px;padding-top:8px;border-top:1px solid var(--sim-borde);font-size:12px;}",
+    ".filaif select{max-width:120px;}",
     ".ayuda{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:8px;padding:2px 0;font-size:12px;line-height:1.35;}",
     ".ayuda section{background:var(--sim-fondo);border:1px solid var(--sim-borde);border-radius:10px;padding:6px 10px;min-width:0;}",
     ".ayuda h3{margin:0 0 3px;font-size:12.5px;color:var(--sim-acento);}",
@@ -498,6 +512,11 @@ var UI = (function () {
     if (tipo === "internet") {
       return "<path d='M-14 9 C-23 9 -23 -3 -14 -3 C-14 -12 -2 -15 3 -8 C8 -14 19 -10 17 -1 C25 0 24 9 16 9 Z' " +
         "fill='#dbe9f7' stroke='#1a5fb4' stroke-width='2' stroke-linejoin='round'/>";
+    }
+    if (tipo === "firewall") {
+      return "<rect x='-18' y='-13' width='36' height='26' rx='3' fill='#f4b8a8' stroke='#8f2d1a' stroke-width='2'/>" +
+        "<path d='M-18 -4.5 H18 M-18 4.5 H18 M-6 -13 V-4.5 M8 -13 V-4.5 M-12 -4.5 V4.5 M2 -4.5 V4.5 M14 -4.5 V4.5 M-6 4.5 V13 M8 4.5 V13' " +
+        "stroke='#8f2d1a' stroke-width='1.6' fill='none'/>";
     }
     if (tipo === "router-8") {
       return "<rect x='-26' y='-11' width='52' height='22' rx='4' fill='#f6d186' stroke='#8a5a00' stroke-width='2'/>" +
@@ -831,10 +850,11 @@ var UI = (function () {
   function recontarNombres() {
     S.contadores = { pc: 0, router: 0, "switch-l2": 0, camara: 0, iot: 0 };
     (S.topologia.dispositivos || []).forEach(function (d) {
-      var pre = PREFIJOS_NOMBRES[d.tipo] || "";
+      var k = claveNombre(claveDe(d));
+      var pre = PREFIJOS_NOMBRES[k] || "";
       if (pre && d.nombre && d.nombre.indexOf(pre) === 0) {
         var n = parseInt(d.nombre.slice(pre.length), 10);
-        if (!isNaN(n) && n > (S.contadores[d.tipo] || 0)) { S.contadores[d.tipo] = n; }
+        if (!isNaN(n) && n > (S.contadores[k] || 0)) { S.contadores[k] = n; }
       }
     });
   }
@@ -899,7 +919,10 @@ var UI = (function () {
     if (disp && disp.tipo === "router" && disp.modelo === "8-puertos" && total > 1) {
       return { arriba: 1, anchoArriba: 12, anchoAbajo: 12 * (total - 1) };
     }
-    return { arriba: Math.ceil(total / 2), anchoArriba: 56, anchoAbajo: 56 };
+    // Mitad arriba y mitad abajo; con muchos puertos (un switch de 48) cada
+    // fila se ensancha para que no se encimen.
+    var arriba = Math.ceil(total / 2);
+    return { arriba: arriba, anchoArriba: Math.max(56, arriba * 12), anchoAbajo: Math.max(56, (total - arriba) * 12) };
   }
 
   function posicionPuerto(disp, indice, total) {
@@ -1767,7 +1790,7 @@ var UI = (function () {
     empujarHistorial();
     var equipo = equipoDeClave(clave);
     var tipo = equipo.tipo;
-    var nombre = nombreAutomatico(tipo);
+    var nombre = nombreAutomatico(clave);
     var id = idUnico(nombre.toLowerCase().replace(/[^a-z0-9]+/g, "") || "eq");
     var gx = Math.round(x / 10) * 10, gy = Math.round(y / 10) * 10;
     var lista = S.topologia.dispositivos || [];
@@ -2003,10 +2026,37 @@ var UI = (function () {
     return inp;
   }
 
+  var MODELOS_UI = {
+    router: [["", "Router estándar (g0/0, fib0…)"], ["8-puertos", "Router tipo MikroTik (ether1, sfp1…)"], ["firewall", "Firewall (wan, lan, dmz)"]],
+    "switch-l2": [["", "Switch de 8 puertos"], ["24-puertos", "Switch de 24 puertos"], ["48-puertos", "Switch de 48 puertos"]]
+  };
+
   function panelConfig(c, d) {
     campoTexto(c, "Nombre", d.nombre, function (v) {
       empujarHistorialSuave(); d.nombre = v; renderLienzo();
     });
+    if (MODELOS_UI[d.tipo]) {
+      // El modelo cambia el estilo de los puertos (router) o su cantidad
+      // (switch), sin borrar el equipo ni sus cables.
+      var selModelo = document.createElement("select");
+      MODELOS_UI[d.tipo].forEach(function (m) {
+        var op = document.createElement("option");
+        op.value = m[0]; op.textContent = m[1];
+        selModelo.appendChild(op);
+      });
+      selModelo.value = d.modelo || "";
+      selModelo.addEventListener("change", function () {
+        var copia = clonar(S.topologia);
+        var res = Escenarios.cambiarModelo(copia, d.id, selModelo.value || null);
+        if (!res.ok) { avisar(res.error); selModelo.value = d.modelo || ""; return; }
+        empujarHistorial();
+        S.topologia = copia;
+        delete S.interfazEditada[d.id];
+        reconstruirEstado(); renderTodo();
+        registrar("topologia", (d.nombre || d.id) + " pasa a ser " + selModelo.options[selModelo.selectedIndex].textContent + ".");
+      });
+      c.appendChild(etiqueta("Modelo", selModelo)); c.appendChild(selModelo);
+    }
     var habiles = (d.interfaces || []).filter(function (f) { return f.habilitada; });
     var principal = primeraIp(d);
     var selIf = document.createElement("select");
@@ -2082,6 +2132,70 @@ var UI = (function () {
     temporizadorSuave = setTimeout(function () { temporizadorSuave = null; }, 1500);
   }
 
+  var PALABRA_SELECTOR_MEDIO = [["ethernet", "cobre"], ["fibra", "fibra"], ["wireless", "inalámbrico"]];
+
+  // En routers y firewalls los puertos se eligen: medio de cada uno, quitar
+  // y agregar. Un puerto con cable no cambia de medio ni se quita.
+  function editarPuertos(c, d) {
+    var editable = d.tipo === "router";
+    if (!editable) { return null; }
+    var max = Escenarios.PUERTOS_ROUTER_MAX || 16;
+    var pie = el("div", "agregarpuerto");
+    var selNuevo = document.createElement("select");
+    PALABRA_SELECTOR_MEDIO.forEach(function (m) {
+      var op = document.createElement("option"); op.value = m[0]; op.textContent = m[1]; selNuevo.appendChild(op);
+    });
+    var bAgregar = boton("Agregar puerto");
+    bAgregar.disabled = d.interfaces.length >= max;
+    if (bAgregar.disabled) { bAgregar.title = "Un router puede tener hasta " + max + " puertos"; }
+    bAgregar.addEventListener("click", function () {
+      var id = Escenarios.nombrePuertoLibre(d, selNuevo.value);
+      if (!id) { return; }
+      empujarHistorial();
+      var nuevo = { id: id, nombre: id, medio: selNuevo.value, habilitada: selNuevo.value !== "wireless", modo: "estatico", ip: null, prefijo: 24, mac: null };
+      if (selNuevo.value === "wireless") { nuevo.modoRadio = "ap"; }
+      d.interfaces.push(nuevo);
+      reconstruirEstado(); renderTodo();
+      registrar("topologia", "Se agregó el puerto " + id + " a " + (d.nombre || d.id) + ".");
+    });
+    pie.appendChild(etiqueta("Medio del puerto nuevo", selNuevo));
+    pie.appendChild(selNuevo);
+    pie.appendChild(bAgregar);
+    return pie;
+  }
+
+  function controlesPuerto(fila, d, f, enl) {
+    if (d.tipo !== "router") { return; }
+    var selMedio = document.createElement("select");
+    PALABRA_SELECTOR_MEDIO.forEach(function (m) {
+      var op = document.createElement("option"); op.value = m[0]; op.textContent = m[1]; selMedio.appendChild(op);
+    });
+    selMedio.value = f.medio;
+    selMedio.disabled = !!enl;
+    selMedio.title = enl ? "Desconectá el cable para cambiar el medio" : "Medio del puerto " + f.id;
+    selMedio.setAttribute("aria-label", "Medio del puerto " + f.id);
+    selMedio.addEventListener("change", function () {
+      empujarHistorial();
+      f.medio = selMedio.value;
+      if (f.medio === "wireless") { f.modoRadio = f.modoRadio || "ap"; } else { delete f.modoRadio; }
+      reconstruirEstado(); renderTodo();
+      registrar("topologia", "El puerto " + f.id + " de " + (d.nombre || d.id) + " pasa a ser " + palabraCable(f.medio) + ".");
+    });
+    fila.appendChild(selMedio);
+    var bQuitar = boton("Quitar");
+    bQuitar.disabled = !!enl || d.interfaces.length <= 1;
+    bQuitar.title = enl ? "Desconectá el cable para quitar el puerto" : (d.interfaces.length <= 1 ? "El router necesita al menos un puerto" : "Quitar el puerto " + f.id);
+    bQuitar.setAttribute("aria-label", "Quitar el puerto " + f.id);
+    bQuitar.addEventListener("click", function () {
+      empujarHistorial();
+      d.interfaces = d.interfaces.filter(function (x) { return x !== f; });
+      if (S.interfazEditada[d.id] === f.id) { delete S.interfazEditada[d.id]; }
+      reconstruirEstado(); renderTodo();
+      registrar("topologia", "Se quitó el puerto " + f.id + " de " + (d.nombre || d.id) + ".");
+    });
+    fila.appendChild(bQuitar);
+  }
+
   function panelInterfaces(c, d) {
     (d.interfaces || []).forEach(function (f) {
       var fila = el("div", "filaif");
@@ -2117,8 +2231,11 @@ var UI = (function () {
       labH.appendChild(document.createTextNode("habilitada"));
       labH.setAttribute("title", "Deshabilitarla produce D01");
       fila.appendChild(labH);
+      controlesPuerto(fila, d, f, enl);
       c.appendChild(fila);
     });
+    var pie = editarPuertos(c, d);
+    if (pie) { c.appendChild(pie); }
   }
 
   function panelRutas(c, d) {
@@ -2168,10 +2285,14 @@ var UI = (function () {
   function panelFiltrado(c, d) {
     if (!Array.isArray(d.reglas)) { d.reglas = []; }
     c.appendChild(el("p", "",
-      "<span style='font-size:13px'>El router revisa cada paquete que reenvía contra estas reglas, en orden: gana la primera que coincide con su origen y su destino. " +
+      "<span style='font-size:13px'>" + (Motor.esFirewall(d)
+        ? "El firewall revisa contra estas reglas los paquetes que reenvía, en orden: gana la primera que coincide con su origen y su destino. " +
+          "Además <b>recuerda las conversaciones</b>: la respuesta de un paquete que dejó pasar vuelve sin revisarse. "
+        : "El router revisa cada paquete que reenvía contra estas reglas, en orden: gana la primera que coincide con su origen y su destino. " +
+          "No recuerda conversaciones: una regla puede frenar también la respuesta. ") +
       "Lo que no coincide con ninguna pasa. Escribí redes como 10.45.7.0/26; 0.0.0.0/0 quiere decir cualquiera.</span>"));
     if (d.reglas.length === 0) {
-      c.appendChild(el("p", "", "Sin reglas: el router deja pasar todo lo que sabe enrutar."));
+      c.appendChild(el("p", "", "Sin reglas: " + (Motor.esFirewall(d) ? "el firewall" : "el router") + " deja pasar todo lo que sabe enrutar."));
     }
     d.reglas.forEach(function (r, i) {
       var completa = esCidr(r.origen) && esCidr(r.destino);
@@ -3111,7 +3232,7 @@ var UI = (function () {
       "<li>Las rutas se cargan a mano: no hay OSPF, BGP ni RIP. Tampoco STP, VLAN, NAT ni IPv6.</li>" +
       "<li>El único tráfico es el ping, con tiempos aproximados: no hay TCP, HTTP ni TLS.</li>" +
       "<li>El wireless sólo mira la distancia: llega hasta " + alcance + " m.</li>" +
-      "<li>El filtrado <b>no recuerda conexiones</b>: una regla puede frenar la respuesta aunque la ida haya pasado.</li>" +
+      "<li>El router filtra <b>cada paquete por separado</b>; el firewall recuerda la conversación y deja volver la respuesta.</li>" +
       "<li>Cada router reparte por DHCP un solo rango, sólo a su propia red.</li>" +
       "<li>La nube Internet responde por cualquier IP pública. El DNS conoce google.com, www.google.com, " +
       "dns.google y one.one.one.one.</li></ul>"));
@@ -3479,6 +3600,9 @@ var UI = (function () {
 
   function seleccionar(idDispositivo) {
     S.moviendoExtremo = null;
+    if (idDispositivo && idDispositivo !== S.seleccionado && claveDe(buscarDisp(idDispositivo)) === "firewall") {
+      S.pestañaProps = "filtrado";
+    }
     S.seleccionado = idDispositivo;
     S.enlaceSel = null;
     renderLienzo();

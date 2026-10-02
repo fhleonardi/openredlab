@@ -28,15 +28,15 @@
     {
       "id": "fw",
       "tipo": "router",
-      "modelo": "8-puertos",
+      "modelo": "firewall",
       "nombre": "FW",
       "x": 330,
       "y": 150,
       "encendido": true,
       "interfaces": [
         {
-          "id": "ether1",
-          "nombre": "ether1",
+          "id": "wan",
+          "nombre": "wan",
           "medio": "ethernet",
           "habilitada": true,
           "modo": "estatico",
@@ -44,8 +44,8 @@
           "prefijo": 30
         },
         {
-          "id": "ether2",
-          "nombre": "ether2",
+          "id": "lan1",
+          "nombre": "lan1",
           "medio": "ethernet",
           "habilitada": true,
           "modo": "estatico",
@@ -53,77 +53,34 @@
           "prefijo": 30
         },
         {
-          "id": "ether3",
-          "nombre": "ether3",
+          "id": "lan2",
+          "nombre": "lan2",
           "medio": "ethernet",
           "habilitada": true,
-          "modo": "estatico",
-          "ip": null,
-          "prefijo": 24
-        },
-        {
-          "id": "ether4",
-          "nombre": "ether4",
-          "medio": "ethernet",
-          "habilitada": true,
-          "modo": "estatico",
-          "ip": null,
-          "prefijo": 24
-        },
-        {
-          "id": "ether5",
-          "nombre": "ether5",
-          "medio": "ethernet",
-          "habilitada": true,
-          "modo": "estatico",
-          "ip": null,
-          "prefijo": 24
-        },
-        {
-          "id": "ether6",
-          "nombre": "ether6",
-          "medio": "ethernet",
-          "habilitada": true,
-          "modo": "estatico",
-          "ip": null,
-          "prefijo": 24
-        },
-        {
-          "id": "ether7",
-          "nombre": "ether7",
-          "medio": "ethernet",
-          "habilitada": true,
-          "modo": "estatico",
-          "ip": null,
-          "prefijo": 24
-        },
-        {
-          "id": "ether8",
-          "nombre": "ether8",
-          "medio": "ethernet",
-          "habilitada": true,
-          "modo": "estatico",
-          "ip": null,
-          "prefijo": 24
-        },
-        {
-          "id": "sfp1",
-          "nombre": "sfp1",
-          "medio": "fibra",
-          "habilitada": true,
-          "modo": "estatico",
-          "ip": null,
-          "prefijo": 24
-        },
-        {
-          "id": "wlan1",
-          "nombre": "wlan1",
-          "medio": "wireless",
-          "habilitada": false,
           "modo": "estatico",
           "ip": null,
           "prefijo": 24,
-          "modoRadio": "ap"
+          "mac": null
+        },
+        {
+          "id": "lan3",
+          "nombre": "lan3",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24,
+          "mac": null
+        },
+        {
+          "id": "dmz",
+          "nombre": "dmz",
+          "medio": "ethernet",
+          "habilitada": true,
+          "modo": "estatico",
+          "ip": null,
+          "prefijo": 24,
+          "mac": null
         }
       ],
       "gateway": "200.45.7.1",
@@ -925,7 +882,7 @@
       "id": "l-fw-internet",
       "a": {
         "dispositivo": "fw",
-        "interfaz": "ether1"
+        "interfaz": "wan"
       },
       "b": {
         "dispositivo": "internet",
@@ -944,7 +901,7 @@
       },
       "b": {
         "dispositivo": "fw",
-        "interfaz": "ether2"
+        "interfaz": "lan1"
       },
       "tipo": "ethernet",
       "estado": "up",
@@ -1166,7 +1123,7 @@
         "hosts": 2,
         "dispositivos": [
           "r1:ether1",
-          "fw:ether2"
+          "fw:lan1"
         ]
       }
     ],
