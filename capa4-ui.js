@@ -751,6 +751,7 @@ var UI = (function () {
       renderLienzo();
     });
     pal.appendChild(bCable);
+    S.botonCable = bCable;
     pal.appendChild(el("p", "leyenda", "Trazo lleno: cobre · grueso con brillo: fibra · puntos en curva: wireless.<br>Verde: activo · rojo y cortado: caído."));
     var bCol = boton("Colapsar");
     bCol.setAttribute("aria-expanded", "true");
@@ -985,6 +986,12 @@ var UI = (function () {
 
   function renderLienzo() {
     actualizarLienzoVacio();
+    // El botón refleja el modo aunque se haya salido por Esc, por Cancelar o
+    // tocando un equipo.
+    if (S.botonCable) {
+      S.botonCable.classList.toggle("activo", !!S.herramientaCable);
+      S.botonCable.setAttribute("aria-pressed", String(!!S.herramientaCable));
+    }
     var svgNS = "http://www.w3.org/2000/svg";
     while (S.capaEnlaces.firstChild) { S.capaEnlaces.removeChild(S.capaEnlaces.firstChild); }
     while (S.capaNodos.firstChild) { S.capaNodos.removeChild(S.capaNodos.firstChild); }
@@ -1162,6 +1169,12 @@ var UI = (function () {
       g.addEventListener("pointerleave", ocultarTip);
       g.addEventListener("click", function (ev) {
         ev.stopPropagation();
+        // En modo cableado, tocar el equipo fuera de sus puertos es salir del
+        // modo: se selecciona el equipo y se avisa.
+        if ((S.herramientaCable || S.cableOrigen) && !S.colocando && !S.moviendoExtremo) {
+          salirModoCable(d);
+          return;
+        }
         if (S.colocando || S.herramientaCable || S.moviendoExtremo) { return; }
         seleccionar(d.id);
         if (esCelular()) { abrirHoja("configurar"); }
@@ -1538,6 +1551,16 @@ var UI = (function () {
     S.hojaEl.hidden = true;
     S.hojaCuerpo.innerHTML = "";
     actualizarCelular();
+  }
+
+  function salirModoCable(d) {
+    var pendiente = S.cableOrigen ? buscarDisp(S.cableOrigen.dispositivo) : null;
+    S.herramientaCable = false; S.cableOrigen = null;
+    registrar("cable", "Herramienta de cable desactivada al tocar " + (d.nombre || d.id) + ".");
+    seleccionar(d.id);
+    renderLienzo();
+    avisar("Saliste del modo cableado" + (pendiente ? " (el cable que empezaste en " + (pendiente.nombre || pendiente.id) + " quedó sin hacer)" : "") +
+      ". Para seguir conectando, volvé a tocar «Conectar con un cable».");
   }
 
   function cancelarHerramientas() {
