@@ -348,8 +348,14 @@ var UI = (function () {
     ".siminf .tabs .espacio{flex:1;}",
     ".siminf .tabs label{font-size:12px;color:var(--sim-tenue);}",
     ".siminf .cuerpoinf{flex:1;min-height:0;overflow:auto;}",
-    ".recorrido .nota{margin:2px 0 6px;font-size:12px;color:var(--sim-tenue);}",
-    ".recorrido .requisito{display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px;}",
+    ".recorrido .nota{margin:2px 0 4px;font-size:12px;color:var(--sim-tenue);}",
+    ".recorrido .sectores{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:4px 8px;align-items:start;}",
+    ".recorrido .sectores > div{margin:0;}",
+    ".dora{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 8px;margin-bottom:4px;}",
+    ".dora .paso{margin:0;}",
+    ".titulodhcp{margin:0 0 6px;}",
+    ".recorrido .requisito{display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:12px;flex-wrap:wrap;}",
+    ".recorrido .requisito .nota{margin:0;}",
     ".recorrido .requisito input{width:150px;}",
     ".recorrido input.hosts{width:64px;margin-left:6px;}",
     ".recorrido .tenue{color:var(--sim-tenue);font-size:12px;}",
@@ -407,8 +413,15 @@ var UI = (function () {
     ".binario .red{color:var(--sim-acento);font-weight:bold;}",
     ".binario .host{color:var(--sim-aviso);font-weight:bold;}",
     ".binario .corte{border-left:2px solid var(--sim-mal);}",
-    ".calc{font-size:13px;}",
-    ".calc .grid{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;}",
+    ".calc{font-size:12.5px;line-height:1.4;}",
+    ".calc .grid{display:grid;grid-template-columns:auto 1fr;gap:1px 10px;}",
+    ".calc .cab{margin:0 0 6px;}",
+    ".calc .cab .tenue{color:var(--sim-tenue);font-size:12px;}",
+    ".calc .tarjetas{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:8px;}",
+    ".calc section{background:var(--sim-fondo);border:1px solid var(--sim-borde);border-radius:10px;padding:6px 10px;min-width:0;}",
+    ".calc h3{margin:0 0 3px;font-size:12.5px;color:var(--sim-acento);}",
+    ".calc .bits{margin:4px 0 0;white-space:nowrap;overflow-x:auto;}",
+    ".calc .veredicto{margin-top:3px;font-weight:600;}",
     "svg .nodo,svg .enlace,svg .asa{cursor:pointer;}",
     "svg .asa:focus-visible{outline:3px solid var(--sim-acento);outline-offset:2px;}",
     "svg .enlace:focus{outline:none;}",
@@ -2627,10 +2640,9 @@ var UI = (function () {
     var errores = inf.resumen.errores, advertencias = inf.resumen.advertencias;
     cab.appendChild(el("span", errores ? "mal" : "ok", (errores ? errores + (errores === 1 ? " error" : " errores") : "sin errores") +
       (advertencias ? ", " + advertencias + (advertencias === 1 ? " advertencia" : " advertencias") : "")));
-    lista.appendChild(el("p", "nota", "Cada puerto de router, con lo que cuelga de sus switches, es un sector. " +
-      "Sin enunciado se revisan las subredes, los solapamientos y las puertas de enlace. " +
-      "Para revisar además si alcanzan las direcciones, cargá los hosts que pide cada sector y el bloque a repartir."));
     var filaBloque = el("div", "requisito");
+    filaBloque.appendChild(el("span", "nota", "Cada puerto de router, con sus switches, es un sector. " +
+      "Para controlar también si alcanzan las direcciones, cargá los hosts de cada sector y el bloque:"));
     var inBloque = document.createElement("input");
     inBloque.type = "text"; inBloque.placeholder = "p. ej. 10.45.7.0/24"; inBloque.value = inf.bloqueBase || "";
     inBloque.addEventListener("change", function () {
@@ -2641,6 +2653,8 @@ var UI = (function () {
     filaBloque.appendChild(etiqueta("Bloque a repartir (opcional)", inBloque));
     filaBloque.appendChild(inBloque);
     lista.appendChild(filaBloque);
+    var grilla = el("div", "sectores");
+    lista.appendChild(grilla);
     inf.porSector.forEach(function (sec) {
       var fila = el("div", sec.ok ? "linpaso" : "pasofallo",
         "<span class='marca' aria-hidden='true'>" + (sec.ok ? "✓" : "✗") + "</span><b>" + escapar(sec.sector) + "</b>");
@@ -2658,7 +2672,7 @@ var UI = (function () {
       sec.hallazgos.forEach(function (h) {
         fila.appendChild(el("div", "", "<small>" + escapar(h.nivel + ": " + h.mensaje) + "</small>"));
       });
-      lista.appendChild(fila);
+      grilla.appendChild(fila);
     });
   }
 
@@ -2679,8 +2693,10 @@ var UI = (function () {
         (advertencias ? ", " + advertencias + (advertencias === 1 ? " advertencia" : " advertencias") : "");
       if (v.res) { lista.appendChild(el("div", "", "<b>Diseño VLSM</b> — " + escapar(estado))); }
       else { cab.appendChild(el("span", errores ? "mal" : "ok", estado)); }
+      var grillaVlsm = el("div", "sectores");
+      lista.appendChild(grillaVlsm);
       v.vlsm.porSector.forEach(function (sec) {
-        lista.appendChild(el("div", sec.ok ? "linpaso" : "pasofallo",
+        grillaVlsm.appendChild(el("div", sec.ok ? "linpaso" : "pasofallo",
           "<span class='marca' aria-hidden='true'>" + (sec.ok ? "✓" : "✗") + "</span><b>" + escapar(sec.sector) + "</b>" +
           sec.hallazgos.map(function (h) { return "<br><small>" + escapar(h.nivel + ": " + h.mensaje) + "</small>"; }).join("")));
       });
@@ -2847,7 +2863,6 @@ var UI = (function () {
 
   /* Cálculo de subred atado al seleccionado, con binario en dos colores. */
   function panelCalculo(c) {
-    c.appendChild(el("div", "", "<b>Cálculo de subred</b> <span style='font-size:12px'>— atado al dispositivo seleccionado, se actualiza mientras se escribe.</span>"));
     var caja = el("div", "calc");
     c.appendChild(caja);
     S.cajaCalculo = caja;
@@ -2891,36 +2906,44 @@ var UI = (function () {
       return;
     }
     S.corteBits = det.bitsRed;
-    var html = "<p><b>Cálculo de subred — " + escapar(d.nombre || d.id) + "</b></p>";
-    html += "<div class='grid'>";
+    // Tres tarjetas lado a lado, para que entre en la franja sin scroll:
+    // el binario, el resultado y la comprobación de la puerta de enlace.
+    var html = "<p class='cab'><b>Cálculo de subred — " + escapar(d.nombre || d.id) + "</b>" +
+      (prim.id ? ", " + escapar(prim.id) : "") +
+      " <span class='tenue'>· atado al equipo seleccionado, se actualiza mientras escribís</span></p>";
+    html += "<div class='tarjetas'>";
+    html += "<section><h3>IP y máscara en binario</h3><div class='grid'>";
     html += "<span>IP</span><span class='binario'>" + escapar(det.ip) + " &nbsp; Prefijo /" + det.prefijo + "</span>";
     html += "<span>Máscara</span><span class='binario'>" + escapar(det.mascaraDecimal) + "</span>";
     html += "</div>";
-    html += "<p class='binario'>IP&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;" + binarioColoreado(det.ipBinario, det.cortePosicion) + "<br>";
+    html += "<div class='binario bits'>IP&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;" + binarioColoreado(det.ipBinario, det.cortePosicion) + "<br>";
     html += "<span style='font-size:11px'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;" +
       "bits de red".padEnd(det.bitsRed, "─") + "│" + "bits de host".padStart(det.bitsHost, "─") + "</span><br>";
-    html += "Máscara&nbsp;&nbsp;" + binarioColoreado(det.mascaraBinaria, det.cortePosicion) + "</p>";
-    html += "<div class='grid'>";
+    // "IP" más seis espacios y "Máscara" más uno ocupan lo mismo: los bits quedan alineados.
+    html += "Máscara&nbsp;" + binarioColoreado(det.mascaraBinaria, det.cortePosicion) + "</div></section>";
+    html += "<section><h3>Resultado</h3><div class='grid'>";
     html += "<span>Dirección de red</span><span>" + escapar(det.direccionDeRed) + "</span>";
     html += "<span>Broadcast</span><span>" + escapar(det.broadcast) + "</span>";
     html += "<span>Rango de hosts</span><span>" + escapar(det.rangoTexto || "—") + "</span>";
     html += "<span>Cantidad de hosts</span><span>" + escapar(String(det.cantidadHosts)) + "</span>";
     html += "</div>";
     if (det.advertencia) { html += "<div class='advertencia'>" + escapar(det.advertencia) + "</div>"; }
+    html += "</section>";
     // El AND de la propia IP se muestra siempre; la comparación con el
     // gateway, sólo si el equipo tiene uno.
-    html += "<p><b>¿Tu puerta de enlace (gateway) está en tu red?</b><br>";
-    html += "Tu IP " + escapar(det.ip) + " AND máscara → " + escapar((det.gateway && det.gateway.andIp) || det.direccionDeRed) + "<br>";
+    html += "<section><h3>¿Tu puerta de enlace (gateway) está en tu red?</h3>";
+    html += "Tu IP " + escapar(det.ip) + " «AND» máscara → " + escapar((det.gateway && det.gateway.andIp) || det.direccionDeRed) + "<br>";
     if (det.gateway) {
-      html += "Puerta de enlace " + escapar(det.gateway.ip) + " AND máscara → " + escapar(det.gateway.andGateway || "?") + "<br>";
-      html += escapar(det.gateway.veredicto) + "</p>";
+      html += "Puerta de enlace " + escapar(det.gateway.ip) + " «AND» máscara → " + escapar(det.gateway.andGateway || "?") +
+        "<div class='veredicto'>" + escapar(det.gateway.veredicto) + "</div>";
     } else if (d.tipo === "internet") {
-      html += "Internet no usa puerta de enlace: responde por las direcciones públicas.</p>";
+      html += "Internet no usa puerta de enlace: responde por las direcciones públicas.";
     } else if (d.tipo === "router") {
-      html += "Un router no usa puerta de enlace para sus propias redes: para las demás decide con su tabla de rutas.</p>";
+      html += "Un router no usa puerta de enlace para sus propias redes: para las demás decide con su tabla de rutas.";
     } else {
-      html += "Sin puerta de enlace: este equipo solo puede comunicarse con los de su propia red.</p>";
+      html += "Sin puerta de enlace: este equipo solo puede comunicarse con los de su propia red.";
     }
+    html += "</section></div>";
     caja.innerHTML = html;
   }
 
@@ -2931,7 +2954,7 @@ var UI = (function () {
 
   function panelDhcpInf(c) {
     c.innerHTML = "";
-    c.appendChild(el("p", "", "<b>DHCP</b> <span style='font-size:12px'>— la animación DORA recorre los cables del lienzo.</span>"));
+    c.appendChild(el("p", "titulodhcp", "<b>DHCP</b> <span style='font-size:12px'>— la animación DORA recorre los cables del lienzo.</span>"));
     var clientes = (S.topologia.dispositivos || []).filter(esClienteDhcp);
     if (!clientes.length) {
       c.appendChild(el("p", "", "Agregá una PC (u otro equipo final) para pedir una dirección por DHCP."));
@@ -3030,10 +3053,11 @@ var UI = (function () {
   }
 
   function htmlResultadoDhcp(res, idDisp) {
-    var html = (res.mensajes || []).map(function (m) {
+    // Los pasos DORA en dos columnas: entran en la franja sin scroll.
+    var html = "<div class='dora'>" + (res.mensajes || []).map(function (m) {
       var descartada = m.tipo === "offer" && res.exito && res.servidor !== m.origen;
       return "<div class='paso " + (descartada ? "" : "ok") + "'>" + textoMensajeDhcp(m, res) + "</div>";
-    }).join("");
+    }).join("") + "</div>";
     if (res.exito) {
       html += "<p>Dirección otorgada a " + escapar(nombreDe(idDisp)) + ": <b>" + escapar(res.ip + "/" + res.prefijo) +
         "</b>, puerta de enlace " + escapar(res.gateway || "—") + ".</p>";
