@@ -6,6 +6,8 @@
 
 No hace falta instalar nada: es un único archivo HTML, sin dependencias y sin conexión a internet. También podés descargar [`index.html`](index.html) y abrirlo con doble clic.
 
+Para empezar, leé la [guía rápida para el alumno](docs/guia-rapida-alumno.md).
+
 ## Qué podés hacer
 
 - **Armar la red** con PC, routers, firewalls, switches (8, 24 o 48 puertos), cámaras, dispositivos IoT, puntos de acceso y una nube Internet, unidos por cables de cobre, fibra o enlaces inalámbricos.

@@ -2393,12 +2393,18 @@ var UI = (function () {
         try { mac = Motor.tablaMac(S.estado, d.id) || []; } catch (e) { mac = []; }
         c.appendChild(el("p", "", "<b>Tabla MAC:</b><br>" + (mac.length ? escapar(mac.map(function (x) { return x.mac + " → " + x.puerto; }).join(", ")) : "vacía")));
       }
+      // Un laboratorio (una red con objetivos) no avisa sus fallas plantadas,
+      // en ningún modo: encontrarlas es el ejercicio. El modo Docente tampoco.
+      var esc = S.topologia.escenario;
+      var esLaboratorio = !!(esc && esc.objetivos && esc.objetivos.length);
+      var sinAvisos = S.modo === "docente" || esLaboratorio;
       var avisos = [];
       try {
-        avisos = Motor.advertenciasDe(S.estado, d.id, S.modo === "docente" ? { modoDocente: true } : undefined) || [];
+        avisos = sinAvisos ? [] : (Motor.advertenciasDe(S.estado, d.id) || []);
       } catch (e) { avisos = []; }
-      if (S.modo === "docente") {
-        c.appendChild(el("p", "", "En modo Docente no se muestran avisos: encontrar el problema es parte del ejercicio."));
+      if (sinAvisos) {
+        c.appendChild(el("p", "", (esLaboratorio ? "En un laboratorio" : "En modo Docente") +
+          " no se muestran avisos: encontrar el problema es parte del ejercicio."));
       } else if (avisos.length) {
         avisos.forEach(function (a) {
           c.appendChild(el("div", "advertencia", "<b>" + escapar(a.titulo) + "</b> <small>" + escapar(a.codigo) + "</small><br>" +
