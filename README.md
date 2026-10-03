@@ -52,7 +52,7 @@ En [`escenarios/`](escenarios/) hay archivos para abrir con **Importar** o arras
 ## Para docentes
 
 - La [guía para docentes](docs/guia-docente.md) explica el uso en clase, cómo armar laboratorios y desafíos, y el formato de los archivos.
-- En modo **Docente**, el botón **Exportar para el alumno** genera la versión que se reparte: la red con las fallas aplicadas y sin la lista de fallas.
+- En modo **Docente**, la pestaña **Laboratorio** arma fallas, objetivos y sectores en pantalla, eligiendo de la red abierta, y compara cada objetivo en la red sana y en la del alumno. El botón **Exportar para el alumno** genera la versión que se reparte: la red con las fallas aplicadas y sin la lista de fallas (en un desafío VLSM, sin direccionar).
 - Las versiones docentes de los laboratorios incluidos, con la red resuelta, no se publican para que los alumnos no tengan las soluciones a mano. Si las necesitás, pedíselas al autor. Para armar las tuyas, el ejemplo **Complejo roto (docente)** sirve de plantilla.
 
 ## Cómo está hecho

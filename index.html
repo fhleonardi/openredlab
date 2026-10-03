@@ -6408,11 +6408,20 @@ var Escenarios = (function () {
   }
 
   // Archivo del alumno: fallas ya aplicadas sobre las configuraciones y sin
-  // la clave `fallas`. Conserva sólo los objetivos.
+  // la clave `fallas`. Conserva los objetivos y, en un desafío, los sectores
+  // y el bloque; en ese caso borra el direccionamiento, que es el ejercicio.
   function exportarParaAlumno(topologia) {
     var copia = aplicarFallas(topologia);
     if (copia.escenario && typeof copia.escenario === "object") {
-      copia.escenario = { objetivos: copia.escenario.objetivos || [] };
+      var esc = copia.escenario;
+      var sectores = normalizarSectores(esc);
+      copia.escenario = { objetivos: esc.objetivos || [] };
+      if (sectores.length) {
+        copia.escenario.modo = "desafio";
+        if (bloqueDe(esc)) { copia.escenario.bloqueBase = bloqueDe(esc); }
+        copia.escenario.requerimientos = clonar(sectores);
+        vaciarDireccionamiento(copia);
+      }
     }
     return JSON.stringify(copia, null, 2);
   }
@@ -6851,6 +6860,519 @@ var Escenarios = (function () {
     });
     informe.bloqueBase = diseno.bloqueBase || null;
     return informe;
+  }
+
+  /* ---------------- Editores del modo Docente ----------------
+   * Catálogo de fallas y objetivos para armar laboratorios en pantalla.
+   * Cada campo tiene una clase: las de lista sacan sus opciones de la red
+   * abierta (opcionesCampo), cada una con el parche que se aplica al ítem;
+   * las de texto se normalizan con normalizarCampo. La interfaz dibuja los
+   * campos sin saber nada de cada tipo. Una clave con punto ("regla.origen")
+   * es un campo dentro de un objeto del ítem. */
+  var CAMPO_EQUIPO = { clave: "dispositivo", etiqueta: "Equipo", clase: "dispositivo" };
+  var TIPOS_FALLA = [
+    { tipo: "mascara-incorrecta", nombre: "Máscara incorrecta", campos: [
+      CAMPO_EQUIPO,
+      { clave: "interfaz", etiqueta: "Puerto", clase: "interfaz", filtro: "conIp" },
+      { clave: "prefijo", etiqueta: "Prefijo que queda", clase: "prefijo" }] },
+    { tipo: "interfaz-deshabilitada", nombre: "Puerto deshabilitado", campos: [
+      CAMPO_EQUIPO,
+      { clave: "interfaz", etiqueta: "Puerto", clase: "interfaz" }] },
+    { tipo: "ruta-faltante", nombre: "Ruta faltante", campos: [
+      { clave: "dispositivo", etiqueta: "Router", clase: "dispositivo", filtro: "router" },
+      { clave: "ruta", etiqueta: "Ruta que se borra", clase: "ruta" }] },
+    { tipo: "ip-duplicada", nombre: "IP duplicada", campos: [
+      { clave: "dispositivo", etiqueta: "Equipo que queda con la IP repetida", clase: "dispositivo", filtro: "host" },
+      { clave: "copiarDe", etiqueta: "Copia la IP de", clase: "dispositivo", filtro: "conIp" }] },
+    { tipo: "gateway-incorrecto", nombre: "Gateway incorrecto", campos: [
+      { clave: "dispositivo", etiqueta: "Equipo", clase: "dispositivo", filtro: "host" },
+      { clave: "gateway", etiqueta: "Gateway que queda", clase: "ip" }] },
+    { tipo: "enlace-caido", nombre: "Cable caído", campos: [
+      { clave: "enlace", etiqueta: "Cable", clase: "enlace" }] },
+    { tipo: "nat-faltante", nombre: "Sin NAT", campos: [
+      { clave: "dispositivo", etiqueta: "Router", clase: "dispositivo", filtro: "router" },
+      { clave: "interfaz", etiqueta: "Puerto con NAT", clase: "interfaz", filtro: "nat" }] },
+    { tipo: "dns-incorrecto", nombre: "DNS incorrecto", campos: [
+      { clave: "dispositivo", etiqueta: "Equipo", clase: "dispositivo", filtro: "host" },
+      { clave: "dns", etiqueta: "DNS que queda (vacío: ninguno)", clase: "ipOpcional", opcional: true }] },
+    { tipo: "registro-dns-borrado", nombre: "Registro DNS borrado", campos: [
+      { clave: "dispositivo", etiqueta: "Servidor DNS", clase: "dispositivo", filtro: "dns" },
+      { clave: "registro", etiqueta: "Registro que se borra", clase: "registro" }] },
+    { tipo: "servicio-detenido", nombre: "Servicio detenido", campos: [
+      { clave: "dispositivo", etiqueta: "Servidor", clase: "dispositivo", filtro: "servicios" },
+      { clave: "servicio", etiqueta: "Servicio que se detiene", clase: "servicio" }] },
+    { tipo: "regla-agregada", nombre: "Regla de filtrado agregada", campos: [
+      { clave: "dispositivo", etiqueta: "Router o firewall", clase: "dispositivo", filtro: "router" },
+      { clave: "regla.accion", etiqueta: "Acción", clase: "accion" },
+      { clave: "regla.origen", etiqueta: "Red de origen", clase: "cidr" },
+      { clave: "regla.destino", etiqueta: "Red de destino", clase: "cidr" },
+      { clave: "regla.protocolo", etiqueta: "Protocolo", clase: "protocoloRegla", opcional: true },
+      { clave: "regla.puerto", etiqueta: "Puerto de destino", clase: "puerto", opcional: true },
+      { clave: "regla.entrada", etiqueta: "Entra por", clase: "interfaz", opcional: true },
+      { clave: "posicion", etiqueta: "Lugar en la lista (0: primera)", clase: "numero", opcional: true }] }
+  ];
+  var CAMPOS_RESULTADO = [
+    { clave: "esperado", etiqueta: "Se espera", clase: "esperado" },
+    { clave: "codigo", etiqueta: "Por esta causa", clase: "codigo", opcional: true, soloSi: { clave: "esperado", valor: "falla" } },
+    { clave: "descripcion", etiqueta: "Descripción para el alumno", clase: "texto", opcional: true }
+  ];
+  var CAMPO_ORIGEN = { clave: "origen", etiqueta: "Desde", clase: "dispositivo", filtro: "conIp" };
+  var TIPOS_OBJETIVO = [
+    { tipo: "ping", nombre: "Ping", campos: [CAMPO_ORIGEN,
+      { clave: "destino", etiqueta: "Hacia (IP o nombre)", clase: "destino" }].concat(CAMPOS_RESULTADO) },
+    { tipo: "conectar", nombre: "Conectar a un servicio", campos: [CAMPO_ORIGEN,
+      { clave: "destino", etiqueta: "Hacia (IP o nombre)", clase: "destino" },
+      { clave: "protocolo", etiqueta: "Protocolo", clase: "protocolo" },
+      { clave: "puerto", etiqueta: "Puerto", clase: "puerto" }].concat(CAMPOS_RESULTADO) },
+    { tipo: "resolver", nombre: "Resolver un nombre", campos: [CAMPO_ORIGEN,
+      { clave: "nombre", etiqueta: "Nombre", clase: "nombre" },
+      { clave: "tipoRegistro", etiqueta: "Tipo de registro", clase: "tipoRegistro", porDefecto: "A" },
+      { clave: "valor", etiqueta: "Valor esperado (opcional)", clase: "texto", opcional: true }].concat(CAMPOS_RESULTADO) }
+  ];
+  // Las clases cuyo parche toca otras claves del ítem.
+  var CLAVES_PARCHE = { ruta: ["destino", "prefijo"], registro: ["nombre"], servicio: ["protocolo", "puerto"] };
+  // Clases cuyas opciones son una lista; el resto se escribe.
+  var CLASES_LISTA = ["dispositivo", "interfaz", "enlace", "ruta", "registro", "servicio", "esperado", "codigo",
+    "protocolo", "protocoloRegla", "tipoRegistro", "accion"];
+
+  // «Puerto con NAT» → «puerto con NAT»: las siglas quedan como están.
+  function minusculaInicial(texto) {
+    return texto.charAt(0).toLowerCase() + texto.slice(1);
+  }
+
+  function tipoDe(catalogo, tipo) {
+    for (var i = 0; i < catalogo.length; i++) { if (catalogo[i].tipo === tipo) { return catalogo[i]; } }
+    return null;
+  }
+
+  function leerCampo(item, clave) {
+    var partes = clave.split(".");
+    var v = item;
+    for (var i = 0; i < partes.length; i++) {
+      if (!v || typeof v !== "object") { return undefined; }
+      v = v[partes[i]];
+    }
+    return v;
+  }
+
+  // Un valor null o "" borra el campo (un campo opcional vacío no se guarda).
+  function escribirCampo(item, clave, valor) {
+    var partes = clave.split(".");
+    var o = item;
+    for (var i = 0; i < partes.length - 1; i++) {
+      if (!o[partes[i]] || typeof o[partes[i]] !== "object") { o[partes[i]] = {}; }
+      o = o[partes[i]];
+    }
+    var ultima = partes[partes.length - 1];
+    if (valor === null || valor === undefined || valor === "") { delete o[ultima]; } else { o[ultima] = valor; }
+  }
+
+  function aplicarParche(item, parche) {
+    Object.keys(parche).forEach(function (k) { escribirCampo(item, k, parche[k]); });
+    return item;
+  }
+
+  function nombreDisp(topologia, id) {
+    var d = buscarDispositivo(topologia, id);
+    return d ? (d.nombre || d.id) : String(id);
+  }
+
+  function esHostEditor(d) {
+    return d.tipo !== "router" && d.tipo !== "switch-l2" && d.tipo !== "ap" && d.tipo !== "internet";
+  }
+
+  function pasaFiltroEquipo(d, filtro) {
+    if (!d || d.tipo === "internet") { return false; }
+    if (filtro === "router") { return d.tipo === "router"; }
+    if (filtro === "host") { return esHostEditor(d); }
+    if (filtro === "conIp") { return d.tipo !== "switch-l2" && d.tipo !== "ap" && !!primeraIpDe(d); }
+    if (filtro === "dns") { return !!(d.servicios && d.servicios.dns); }
+    if (filtro === "servicios") { return serviciosDe(d).length > 0; }
+    return true;
+  }
+
+  // Los servicios que se pueden detener: los que escucha y el DNS (UDP 53).
+  function serviciosDe(d) {
+    var lista = [];
+    var s = d && d.servicios;
+    if (!s) { return lista; }
+    (Array.isArray(s.escuchando) ? s.escuchando : []).forEach(function (x) {
+      lista.push({ protocolo: x.protocolo, puerto: Number(x.puerto), nombre: x.nombre || "" });
+    });
+    if (s.dns && !lista.some(function (x) { return x.protocolo === "udp" && x.puerto === 53; })) {
+      lista.push({ protocolo: "udp", puerto: 53, nombre: "DNS" });
+    }
+    return lista;
+  }
+
+  function textoInterfaz(f) {
+    var extra = [];
+    if (textoNoVacio(f.ip)) { extra.push(f.ip + "/" + f.prefijo); }
+    if (f.nat) { extra.push("NAT"); }
+    if (f.habilitada === false) { extra.push("deshabilitado"); }
+    return f.id + (extra.length ? " (" + extra.join(", ") + ")" : "");
+  }
+
+  // Opciones de un campo de lista: [{texto, parche, elegida}], o null si el
+  // campo se escribe. Las que dependen del equipo usan item.dispositivo.
+  function opcionesCampo(topologia, item, campo) {
+    if (CLASES_LISTA.indexOf(campo.clase) < 0) { return null; }
+    var lista = [];
+    function op(texto, parche) { lista.push({ texto: texto, parche: parche }); }
+    function simple(valor, texto) { var p = {}; p[campo.clave] = valor; op(texto, p); }
+    var dev = buscarDispositivo(topologia, item.dispositivo);
+    var c = campo.clase;
+    if (c === "dispositivo") {
+      // Los equipos finales primero: son el origen habitual de una prueba.
+      var equipos = (topologia.dispositivos || []).filter(function (d) { return pasaFiltroEquipo(d, campo.filtro); });
+      equipos.filter(esHostEditor).concat(equipos.filter(function (d) { return !esHostEditor(d); })).forEach(function (d) {
+        simple(d.id, d.nombre || d.id);
+      });
+    } else if (c === "interfaz") {
+      if (campo.opcional) { simple(null, "Cualquier puerto"); }
+      ((dev && dev.interfaces) || []).forEach(function (f) {
+        if (campo.filtro === "conIp" && !textoNoVacio(f.ip)) { return; }
+        if (campo.filtro === "nat" && !f.nat) { return; }
+        simple(f.id, textoInterfaz(f));
+      });
+    } else if (c === "enlace") {
+      (topologia.enlaces || []).forEach(function (e) {
+        simple(e.id, nombreDisp(topologia, e.a.dispositivo) + " (" + e.a.interfaz + ") — " +
+          nombreDisp(topologia, e.b.dispositivo) + " (" + e.b.interfaz + ")");
+      });
+    } else if (c === "ruta") {
+      ((dev && dev.rutas) || []).forEach(function (r) {
+        if (!r) { return; }
+        op(r.destino + "/" + r.prefijo + " por " + (r.siguienteSalto || "?"), { destino: r.destino, prefijo: r.prefijo });
+      });
+    } else if (c === "registro") {
+      var regs = (dev && dev.servicios && dev.servicios.dns && dev.servicios.dns.registros) || [];
+      regs.forEach(function (x) {
+        op(x.nombre + " " + x.tipo + " " + x.valor, { nombre: x.nombre, tipoRegistro: x.tipo });
+      });
+    } else if (c === "servicio") {
+      serviciosDe(dev).forEach(function (x) {
+        op(x.protocolo.toUpperCase() + " " + x.puerto + (x.nombre ? " (" + x.nombre + ")" : ""), { protocolo: x.protocolo, puerto: x.puerto });
+      });
+    } else if (c === "esperado") {
+      simple("exito", "Que funcione");
+      simple("falla", "Que falle");
+    } else if (c === "codigo") {
+      simple(null, "Por cualquier causa");
+      Object.keys(Motor.CATALOGO).sort().forEach(function (k) { simple(k, k + " — " + Motor.CATALOGO[k].titulo); });
+    } else if (c === "protocolo") {
+      simple("tcp", "TCP");
+      simple("udp", "UDP");
+    } else if (c === "protocoloRegla") {
+      simple(null, "Cualquier protocolo");
+      simple("icmp", "ICMP (ping)");
+      simple("tcp", "TCP");
+      simple("udp", "UDP");
+    } else if (c === "tipoRegistro") {
+      TIPOS_REGISTRO.forEach(function (t) { simple(t, t); });
+    } else if (c === "accion") {
+      simple("bloquear", "Bloquear");
+      simple("permitir", "Permitir");
+    }
+    lista.forEach(function (o) {
+      o.elegida = Object.keys(o.parche).every(function (k) {
+        var actual = leerCampo(item, k);
+        // Sin valor, un campo con valor por defecto vale eso (resolver: A).
+        if ((actual === undefined || actual === null || actual === "") && campo.porDefecto !== undefined && k === campo.clave) {
+          actual = campo.porDefecto;
+        }
+        var nuevo = o.parche[k];
+        if (nuevo === null) { return actual === undefined || actual === null || actual === ""; }
+        // Una falla de registro sin tipo borra el nombre con todos sus tipos.
+        if (c === "registro" && k === "tipoRegistro" && (actual === undefined || actual === null)) { return true; }
+        return String(actual) === String(nuevo);
+      });
+    });
+    return lista;
+  }
+
+  // Valor de un campo que se escribe: {valor} o {error}.
+  function normalizarCampo(campo, texto) {
+    var t = String(texto === undefined || texto === null ? "" : texto).trim();
+    if (t === "") {
+      return campo.opcional ? { valor: null } : { error: "Falta: " + minusculaInicial(campo.etiqueta) + "." };
+    }
+    var c = campo.clase;
+    if (c === "prefijo") {
+      var p = Number(t.replace(/^\//, ""));
+      return esEnteroPrefijo(p) ? { valor: p } : { error: "El prefijo va de 0 a 32." };
+    }
+    if (c === "ip" || c === "ipOpcional") {
+      return Red.esIpValida(t) ? { valor: t } : { error: "«" + t + "» no es una IP (cuatro números de 0 a 255 separados por puntos)." };
+    }
+    if (c === "cidr") {
+      var b = parsearBloque(t);
+      return b ? { valor: t } : { error: "Escribí la red como red/prefijo, por ejemplo 10.45.7.0/26 (0.0.0.0/0 es cualquiera)." };
+    }
+    if (c === "puerto") {
+      var n = Number(t);
+      return Math.floor(n) === n && n >= 1 && n <= 65535 ? { valor: n } : { error: "El puerto va de 1 a 65535." };
+    }
+    if (c === "numero") {
+      var k = Number(t);
+      return Math.floor(k) === k && k >= 0 ? { valor: k } : { error: "Escribí un número entero, 0 o más." };
+    }
+    if (c === "nombre") {
+      return esNombreDominio(t) ? { valor: t.toLowerCase() } : { error: "«" + t + "» no es un nombre de dominio (por ejemplo www.oficina.local)." };
+    }
+    return { valor: t };
+  }
+
+  // Completa los campos de lista vacíos o que ya no existen con la primera
+  // opción; se usa al crear un ítem y al cambiar el equipo.
+  function completarItem(topologia, item, catalogo) {
+    var t = tipoDe(catalogo, item.tipo);
+    if (!t) { return item; }
+    t.campos.forEach(function (campo) {
+      var ops = opcionesCampo(topologia, item, campo);
+      if (!ops || !ops.length) { return; }
+      if (ops.some(function (o) { return o.elegida; })) { return; }
+      if (campo.opcional) { return; }
+      aplicarParche(item, ops[0].parche);
+    });
+    return item;
+  }
+
+  var DEFECTOS = {
+    "mascara-incorrecta": { prefijo: 30 },
+    "regla-agregada": { regla: { accion: "bloquear", origen: "0.0.0.0/0", destino: "0.0.0.0/0" } },
+    ping: { esperado: "exito" },
+    conectar: { protocolo: "tcp", puerto: 80, esperado: "exito" },
+    resolver: { tipoRegistro: "A", esperado: "exito" }
+  };
+
+  function nuevaFalla(topologia, tipo) {
+    return completarItem(topologia, aplicarParche({ tipo: tipo }, clonar(DEFECTOS[tipo] || {})), TIPOS_FALLA);
+  }
+
+  function nuevoObjetivo(topologia, tipo) {
+    return completarItem(topologia, aplicarParche({ tipo: tipo }, clonar(DEFECTOS[tipo] || {})), TIPOS_OBJETIVO);
+  }
+
+  // Un renglón para la lista del editor.
+  function textoFalla(topologia, f) {
+    var t = tipoDe(TIPOS_FALLA, f && f.tipo);
+    if (!t) { return "Falla de tipo desconocido (" + (f && f.tipo) + ")"; }
+    var quien = f.dispositivo ? nombreDisp(topologia, f.dispositivo) : "";
+    var e;
+    var detalle = {
+      "mascara-incorrecta": quien + " " + (f.interfaz || "?") + " queda en /" + f.prefijo,
+      "interfaz-deshabilitada": quien + " " + (f.interfaz || "?"),
+      "ruta-faltante": quien + " pierde la ruta a " + f.destino + "/" + f.prefijo,
+      "ip-duplicada": quien + " toma la IP de " + nombreDisp(topologia, f.copiarDe),
+      "gateway-incorrecto": quien + " con gateway " + (f.gateway || "?"),
+      "enlace-caido": (e = buscarEnlace(topologia, f.enlace))
+        ? nombreDisp(topologia, e.a.dispositivo) + " — " + nombreDisp(topologia, e.b.dispositivo) : String(f.enlace),
+      "nat-faltante": quien + " " + (f.interfaz || "?"),
+      "dns-incorrecto": quien + " con DNS " + (f.dns || "ninguno"),
+      "registro-dns-borrado": quien + ": " + f.nombre + (f.tipoRegistro ? " " + f.tipoRegistro : ""),
+      "servicio-detenido": quien + ": " + String(f.protocolo || "?").toUpperCase() + " " + f.puerto,
+      "regla-agregada": quien + ": " + (f.regla ? (f.regla.accion === "permitir" ? "permitir " : "bloquear ") +
+        (f.regla.protocolo ? f.regla.protocolo.toUpperCase() + (f.regla.puerto ? " " + f.regla.puerto : "") + " " : "") +
+        f.regla.origen + " → " + f.regla.destino : "?")
+    }[f.tipo];
+    return t.nombre + " · " + detalle;
+  }
+
+  function textoObjetivo(topologia, o) {
+    if (!o) { return "?"; }
+    var desde = nombreDisp(topologia, o.origen);
+    var hacia = o.destino || "?";
+    var que = o.tipo === "conectar" ? desde + " → " + hacia + " " + String(o.protocolo || "tcp").toUpperCase() + " " + (o.puerto || "?")
+      : (o.tipo === "resolver" ? desde + " resuelve " + (o.nombre || "?") + (o.valor ? " (" + o.valor + ")" : "")
+        : desde + " → " + hacia);
+    var espera = o.esperado === "falla" ? "que falle" + (o.codigo ? " (" + o.codigo + ")" : "") : "que funcione";
+    var t = tipoDe(TIPOS_OBJETIVO, o.tipo);
+    return (t ? t.nombre : "Objetivo") + " · " + que + " · " + espera;
+  }
+
+  // IP de la red para sugerir destinos: [{valor, texto}].
+  function sugerenciasDestino(topologia) {
+    var lista = [];
+    (topologia.dispositivos || []).forEach(function (d) {
+      (d.interfaces || []).forEach(function (f) {
+        if (textoNoVacio(f.ip)) { lista.push({ valor: f.ip, texto: (d.nombre || d.id) + " " + f.id }); }
+      });
+      var regs = (d.servicios && d.servicios.dns && d.servicios.dns.registros) || [];
+      regs.forEach(function (x) {
+        if (x.tipo === "A" || x.tipo === "CNAME") { lista.push({ valor: x.nombre, texto: "nombre en " + (d.nombre || d.id) }); }
+      });
+    });
+    return lista;
+  }
+
+  // Problemas de un ítem contra la red: lo que falta y lo que no existe.
+  function problemasItem(topologia, item, catalogo, queEs) {
+    var t = tipoDe(catalogo, item && item.tipo);
+    if (!t) { return ["Tipo de " + queEs + " desconocido: «" + (item && item.tipo) + "»."]; }
+    var problemas = [];
+    var sinEquipo = false;
+    t.campos.forEach(function (campo) {
+      if (campo.soloSi && leerCampo(item, campo.soloSi.clave) !== campo.soloSi.valor) { return; }
+      // Sin el equipo, sus puertos, rutas o registros no se pueden revisar.
+      if (sinEquipo && ["interfaz", "ruta", "registro", "servicio"].indexOf(campo.clase) >= 0) { return; }
+      var ops = opcionesCampo(topologia, item, campo);
+      if (ops) {
+        var claves = CLAVES_PARCHE[campo.clase] || [campo.clave];
+        var vacio = claves.every(function (k) { var v = leerCampo(item, k); return v === undefined || v === null || v === ""; });
+        if (vacio) {
+          if (campo.opcional || campo.porDefecto !== undefined) { return; }
+          problemas.push(ops.length ? "Falta: " + minusculaInicial(campo.etiqueta) + "."
+            : minusculaInicial(campo.etiqueta).replace(/^./, function (x) { return x.toUpperCase(); }) + ": no hay ninguno para elegir" +
+              (item.dispositivo ? " en " + nombreDisp(topologia, item.dispositivo) : "") + ".");
+          return;
+        }
+        if (ops.some(function (o) { return o.elegida; })) { return; }
+        problemas.push(problemaReferencia(topologia, item, campo));
+        if (campo.clave === "dispositivo") { sinEquipo = true; }
+        return;
+      }
+      var n = normalizarCampo(campo, leerCampo(item, campo.clave));
+      if (n.error) { problemas.push(n.error); }
+    });
+    return problemas;
+  }
+
+  function problemaReferencia(topologia, item, campo) {
+    var c = campo.clase;
+    var valor = leerCampo(item, campo.clave);
+    var quien = nombreDisp(topologia, item.dispositivo);
+    if (c === "dispositivo") {
+      var d = buscarDispositivo(topologia, valor);
+      if (!d) { return "El equipo «" + valor + "» no está en la red."; }
+      var que = { router: "un router", host: "una PC, un servidor u otro equipo final", conIp: "un equipo con IP",
+        dns: "un servidor DNS", servicios: "un servidor con servicios" }[campo.filtro] || "un equipo válido";
+      return (d.nombre || d.id) + " no es " + que + ".";
+    }
+    if (c === "interfaz") {
+      var dev = buscarDispositivo(topologia, item.dispositivo);
+      var f = dev && buscarInterfaz(dev, valor);
+      if (!f) { return "El puerto " + valor + " no existe en " + quien + "."; }
+      if (campo.filtro === "nat") { return "El puerto " + valor + " de " + quien + " no tiene NAT: la falla no cambiaría nada."; }
+      if (campo.filtro === "conIp") { return "El puerto " + valor + " de " + quien + " no tiene IP."; }
+    }
+    if (c === "enlace") { return "El cable «" + valor + "» no está en la red."; }
+    if (c === "ruta") { return quien + " no tiene la ruta a " + item.destino + "/" + item.prefijo + ": la falla no cambiaría nada."; }
+    if (c === "registro") { return quien + " no tiene el registro " + item.nombre + (item.tipoRegistro ? " " + item.tipoRegistro : "") + "."; }
+    if (c === "servicio") { return quien + " no escucha en " + String(item.protocolo).toUpperCase() + " " + item.puerto + ": la falla no cambiaría nada."; }
+    return campo.etiqueta + ": «" + valor + "» no es una opción válida.";
+  }
+
+  function bloqueDe(escenario) {
+    return escenario ? (escenario.bloqueBase || escenario.bloque || escenario.base || escenario.redBase || escenario.cidr || null) : null;
+  }
+
+  function revisarEscenario(topologia) {
+    var esc = (topologia && topologia.escenario) || {};
+    var informe = { fallas: [], objetivos: [], sectores: [], bloque: null };
+    (esc.fallas || []).forEach(function (f) {
+      var p = problemasItem(topologia, f, TIPOS_FALLA, "falla");
+      // Una falla bien armada que no cambia nada (el puerto ya estaba
+      // deshabilitado, el gateway ya era ése) no le plantea nada al alumno.
+      if (!p.length) {
+        var sola = clonar(topologia);
+        sola.escenario = { fallas: [f] };
+        var antes = clonar(topologia);
+        antes.escenario = sola.escenario;
+        if (JSON.stringify(aplicarFallas(sola)) === JSON.stringify(antes)) { p.push("La falla no cambiaría nada en la red."); }
+      }
+      informe.fallas.push(p);
+    });
+    (esc.objetivos || []).forEach(function (o) {
+      informe.objetivos.push(problemasItem(topologia, o, TIPOS_OBJETIVO, "objetivo"));
+    });
+    var sectores = normalizarSectores(esc);
+    sectores.forEach(function (s, i) {
+      var p = [];
+      if (!textoNoVacio(s.sector || s.nombre)) { p.push("Falta el nombre del sector."); }
+      if (!(hostsPedidos(s) > 0)) { p.push("Faltan los hosts que necesita " + nombreSector(s, i) + "."); }
+      var miembros = equiposSector(s);
+      if (!miembros.length) { p.push(nombreSector(s, i) + " no tiene equipos ni puertos."); }
+      miembros.forEach(function (m) {
+        var r = resolverEntrada(topologia, m);
+        if (r.error) { p.push(r.error); }
+      });
+      informe.sectores.push(p);
+    });
+    var bloque = bloqueDe(esc);
+    if (sectores.length && !bloque) { informe.bloque = "Falta el bloque a repartir (por ejemplo 10.45.7.0/24)."; }
+    else if (bloque && !parsearBloque(bloque)) { informe.bloque = "El bloque «" + bloque + "» no es red/prefijo."; }
+    return informe;
+  }
+
+  // La red sana (la solución) contra la del alumno (con las fallas).
+  function compararLaboratorio(topologia) {
+    var esc = (topologia && topologia.escenario) || {};
+    var objetivos = esc.objetivos || [];
+    var fallas = esc.fallas || [];
+    // Cada objetivo por separado: uno mal cargado no arrastra a los demás.
+    function verificar(topo) {
+      var estado = null;
+      try { estado = Motor.crearEstado(topo); } catch (e) { estado = null; }
+      return objetivos.map(function (o) {
+        try { if (estado) { return verificarObjetivos(estado, [o])[0]; } } catch (e) { /* abajo */ }
+        return { objetivo: o, cumple: false, codigo: null, titulo: "No se pudo probar este objetivo" };
+      });
+    }
+    var sana = verificar(topologia);
+    var alumno = verificar(aplicarFallas(topologia));
+    var porFalla = fallas.map(function (f) {
+      var t = clonar(topologia);
+      t.escenario = { fallas: [f], objetivos: objetivos };
+      var r = verificar(aplicarFallas(t));
+      var rotos = [];
+      r.forEach(function (x, i) { if (sana[i].cumple && !x.cumple) { rotos.push(i); } });
+      return rotos;
+    });
+    var advertencias = [];
+    if (fallas.length && !objetivos.length) {
+      advertencias.push("Hay fallas pero ningún objetivo: el alumno no tiene cómo saber qué tiene que andar.");
+    }
+    sana.forEach(function (x, i) {
+      if (!x.cumple) { advertencias.push("El objetivo " + (i + 1) + " no se cumple en la red sana: revisá la solución o el objetivo."); }
+    });
+    if (fallas.length && objetivos.length && alumno.every(function (x) { return x.cumple; })) {
+      advertencias.push("Con las fallas aplicadas se cumplen todos los objetivos: el alumno no tiene nada que arreglar.");
+    }
+    if (objetivos.length) {
+      porFalla.forEach(function (rotos, k) {
+        if (!rotos.length) { advertencias.push("La falla " + (k + 1) + " no rompe ningún objetivo: el alumno no la va a notar."); }
+      });
+    }
+    var desafio = null;
+    if (normalizarSectores(esc).length) {
+      try {
+        desafio = verificarDesafio(topologia, esc);
+        if (desafio.resumen.errores) {
+          advertencias.push("El diseño VLSM de la red sana tiene " + desafio.resumen.errores +
+            (desafio.resumen.errores === 1 ? " error" : " errores") + ": la solución no cumple el desafío.");
+        }
+      } catch (e) { advertencias.push("No se pudo verificar el desafío: " + e.message); }
+    }
+    return {
+      objetivos: objetivos.map(function (o, i) { return { objetivo: o, sana: sana[i], alumno: alumno[i] }; }),
+      porFalla: porFalla,
+      advertencias: advertencias,
+      desafio: desafio
+    };
+  }
+
+  // En un desafío el alumno direcciona la red: se borra lo que puso el docente.
+  function vaciarDireccionamiento(topologia) {
+    (topologia.dispositivos || []).forEach(function (d) {
+      if (d.tipo === "internet") { return; }
+      (d.interfaces || []).forEach(function (f) { f.ip = null; f.prefijo = 24; });
+      d.gateway = null;
+      d.dns = null;
+      d.rutas = [];
+      d.dhcp = null;
+    });
+    return topologia;
   }
 
   /* ---------------- Constructores de ejemplos ----------------
@@ -7941,6 +8463,54 @@ var Escenarios = (function () {
         { tipo: "resolver", origen: "pc1", nombre: "intranet.oficina.local", valor: "10.0.0.1", esperado: "exito" }
       ]);
       comparar("objetivos conectar y resolver", objs.map(function (o) { return o.cumple; }), [true, true, true, false]);
+      // Editores del modo Docente: opciones sacadas de la red.
+      var detenido = nuevaFalla(ofi, "servicio-detenido");
+      var opsServ = opcionesCampo(ofi, detenido, TIPOS_FALLA.filter(function (t) { return t.tipo === "servicio-detenido"; })[0].campos[1]);
+      comparar("editor: servicios del servidor, con el DNS",
+        [opsServ.map(function (o) { return o.texto; }), opsServ[0].parche], [["TCP 80 (HTTP)", "UDP 53 (DNS)"], { protocolo: "tcp", puerto: 80 }]);
+      var sinRuta = nuevaFalla(ofi, "ruta-faltante");
+      comparar("editor: la ruta faltante sale de las rutas del router", [sinRuta.dispositivo, sinRuta.destino, sinRuta.prefijo], ["r1", "0.0.0.0", 0]);
+      comparar("editor: el origen de un objetivo es un equipo final", nuevoObjetivo(ofi, "ping").origen, "pc1");
+      comparar("editor: campos de texto", [normalizarCampo({ clase: "puerto", etiqueta: "Puerto" }, "99999").error !== undefined,
+        normalizarCampo({ clase: "cidr", etiqueta: "Red" }, "10.0.0.0/8").valor, normalizarCampo({ clase: "ip", etiqueta: "Gateway", opcional: false }, "").error],
+        [true, "10.0.0.0/8", "Falta: gateway."]);
+      // Revisión del escenario contra la red.
+      var conRefRota = clonar(ofi);
+      conRefRota.escenario = { fallas: [
+        { tipo: "interfaz-deshabilitada", dispositivo: "pc9", interfaz: "eth0" },
+        { tipo: "nat-faltante", dispositivo: "r1", interfaz: "g0/0" },
+        { tipo: "gateway-incorrecto", dispositivo: "pc1", gateway: "192.168.10.1" }
+      ], objetivos: [{ tipo: "conectar", origen: "pc1", destino: "192.168.10.53", protocolo: "tcp", puerto: 99999, esperado: "exito" }] };
+      var rev = revisarEscenario(conRefRota);
+      comparar("revisión: equipo borrado, puerto sin NAT, falla sin efecto, puerto inválido", [rev.fallas[0], rev.fallas[1][0], rev.fallas[2], rev.objetivos[0]], [
+        ["El equipo «pc9» no está en la red."], "El puerto g0/0 de R-Borde no tiene NAT: la falla no cambiaría nada.",
+        ["La falla no cambiaría nada en la red."], ["El puerto va de 1 a 65535."]]);
+      var sinTipo = clonar(ofi);
+      sinTipo.escenario = { objetivos: [{ tipo: "resolver", origen: "pc1", nombre: "google.com", esperado: "exito" }] };
+      comparar("revisión: resolver sin tipo de registro usa A", revisarEscenario(sinTipo).objetivos[0], []);
+      var sinNat = topologiaComplejo();
+      sinNat.escenario = { fallas: [nuevaFalla(sinNat, "nat-faltante")] };
+      comparar("revisión: sin puertos con NAT para elegir", revisarEscenario(sinNat).fallas[0], ["Puerto con NAT: no hay ninguno para elegir en R1."]);
+      var plantilla = topologiaComplejoRoto();
+      comparar("revisión: la plantilla del complejo no tiene problemas",
+        JSON.stringify(revisarEscenario(plantilla)), JSON.stringify({ fallas: [[], [], []], objetivos: [[], []], sectores: [], bloque: null }));
+      // La red sana contra la del alumno.
+      var cmp = compararLaboratorio(plantilla);
+      comparar("comparar: en la sana se cumple todo, en la del alumno nada, sin advertencias",
+        [cmp.objetivos.map(function (x) { return [x.sana.cumple, x.alumno.cumple]; }), cmp.advertencias], [[[true, false], [true, false]], []]);
+      var cableSuelto = topologiaComplejoRoto();
+      cableSuelto.escenario.fallas = [{ tipo: "enlace-caido", enlace: "l-cam-pc" }];
+      comparar("comparar: el cable de la cámara existe y la revisión no lo marca", revisarEscenario(cableSuelto).fallas[0], []);
+      comparar("comparar: una falla que no rompe ningún objetivo se advierte",
+        compararLaboratorio(cableSuelto).advertencias.indexOf("La falla 1 no rompe ningún objetivo: el alumno no la va a notar.") >= 0, true);
+      // Exportar un desafío: sectores y bloque, sin direccionamiento.
+      var desafio = topologiaComplejo();
+      desafio.escenario = clonar(topologiaDesafioComplejo().escenario);
+      var paraAlumno = JSON.parse(exportarParaAlumno(desafio));
+      comparar("exportar desafío: conserva sectores y bloque, sin IP en los equipos",
+        [paraAlumno.escenario.modo, paraAlumno.escenario.bloqueBase, paraAlumno.escenario.requerimientos.length,
+          paraAlumno.dispositivos.filter(function (d) { return d.tipo !== "internet" && d.interfaces.some(function (f) { return f.ip; }); }).length],
+        ["desafio", "10.45.7.0/24", 5, 0]);
       var conCalidad = clonar(ofi);
       conCalidad.enlaces[0].jitterMs = 3; conCalidad.enlaces[0].perdidaPct = 5;
       comparar("calidad del enlace válida", validarTopologia(conCalidad).ok, true);
@@ -8102,6 +8672,21 @@ var Escenarios = (function () {
     cambiarModelo: cambiarModelo,
     PUERTOS_ROUTER_MAX: PUERTOS_ROUTER_MAX,
     detectarSectores: detectarSectores,
+    TIPOS_FALLA: TIPOS_FALLA,
+    TIPOS_OBJETIVO: TIPOS_OBJETIVO,
+    opcionesCampo: opcionesCampo,
+    normalizarCampo: normalizarCampo,
+    leerCampo: leerCampo,
+    escribirCampo: escribirCampo,
+    aplicarParche: aplicarParche,
+    completarItem: completarItem,
+    nuevaFalla: nuevaFalla,
+    nuevoObjetivo: nuevoObjetivo,
+    textoFalla: textoFalla,
+    textoObjetivo: textoObjetivo,
+    sugerenciasDestino: sugerenciasDestino,
+    revisarEscenario: revisarEscenario,
+    compararLaboratorio: compararLaboratorio,
     verificarDiseno: verificarDiseno,
     autopruebas: autopruebas
   };
@@ -8508,6 +9093,39 @@ var UI = (function () {
     ".siminf .tabs .espacio{flex:1;}",
     ".siminf .tabs label{font-size:12px;color:var(--sim-tenue);}",
     ".siminf .cuerpoinf{flex:1;min-height:0;overflow:auto;}",
+    ".siminf .cuerpoinf.lab{display:flex;flex-direction:column;overflow:hidden;}",
+    ".lab .simctrl{margin-bottom:6px;}",
+    ".lab .recorrido .cab{align-items:center;}",
+    ".lab .recorrido .cab select,.lab .recorrido .cab button{font-size:12px;font-weight:400;padding:2px 6px;}",
+    ".lab .botoneslab{display:flex;gap:4px;}",
+    ".labfila{display:flex;align-items:center;gap:4px;border-radius:6px;}",
+    ".labfila .labtexto{flex:1;min-width:0;text-align:left;border:0;background:transparent;padding:2px 6px;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
+    ".labfila.sel{background:var(--sim-okfondo);}",
+    ".labfila.sel .labtexto{font-weight:600;}",
+    ".labfila.conproblema .labtexto{color:var(--sim-mal);}",
+    ".labfila button:not(.labtexto){padding:0 6px;font-size:12px;}",
+    ".labsector{display:flex;flex-wrap:wrap;align-items:center;gap:4px;padding:3px 0;border-bottom:1px dotted var(--sim-borde);font-size:12px;}",
+    ".labsector input.nomsector{width:150px;font-size:12px;}",
+    ".labsector input.hosts{width:60px;font-size:12px;margin:0;}",
+    ".labsector select{font-size:12px;max-width:150px;}",
+    ".labsector .ficha{font-size:12px;padding:0 6px;border-radius:10px;}",
+    ".formlab{border:1px solid var(--sim-borde);border-radius:8px;padding:6px 10px;font-size:12px;}",
+    ".formlab .cablab{display:flex;align-items:center;gap:8px;margin-bottom:4px;}",
+    ".formlab .cablab b{color:var(--sim-acento);}",
+    ".formlab .camposlab{display:flex;flex-wrap:wrap;gap:4px 10px;}",
+    ".formlab .campolab{display:flex;flex-direction:column;min-width:0;}",
+    ".formlab .campolab.ancho{flex:1 1 100%;}",
+    ".formlab .campolab label{font-size:11px;color:var(--sim-tenue);}",
+    ".formlab .campolab select,.formlab .campolab input{font-size:12px;max-width:220px;}",
+    ".formlab .campolab input[type=number]{width:80px;}",
+    ".formlab .campolab.ancho input{max-width:none;width:100%;box-sizing:border-box;}",
+    ".formlab p{margin:4px 0;}",
+    ".avisolab{color:var(--sim-mal);font-size:12px;}",
+    ".tablalab{width:100%;border-collapse:collapse;font-size:12px;}",
+    ".tablalab th{text-align:left;position:sticky;top:0;background:var(--sim-panel);border-bottom:1px solid var(--sim-borde);padding:2px 6px;}",
+    ".tablalab td{padding:1px 6px;}",
+    ".tablalab td.ok{color:var(--sim-ok);white-space:nowrap;}",
+    ".tablalab td.mal{color:var(--sim-mal);white-space:nowrap;}",
     ".recorrido .nota{margin:2px 0 4px;font-size:12px;color:var(--sim-tenue);}",
     ".recorrido .sectores{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:4px 8px;align-items:start;}",
     ".recorrido .sectores > div{margin:0;}",
@@ -10959,7 +11577,11 @@ var UI = (function () {
     lista.setAttribute("aria-label", "Paneles de la franja inferior");
     lista.style.display = "flex";
     lista.style.gap = "4px";
-    [["simulacion", "Simulación"], ["captura", "Captura"], ["dhcp", "DHCP"], ["calculo", "Cálculo de subred"], ["ayuda", "Ayuda"]].forEach(function (p) {
+    // Laboratorio: sólo en modo Docente, donde se arman fallas y objetivos.
+    if (S.pestañaInf === "laboratorio" && S.modo !== "docente") { S.pestañaInf = "simulacion"; }
+    var pestañas = [["simulacion", "Simulación"], ["captura", "Captura"], ["dhcp", "DHCP"], ["calculo", "Cálculo de subred"], ["ayuda", "Ayuda"]];
+    if (S.modo === "docente") { pestañas.push(["laboratorio", "Laboratorio"]); }
+    pestañas.forEach(function (p) {
       var activa = p[0] === S.pestañaInf;
       var b = boton(p[1], activa ? "activo" : "");
       b.setAttribute("role", "tab");
@@ -10992,6 +11614,7 @@ var UI = (function () {
     else if (S.pestañaInf === "captura") { panelCaptura(cuerpo); }
     else if (S.pestañaInf === "dhcp") { panelDhcpInf(cuerpo); }
     else if (S.pestañaInf === "calculo") { panelCalculo(cuerpo); }
+    else if (S.pestañaInf === "laboratorio") { panelLaboratorio(cuerpo); }
     else { panelAyuda(cuerpo); }
   }
 
@@ -11992,6 +12615,425 @@ var UI = (function () {
     anunciar(S.ultimaVerif.error || ("Verificación: " + partes.join(", ") + "."));
   }
 
+  /* ---------------- Laboratorio (modo Docente) ----------------
+   * Editores de fallas, objetivos y sectores sobre el escenario de la red
+   * abierta, y la comparación de la red sana con la del alumno. Los campos
+   * salen del catálogo de Escenarios: acá no se sabe nada de cada tipo. */
+  function escenarioLab() {
+    if (!S.topologia.escenario || typeof S.topologia.escenario !== "object") {
+      S.topologia.escenario = { modo: "docente" };
+    }
+    return S.topologia.escenario;
+  }
+
+  function sectoresLab(crear) {
+    var esc = escenarioLab();
+    if (Array.isArray(esc.requerimientos)) { return esc.requerimientos; }
+    if (Array.isArray(esc.sectores)) { return esc.sectores; }
+    if (crear) { esc.requerimientos = []; return esc.requerimientos; }
+    return [];
+  }
+
+  // Después de cada cambio: la red se rearma y la franja se vuelve a dibujar.
+  function cambioLab(texto) {
+    reconstruirEstado();
+    actualizarBotonAlumno();
+    renderInferior();
+    if (texto) { registrar("laboratorio", texto); }
+  }
+
+  function avisosHtml(problemas) {
+    return problemas.map(function (p) { return "<div class='avisolab'>⚠ " + escapar(p) + "</div>"; }).join("");
+  }
+
+  function panelLaboratorio(c) {
+    c.classList.add("lab");
+    var esc = S.topologia.escenario || {};
+    var rev = Escenarios.revisarEscenario(S.topologia);
+    var conProblemas = function (lista) { return lista.filter(function (p) { return p.length; }).length; };
+    var ctrl = el("div", "simctrl");
+    var secs = el("div", "modosim");
+    secs.setAttribute("role", "group");
+    secs.setAttribute("aria-label", "Parte del laboratorio");
+    var actual = S.seccionLab || "fallas";
+    [["fallas", "Fallas (" + (esc.fallas || []).length + ")"], ["objetivos", "Objetivos (" + (esc.objetivos || []).length + ")"],
+      ["desafio", "Desafío VLSM (" + sectoresLab(false).length + ")"], ["verificar", "Verificar"]].forEach(function (s) {
+      var b = boton(s[1], actual === s[0] ? "activo" : "");
+      b.setAttribute("aria-pressed", String(actual === s[0]));
+      b.addEventListener("click", function () { S.seccionLab = s[0]; S.itemLab = 0; renderInferior(); });
+      secs.appendChild(b);
+    });
+    ctrl.appendChild(secs);
+    ctrl.appendChild(el("span", "espacio"));
+    var nProb = conProblemas(rev.fallas) + conProblemas(rev.objetivos) + conProblemas(rev.sectores) + (rev.bloque ? 1 : 0);
+    ctrl.appendChild(el("span", nProb ? "tenue avisolab" : "tenue",
+      nProb ? "⚠ " + nProb + (nProb === 1 ? " ítem con problemas" : " ítems con problemas") : "Las fallas, objetivos y sectores coinciden con la red."));
+    c.appendChild(ctrl);
+    var cuerpo = el("div", "simres");
+    c.appendChild(cuerpo);
+    if (actual === "fallas") {
+      editorItems(cuerpo, "fallas", Escenarios.TIPOS_FALLA, Escenarios.nuevaFalla, Escenarios.textoFalla, rev.fallas,
+        "Fallas que se aplican al exportar para el alumno", "falla");
+    } else if (actual === "objetivos") {
+      editorItems(cuerpo, "objetivos", Escenarios.TIPOS_OBJETIVO, Escenarios.nuevoObjetivo, Escenarios.textoObjetivo, rev.objetivos,
+        "Objetivos que el alumno verifica", "objetivo");
+    } else if (actual === "desafio") {
+      editorDesafio(cuerpo, rev);
+    } else {
+      verificarLaboratorio(cuerpo, rev);
+    }
+  }
+
+  // Lista numerada a la izquierda; formulario del elegido a la derecha.
+  function editorItems(cuerpo, clave, catalogo, nuevo, texto, problemas, titulo, palabra) {
+    var items = (S.topologia.escenario && S.topologia.escenario[clave]) || [];
+    if (S.itemLab >= items.length) { S.itemLab = items.length - 1; }
+    if (!(S.itemLab >= 0)) { S.itemLab = 0; }
+    var caja = el("div", "recorrido");
+    var cab = el("div", "cab", "<span>" + escapar(titulo) + "</span>");
+    var selNuevo = document.createElement("select");
+    selNuevo.setAttribute("aria-label", "Agregar " + palabra);
+    selNuevo.innerHTML = "<option value=''>+ Agregar " + palabra + "…</option>";
+    catalogo.forEach(function (t) {
+      var o = document.createElement("option"); o.value = t.tipo; o.textContent = t.nombre; selNuevo.appendChild(o);
+    });
+    selNuevo.addEventListener("change", function () {
+      if (!selNuevo.value) { return; }
+      empujarHistorial();
+      var esc = escenarioLab();
+      if (!Array.isArray(esc[clave])) { esc[clave] = []; }
+      esc[clave].push(nuevo(S.topologia, selNuevo.value));
+      S.itemLab = esc[clave].length - 1;
+      cambioLab("Se agregó " + (palabra === "falla" ? "una falla" : "un objetivo") + " al laboratorio.");
+    });
+    cab.appendChild(selNuevo);
+    caja.appendChild(cab);
+    var lista = el("div", "pasos");
+    if (!items.length) {
+      lista.appendChild(el("p", "tenue", palabra === "falla"
+        ? "Sin fallas. Armá y probá la red sana; después agregá las fallas que el alumno tiene que encontrar."
+        : "Sin objetivos. Un objetivo dice qué tiene que funcionar (o fallar) cuando el alumno termine."));
+    }
+    items.forEach(function (it, i) {
+      var p = problemas[i] || [];
+      var fila = el("div", "labfila" + (i === S.itemLab ? " sel" : "") + (p.length ? " conproblema" : ""));
+      var bSel = boton((i + 1) + ". " + texto(S.topologia, it) + (p.length ? " ⚠" : ""), "labtexto");
+      bSel.setAttribute("aria-pressed", String(i === S.itemLab));
+      if (p.length) { bSel.title = p.join(" "); }
+      bSel.addEventListener("click", function () { S.itemLab = i; renderInferior(); });
+      fila.appendChild(bSel);
+      if (i > 0) {
+        var bSubir = boton("↑");
+        bSubir.setAttribute("aria-label", "Subir " + (palabra === "falla" ? "la falla " : "el objetivo ") + (i + 1));
+        bSubir.addEventListener("click", function () {
+          empujarHistorial();
+          var arr = escenarioLab()[clave];
+          arr.splice(i - 1, 0, arr.splice(i, 1)[0]);
+          S.itemLab = i - 1;
+          cambioLab();
+        });
+        fila.appendChild(bSubir);
+      }
+      var bQuitar = boton("✕");
+      bQuitar.setAttribute("aria-label", "Quitar " + (palabra === "falla" ? "la falla " : "el objetivo ") + (i + 1));
+      bQuitar.addEventListener("click", function () {
+        empujarHistorial();
+        escenarioLab()[clave].splice(i, 1);
+        cambioLab("Se quitó " + (palabra === "falla" ? "la falla " : "el objetivo ") + (i + 1) + " del laboratorio.");
+      });
+      fila.appendChild(bQuitar);
+      lista.appendChild(fila);
+    });
+    caja.appendChild(lista);
+    cuerpo.appendChild(caja);
+    var lado = el("div", "lado formlab");
+    var it = items[S.itemLab];
+    if (it) {
+      formularioItem(lado, it, catalogo, problemas[S.itemLab] || [], palabra, S.itemLab);
+    } else {
+      lado.appendChild(el("p", "tenue", palabra === "falla"
+        ? "Cada falla cambia algo de la red cuando se exporta para el alumno: un puerto, una ruta, un gateway, un servicio. " +
+          "La red que ves sigue sana: es la solución."
+        : "Los objetivos se verifican con el botón Verificar de Simulación (el alumno) y en la sección Verificar de acá (vos)."));
+    }
+    cuerpo.appendChild(lado);
+  }
+
+  function formularioItem(lado, it, catalogo, problemas, palabra, indice) {
+    var tipo = null;
+    catalogo.forEach(function (t) { if (t.tipo === it.tipo) { tipo = t; } });
+    var cab = el("div", "cablab", "<b>" + (palabra === "falla" ? "Falla " : "Objetivo ") + (indice + 1) + "</b>");
+    var selTipo = document.createElement("select");
+    selTipo.setAttribute("aria-label", "Tipo de " + palabra);
+    catalogo.forEach(function (t) {
+      var o = document.createElement("option"); o.value = t.tipo; o.textContent = t.nombre;
+      if (t.tipo === it.tipo) { o.selected = true; }
+      selTipo.appendChild(o);
+    });
+    selTipo.addEventListener("change", function () {
+      empujarHistorial();
+      // Otro tipo: el equipo y el origen se conservan si siguen valiendo.
+      var nuevo = { tipo: selTipo.value };
+      ["dispositivo", "origen", "destino", "descripcion"].forEach(function (k) { if (it[k] !== undefined) { nuevo[k] = it[k]; } });
+      var arr = escenarioLab()[palabra === "falla" ? "fallas" : "objetivos"];
+      var base = palabra === "falla" ? Escenarios.nuevaFalla(S.topologia, selTipo.value) : Escenarios.nuevoObjetivo(S.topologia, selTipo.value);
+      Object.keys(nuevo).forEach(function (k) { base[k] = nuevo[k]; });
+      arr[indice] = Escenarios.completarItem(S.topologia, base, catalogo);
+      cambioLab();
+    });
+    cab.appendChild(selTipo);
+    lado.appendChild(cab);
+    if (!tipo) { lado.appendChild(el("div", "", avisosHtml(problemas))); return; }
+    var campos = el("div", "camposlab");
+    tipo.campos.forEach(function (campo) {
+      if (campo.soloSi && Escenarios.leerCampo(it, campo.soloSi.clave) !== campo.soloSi.valor) { return; }
+      var caja = el("div", "campolab" + (campo.clase === "texto" ? " ancho" : ""));
+      var ops = Escenarios.opcionesCampo(S.topologia, it, campo);
+      var control;
+      if (ops) {
+        control = document.createElement("select");
+        var elegida = -1;
+        ops.forEach(function (o, k) { if (o.elegida && elegida < 0) { elegida = k; } });
+        if (elegida < 0) {
+          var actual = Escenarios.leerCampo(it, campo.clave);
+          var o0 = document.createElement("option");
+          o0.value = "";
+          o0.textContent = actual === undefined || actual === null || actual === "" ? "— elegí —" : "«" + actual + "» (no corresponde)";
+          control.appendChild(o0);
+        }
+        ops.forEach(function (o, k) {
+          var op = document.createElement("option"); op.value = String(k); op.textContent = o.texto;
+          if (k === elegida) { op.selected = true; }
+          control.appendChild(op);
+        });
+        if (!ops.length) { control.disabled = true; }
+        control.addEventListener("change", function () {
+          if (control.value === "") { return; }
+          empujarHistorial();
+          Escenarios.aplicarParche(it, ops[Number(control.value)].parche);
+          // Otro equipo: sus puertos, rutas o servicios son otros.
+          Escenarios.completarItem(S.topologia, it, catalogo);
+          cambioLab();
+        });
+      } else {
+        control = document.createElement("input");
+        control.type = ["prefijo", "puerto", "numero"].indexOf(campo.clase) >= 0 ? "number" : "text";
+        var v = Escenarios.leerCampo(it, campo.clave);
+        control.value = v === undefined || v === null ? "" : String(v);
+        control.setAttribute("autocomplete", "off");
+        if (campo.clase === "destino") {
+          var dl = document.createElement("datalist");
+          dl.id = idCampo("destinos-lab");
+          Escenarios.sugerenciasDestino(S.topologia).forEach(function (s) {
+            var o = document.createElement("option"); o.value = s.valor; o.label = s.texto; dl.appendChild(o);
+          });
+          caja.appendChild(dl);
+          control.setAttribute("list", dl.id);
+        }
+        if (Escenarios.normalizarCampo(campo, control.value).error && control.value !== "") { control.classList.add("invalido"); }
+        control.addEventListener("change", function () {
+          var n = Escenarios.normalizarCampo(campo, control.value);
+          if (n.error && control.value.trim() !== "") { control.classList.add("invalido"); avisar(n.error); return; }
+          empujarHistorial();
+          Escenarios.escribirCampo(it, campo.clave, n.error ? null : n.valor);
+          cambioLab();
+        });
+      }
+      caja.appendChild(etiqueta(campo.etiqueta, control));
+      caja.appendChild(control);
+      campos.appendChild(caja);
+    });
+    lado.appendChild(campos);
+    if (problemas.length) { lado.appendChild(el("div", "", avisosHtml(problemas))); }
+  }
+
+  // Candidatos a miembro de un sector: equipos finales y puertos de router.
+  function candidatosSector() {
+    var lista = [];
+    (S.topologia.dispositivos || []).forEach(function (d) {
+      if (d.tipo === "internet" || d.tipo === "switch-l2" || d.tipo === "ap") { return; }
+      if (d.tipo === "router") {
+        (d.interfaces || []).forEach(function (f) { lista.push({ valor: d.id + ":" + f.id, texto: (d.nombre || d.id) + " " + f.id }); });
+      } else {
+        lista.push({ valor: d.id, texto: d.nombre || d.id });
+      }
+    });
+    return lista;
+  }
+
+  function textoMiembro(m) {
+    var t = String(m);
+    var corte = t.indexOf(":");
+    return corte >= 0 ? nombreDe(t.slice(0, corte)) + " " + t.slice(corte + 1) : nombreDe(t);
+  }
+
+  function editorDesafio(cuerpo, rev) {
+    var sectores = sectoresLab(false);
+    var caja = el("div", "recorrido");
+    var cab = el("div", "cab", "<span>Sectores del desafío</span>");
+    var bArmar = boton("Armar desde la red");
+    bArmar.title = "Un sector por cada puerto de router con su LAN; después cargás los nombres y los hosts";
+    bArmar.addEventListener("click", function () {
+      var hallados = Escenarios.detectarSectores(S.topologia);
+      if (!hallados.length) { avisar("No hay sectores para armar: conectá equipos a los puertos de un router."); return; }
+      empujarHistorial();
+      var esc = escenarioLab();
+      delete esc.sectores;
+      // Los equipos finales van por su nombre; los routers, por puerto.
+      esc.requerimientos = hallados.map(function (s) {
+        return { sector: s.sector, hosts: 0, dispositivos: s.dispositivos.map(function (m) {
+          var id = m.split(":")[0];
+          var d = buscarDisp(id);
+          return d && d.tipo !== "router" ? id : m;
+        }) };
+      });
+      cambioLab("Se armaron " + hallados.length + " sectores desde la red. Faltan los hosts de cada uno.");
+    });
+    var bAgregar = boton("+ Sector");
+    bAgregar.addEventListener("click", function () {
+      empujarHistorial();
+      var arr = sectoresLab(true);
+      arr.push({ sector: "Sector " + (arr.length + 1), hosts: 0, dispositivos: [] });
+      cambioLab();
+    });
+    var botones = el("span", "botoneslab");
+    botones.appendChild(bArmar); botones.appendChild(bAgregar);
+    cab.appendChild(botones);
+    caja.appendChild(cab);
+    var lista = el("div", "pasos");
+    if (!sectores.length) {
+      lista.appendChild(el("p", "tenue", "Sin sectores: no es un desafío VLSM. Armalos desde la red o agregalos de a uno."));
+    }
+    var candidatos = candidatosSector();
+    sectores.forEach(function (s, i) {
+      var p = rev.sectores[i] || [];
+      var fila = el("div", "labsector" + (p.length ? " conproblema" : ""));
+      var inNom = document.createElement("input");
+      inNom.type = "text"; inNom.className = "nomsector"; inNom.value = s.sector || s.nombre || "";
+      inNom.setAttribute("aria-label", "Nombre del sector " + (i + 1));
+      inNom.addEventListener("change", function () {
+        empujarHistorial();
+        if (s.nombre !== undefined && s.sector === undefined) { s.nombre = inNom.value.trim(); } else { s.sector = inNom.value.trim(); }
+        cambioLab();
+      });
+      fila.appendChild(inNom);
+      var inHosts = document.createElement("input");
+      inHosts.type = "number"; inHosts.min = "0"; inHosts.className = "hosts"; inHosts.value = s.hosts || "";
+      inHosts.setAttribute("aria-label", "Hosts que necesita el sector " + (i + 1));
+      inHosts.addEventListener("change", function () {
+        var n = parseInt(inHosts.value, 10);
+        empujarHistorial();
+        s.hosts = isNaN(n) || n < 0 ? 0 : n;
+        cambioLab();
+      });
+      fila.appendChild(inHosts);
+      fila.appendChild(el("span", "tenue", "hosts"));
+      var miembros = s.dispositivos || s.equipos || [];
+      if (!s.dispositivos) { s.dispositivos = miembros; }
+      miembros.forEach(function (m, k) {
+        var ficha = boton(textoMiembro(m) + " ✕", "ficha");
+        ficha.setAttribute("aria-label", "Sacar " + textoMiembro(m) + " del sector " + (i + 1));
+        ficha.addEventListener("click", function () { empujarHistorial(); miembros.splice(k, 1); cambioLab(); });
+        fila.appendChild(ficha);
+      });
+      var selM = document.createElement("select");
+      selM.setAttribute("aria-label", "Agregar equipo o puerto al sector " + (i + 1));
+      selM.innerHTML = "<option value=''>+ equipo o puerto</option>";
+      candidatos.forEach(function (cand) {
+        if (miembros.indexOf(cand.valor) >= 0) { return; }
+        var o = document.createElement("option"); o.value = cand.valor; o.textContent = cand.texto; selM.appendChild(o);
+      });
+      selM.addEventListener("change", function () {
+        if (!selM.value) { return; }
+        empujarHistorial(); miembros.push(selM.value); cambioLab();
+      });
+      fila.appendChild(selM);
+      var bQ = boton("✕");
+      bQ.setAttribute("aria-label", "Quitar el sector " + (i + 1));
+      bQ.addEventListener("click", function () { empujarHistorial(); sectoresLab(false).splice(i, 1); cambioLab(); });
+      fila.appendChild(bQ);
+      lista.appendChild(fila);
+      if (p.length) { lista.appendChild(el("div", "", avisosHtml(p))); }
+    });
+    caja.appendChild(lista);
+    cuerpo.appendChild(caja);
+    var lado = el("div", "lado formlab");
+    var esc = S.topologia.escenario || {};
+    var inB = document.createElement("input");
+    inB.type = "text"; inB.placeholder = "p. ej. 10.45.7.0/24";
+    inB.value = esc.bloqueBase || esc.bloque || "";
+    inB.addEventListener("change", function () {
+      var v = inB.value.trim();
+      if (v && !/^\d{1,3}(\.\d{1,3}){3}\/\d{1,2}$/.test(v)) { inB.classList.add("invalido"); avisar("Escribí el bloque como red/prefijo, por ejemplo 10.45.7.0/24."); return; }
+      empujarHistorial();
+      var e = escenarioLab();
+      delete e.bloque;
+      if (v) { e.bloqueBase = v; } else { delete e.bloqueBase; }
+      cambioLab();
+    });
+    var campo = el("div", "campolab");
+    campo.appendChild(etiqueta("Bloque a repartir", inB));
+    campo.appendChild(inB);
+    lado.appendChild(campo);
+    if (rev.bloque) { lado.appendChild(el("div", "", avisosHtml([rev.bloque]))); }
+    lado.appendChild(el("p", "tenue", "Armá la red con tu solución y probala. Al exportar para el alumno, la red sale " +
+      "<b>sin direccionar</b>: se borran IP, máscaras, gateways, rutas, DHCP y DNS (la nube de Internet queda como está). " +
+      "El alumno reparte el bloque entre los sectores y lo verifica en el modo Desafío."));
+    cuerpo.appendChild(lado);
+  }
+
+  function celdaResultado(r) {
+    if (!r) { return "<td>—</td>"; }
+    return "<td class='" + (r.cumple ? "ok" : "mal") + "'" + (r.titulo ? " title='" + escapar(r.titulo) + "'" : "") + ">" +
+      (r.cumple ? "✓ cumple" : "✗ " + escapar(r.codigo && r.codigo !== "VALOR" ? r.codigo : (r.codigo === "VALOR" ? "otro valor" : "no cumple"))) + "</td>";
+  }
+
+  function verificarLaboratorio(cuerpo, rev) {
+    var cmp = Escenarios.compararLaboratorio(S.topologia);
+    var esc = S.topologia.escenario || {};
+    var caja = el("div", "recorrido");
+    var cab = el("div", "cab", "<span>Cada objetivo en la red sana (tu solución) y en la del alumno (con las fallas)</span>");
+    caja.appendChild(cab);
+    var lista = el("div", "pasos");
+    if (!cmp.objetivos.length) {
+      lista.appendChild(el("p", "tenue", "Sin objetivos para verificar."));
+    } else {
+      var tabla = el("table", "tablalab");
+      tabla.innerHTML = "<thead><tr><th>Objetivo</th><th>Sana</th><th>Alumno</th></tr></thead>";
+      var tb = document.createElement("tbody");
+      cmp.objetivos.forEach(function (x, i) {
+        var tr = document.createElement("tr");
+        tr.innerHTML = "<td>" + (i + 1) + ". " + escapar(Escenarios.textoObjetivo(S.topologia, x.objetivo)) + "</td>" +
+          celdaResultado(x.sana) + celdaResultado(x.alumno);
+        tb.appendChild(tr);
+      });
+      tabla.appendChild(tb);
+      lista.appendChild(tabla);
+    }
+    (esc.fallas || []).forEach(function (f, k) {
+      var rotos = cmp.porFalla[k] || [];
+      lista.appendChild(el("div", rotos.length ? "linpaso" : "linpaso tenue",
+        "<b>Falla " + (k + 1) + "</b> · " + escapar(Escenarios.textoFalla(S.topologia, f)) + " → " +
+        (rotos.length ? "rompe " + (rotos.length === 1 ? "el objetivo " : "los objetivos ") + rotos.map(function (n) { return n + 1; }).join(", ")
+          : "no rompe ningún objetivo")));
+    });
+    caja.appendChild(lista);
+    cuerpo.appendChild(caja);
+    var lado = el("div", "lado formlab");
+    var nRev = rev.fallas.concat(rev.objetivos, rev.sectores).filter(function (p) { return p.length; }).length + (rev.bloque ? 1 : 0);
+    var avisos = cmp.advertencias.slice();
+    if (nRev) { avisos.unshift(nRev + (nRev === 1 ? " ítem nombra" : " ítems nombran") + " algo que no está en la red o está incompleto: revisalos en su sección."); }
+    if (cmp.desafio && !cmp.desafio.resumen.errores) { lado.appendChild(el("div", "linpaso", "<span class='marca'>✓</span>El diseño VLSM de tu solución cumple el desafío.")); }
+    if (!avisos.length && (cmp.objetivos.length || cmp.desafio)) {
+      lado.appendChild(el("div", "linpaso", "<span class='marca'>✓</span>El laboratorio está bien armado: en tu solución se cumple todo" +
+        ((esc.fallas || []).length ? " y cada falla rompe al menos un objetivo." : ".")));
+    } else if (!avisos.length) {
+      lado.appendChild(el("p", "tenue", "Cargá fallas y objetivos (o los sectores de un desafío) para verificar el laboratorio."));
+    }
+    lado.appendChild(el("div", "", avisosHtml(avisos)));
+    cuerpo.appendChild(lado);
+  }
+
   /* Cálculo de subred atado al seleccionado, con binario en dos colores. */
   function panelCalculo(c) {
     var caja = el("div", "calc");
@@ -12603,8 +13645,10 @@ var UI = (function () {
     var fallas = (esc.fallas || []).length;
     try {
       descargarTexto(Escenarios.exportarParaAlumno(S.topologia), nombreDeArchivo(S.topologia.nombre) + "-ALUMNO.json");
+      var sectores = (esc.requerimientos || esc.sectores || []).length;
       var texto = "Se exportó la versión del alumno: " + fallas + (fallas === 1 ? " falla aplicada" : " fallas aplicadas") +
-        " y " + (esc.objetivos || []).length + " objetivos, sin la lista de fallas.";
+        " y " + (esc.objetivos || []).length + " objetivos, sin la lista de fallas" +
+        (sectores ? "; desafío de " + sectores + " sectores, con la red sin direccionar." : ".");
       registrar("exportar", texto);
       avisar(texto);
     } catch (e) { registrar("exportar", "No se pudo exportar la versión del alumno: " + e.message); }
@@ -12612,15 +13656,19 @@ var UI = (function () {
 
   /* ---------------- API pública ---------------- */
 
+  function actualizarBotonAlumno() {
+    if (!S.botonAlumno) { return; }
+    var escA = S.topologia.escenario;
+    var hayLab = !!(escA && ((escA.fallas || []).length || (escA.objetivos || []).length ||
+      (escA.requerimientos || escA.sectores || []).length));
+    S.botonAlumno.hidden = S.modo !== "docente";
+    S.botonAlumno.disabled = !hayLab;
+    S.botonAlumno.title = hayLab ? "Baja la red con las fallas aplicadas y sin la lista de fallas (en un desafío, sin direccionar), para repartir"
+      : "Esta red no tiene fallas, objetivos ni sectores: no es un laboratorio";
+  }
+
   function renderTodo() {
-    if (S.botonAlumno) {
-      var escA = S.topologia.escenario;
-      var hayLab = !!(escA && ((escA.fallas || []).length || (escA.objetivos || []).length));
-      S.botonAlumno.hidden = S.modo !== "docente";
-      S.botonAlumno.disabled = !hayLab;
-      S.botonAlumno.title = hayLab ? "Baja la red con las fallas aplicadas y sin la lista de fallas, para repartir"
-        : "Esta red no tiene fallas ni objetivos: no es un laboratorio";
-    }
+    actualizarBotonAlumno();
     renderLienzo();
     renderPropiedades();
     renderInferior();
@@ -13824,7 +14872,51 @@ var Autotest = (function () {
    * pruebas internas de las capas, quedan para quien programa:
    * Autotest.correr({ tecnico: true }) desde la consola. */
   var CRITERIOS_DIDACTICOS = [crit02, crit17, crit03, crit04, crit05, crit06, crit20, crit18, crit19, crit21, crit22, crit23, crit07, crit08, crit12];
-  var CRITERIOS_TECNICOS = [crit01, crit09, crit10, crit11, crit13, crit14, crit15, crit16];
+  // La pestaña Laboratorio: sólo en modo Docente, con sus cuatro secciones
+  // y sin scroll de página. correr() restaura la red del usuario.
+  function crit24() {
+    var nombre = "La pestaña Laboratorio aparece sólo en modo Docente y sus cuatro secciones se dibujan sin scroll de página";
+    var previo = modoActualDom();
+    try {
+      var prob = [];
+      UI.cargarTopologia(clonar(ejemploPorId("complejo-roto").topologia));
+      function pestanaLab() {
+        var bs = document.querySelectorAll(".siminf .tabs button[role=tab]");
+        for (var i = 0; i < bs.length; i++) { if (bs[i].textContent === "Laboratorio") { return bs[i]; } }
+        return null;
+      }
+      UI.setModo("topologia");
+      if (pestanaLab()) { prob.push("la pestaña está fuera del modo Docente"); }
+      UI.setModo("docente");
+      var tab = pestanaLab();
+      if (!tab) {
+        prob.push("no está la pestaña en modo Docente");
+      } else {
+        tab.click();
+        ["Fallas", "Objetivos", "Desafío", "Verificar"].forEach(function (sec) {
+          var bs = document.querySelectorAll(".lab .modosim button");
+          var b = null;
+          for (var i = 0; i < bs.length; i++) { if (bs[i].textContent.indexOf(sec) === 0) { b = bs[i]; } }
+          if (!b) { prob.push("falta la sección " + sec); return; }
+          b.click();
+          if (!document.querySelector(".lab .simres .recorrido")) { prob.push(sec + " no dibuja su lista"); }
+          if (document.documentElement.scrollHeight > window.innerHeight + 1) { prob.push(sec + " deja scroll de página"); }
+        });
+        var filas = document.querySelectorAll(".tablalab tbody tr").length;
+        if (filas !== 2) { prob.push("Verificar muestra " + filas + " objetivos y la plantilla tiene 2"); }
+      }
+      if (prob.length === 0) {
+        return fila(24, nombre, true, "Pestaña sólo en Docente; Fallas, Objetivos, Desafío VLSM y Verificar sin scroll; 2 objetivos comparados.");
+      }
+      return fila(24, nombre, false, "Falla: " + prob.join("; ") + ".");
+    } catch (e) {
+      return fila(24, nombre, false, "Excepción: " + e.message);
+    } finally {
+      try { UI.setModo(previo); } catch (e2) { /* se sigue igual */ }
+    }
+  }
+
+  var CRITERIOS_TECNICOS = [crit01, crit09, crit10, crit11, crit13, crit14, crit15, crit16, crit24];
 
   function correr(opciones) {
     var tecnico = !!(opciones && opciones.tecnico);

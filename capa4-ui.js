@@ -397,6 +397,39 @@ var UI = (function () {
     ".siminf .tabs .espacio{flex:1;}",
     ".siminf .tabs label{font-size:12px;color:var(--sim-tenue);}",
     ".siminf .cuerpoinf{flex:1;min-height:0;overflow:auto;}",
+    ".siminf .cuerpoinf.lab{display:flex;flex-direction:column;overflow:hidden;}",
+    ".lab .simctrl{margin-bottom:6px;}",
+    ".lab .recorrido .cab{align-items:center;}",
+    ".lab .recorrido .cab select,.lab .recorrido .cab button{font-size:12px;font-weight:400;padding:2px 6px;}",
+    ".lab .botoneslab{display:flex;gap:4px;}",
+    ".labfila{display:flex;align-items:center;gap:4px;border-radius:6px;}",
+    ".labfila .labtexto{flex:1;min-width:0;text-align:left;border:0;background:transparent;padding:2px 6px;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}",
+    ".labfila.sel{background:var(--sim-okfondo);}",
+    ".labfila.sel .labtexto{font-weight:600;}",
+    ".labfila.conproblema .labtexto{color:var(--sim-mal);}",
+    ".labfila button:not(.labtexto){padding:0 6px;font-size:12px;}",
+    ".labsector{display:flex;flex-wrap:wrap;align-items:center;gap:4px;padding:3px 0;border-bottom:1px dotted var(--sim-borde);font-size:12px;}",
+    ".labsector input.nomsector{width:150px;font-size:12px;}",
+    ".labsector input.hosts{width:60px;font-size:12px;margin:0;}",
+    ".labsector select{font-size:12px;max-width:150px;}",
+    ".labsector .ficha{font-size:12px;padding:0 6px;border-radius:10px;}",
+    ".formlab{border:1px solid var(--sim-borde);border-radius:8px;padding:6px 10px;font-size:12px;}",
+    ".formlab .cablab{display:flex;align-items:center;gap:8px;margin-bottom:4px;}",
+    ".formlab .cablab b{color:var(--sim-acento);}",
+    ".formlab .camposlab{display:flex;flex-wrap:wrap;gap:4px 10px;}",
+    ".formlab .campolab{display:flex;flex-direction:column;min-width:0;}",
+    ".formlab .campolab.ancho{flex:1 1 100%;}",
+    ".formlab .campolab label{font-size:11px;color:var(--sim-tenue);}",
+    ".formlab .campolab select,.formlab .campolab input{font-size:12px;max-width:220px;}",
+    ".formlab .campolab input[type=number]{width:80px;}",
+    ".formlab .campolab.ancho input{max-width:none;width:100%;box-sizing:border-box;}",
+    ".formlab p{margin:4px 0;}",
+    ".avisolab{color:var(--sim-mal);font-size:12px;}",
+    ".tablalab{width:100%;border-collapse:collapse;font-size:12px;}",
+    ".tablalab th{text-align:left;position:sticky;top:0;background:var(--sim-panel);border-bottom:1px solid var(--sim-borde);padding:2px 6px;}",
+    ".tablalab td{padding:1px 6px;}",
+    ".tablalab td.ok{color:var(--sim-ok);white-space:nowrap;}",
+    ".tablalab td.mal{color:var(--sim-mal);white-space:nowrap;}",
     ".recorrido .nota{margin:2px 0 4px;font-size:12px;color:var(--sim-tenue);}",
     ".recorrido .sectores{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:4px 8px;align-items:start;}",
     ".recorrido .sectores > div{margin:0;}",
@@ -2848,7 +2881,11 @@ var UI = (function () {
     lista.setAttribute("aria-label", "Paneles de la franja inferior");
     lista.style.display = "flex";
     lista.style.gap = "4px";
-    [["simulacion", "Simulación"], ["captura", "Captura"], ["dhcp", "DHCP"], ["calculo", "Cálculo de subred"], ["ayuda", "Ayuda"]].forEach(function (p) {
+    // Laboratorio: sólo en modo Docente, donde se arman fallas y objetivos.
+    if (S.pestañaInf === "laboratorio" && S.modo !== "docente") { S.pestañaInf = "simulacion"; }
+    var pestañas = [["simulacion", "Simulación"], ["captura", "Captura"], ["dhcp", "DHCP"], ["calculo", "Cálculo de subred"], ["ayuda", "Ayuda"]];
+    if (S.modo === "docente") { pestañas.push(["laboratorio", "Laboratorio"]); }
+    pestañas.forEach(function (p) {
       var activa = p[0] === S.pestañaInf;
       var b = boton(p[1], activa ? "activo" : "");
       b.setAttribute("role", "tab");
@@ -2881,6 +2918,7 @@ var UI = (function () {
     else if (S.pestañaInf === "captura") { panelCaptura(cuerpo); }
     else if (S.pestañaInf === "dhcp") { panelDhcpInf(cuerpo); }
     else if (S.pestañaInf === "calculo") { panelCalculo(cuerpo); }
+    else if (S.pestañaInf === "laboratorio") { panelLaboratorio(cuerpo); }
     else { panelAyuda(cuerpo); }
   }
 
@@ -3881,6 +3919,425 @@ var UI = (function () {
     anunciar(S.ultimaVerif.error || ("Verificación: " + partes.join(", ") + "."));
   }
 
+  /* ---------------- Laboratorio (modo Docente) ----------------
+   * Editores de fallas, objetivos y sectores sobre el escenario de la red
+   * abierta, y la comparación de la red sana con la del alumno. Los campos
+   * salen del catálogo de Escenarios: acá no se sabe nada de cada tipo. */
+  function escenarioLab() {
+    if (!S.topologia.escenario || typeof S.topologia.escenario !== "object") {
+      S.topologia.escenario = { modo: "docente" };
+    }
+    return S.topologia.escenario;
+  }
+
+  function sectoresLab(crear) {
+    var esc = escenarioLab();
+    if (Array.isArray(esc.requerimientos)) { return esc.requerimientos; }
+    if (Array.isArray(esc.sectores)) { return esc.sectores; }
+    if (crear) { esc.requerimientos = []; return esc.requerimientos; }
+    return [];
+  }
+
+  // Después de cada cambio: la red se rearma y la franja se vuelve a dibujar.
+  function cambioLab(texto) {
+    reconstruirEstado();
+    actualizarBotonAlumno();
+    renderInferior();
+    if (texto) { registrar("laboratorio", texto); }
+  }
+
+  function avisosHtml(problemas) {
+    return problemas.map(function (p) { return "<div class='avisolab'>⚠ " + escapar(p) + "</div>"; }).join("");
+  }
+
+  function panelLaboratorio(c) {
+    c.classList.add("lab");
+    var esc = S.topologia.escenario || {};
+    var rev = Escenarios.revisarEscenario(S.topologia);
+    var conProblemas = function (lista) { return lista.filter(function (p) { return p.length; }).length; };
+    var ctrl = el("div", "simctrl");
+    var secs = el("div", "modosim");
+    secs.setAttribute("role", "group");
+    secs.setAttribute("aria-label", "Parte del laboratorio");
+    var actual = S.seccionLab || "fallas";
+    [["fallas", "Fallas (" + (esc.fallas || []).length + ")"], ["objetivos", "Objetivos (" + (esc.objetivos || []).length + ")"],
+      ["desafio", "Desafío VLSM (" + sectoresLab(false).length + ")"], ["verificar", "Verificar"]].forEach(function (s) {
+      var b = boton(s[1], actual === s[0] ? "activo" : "");
+      b.setAttribute("aria-pressed", String(actual === s[0]));
+      b.addEventListener("click", function () { S.seccionLab = s[0]; S.itemLab = 0; renderInferior(); });
+      secs.appendChild(b);
+    });
+    ctrl.appendChild(secs);
+    ctrl.appendChild(el("span", "espacio"));
+    var nProb = conProblemas(rev.fallas) + conProblemas(rev.objetivos) + conProblemas(rev.sectores) + (rev.bloque ? 1 : 0);
+    ctrl.appendChild(el("span", nProb ? "tenue avisolab" : "tenue",
+      nProb ? "⚠ " + nProb + (nProb === 1 ? " ítem con problemas" : " ítems con problemas") : "Las fallas, objetivos y sectores coinciden con la red."));
+    c.appendChild(ctrl);
+    var cuerpo = el("div", "simres");
+    c.appendChild(cuerpo);
+    if (actual === "fallas") {
+      editorItems(cuerpo, "fallas", Escenarios.TIPOS_FALLA, Escenarios.nuevaFalla, Escenarios.textoFalla, rev.fallas,
+        "Fallas que se aplican al exportar para el alumno", "falla");
+    } else if (actual === "objetivos") {
+      editorItems(cuerpo, "objetivos", Escenarios.TIPOS_OBJETIVO, Escenarios.nuevoObjetivo, Escenarios.textoObjetivo, rev.objetivos,
+        "Objetivos que el alumno verifica", "objetivo");
+    } else if (actual === "desafio") {
+      editorDesafio(cuerpo, rev);
+    } else {
+      verificarLaboratorio(cuerpo, rev);
+    }
+  }
+
+  // Lista numerada a la izquierda; formulario del elegido a la derecha.
+  function editorItems(cuerpo, clave, catalogo, nuevo, texto, problemas, titulo, palabra) {
+    var items = (S.topologia.escenario && S.topologia.escenario[clave]) || [];
+    if (S.itemLab >= items.length) { S.itemLab = items.length - 1; }
+    if (!(S.itemLab >= 0)) { S.itemLab = 0; }
+    var caja = el("div", "recorrido");
+    var cab = el("div", "cab", "<span>" + escapar(titulo) + "</span>");
+    var selNuevo = document.createElement("select");
+    selNuevo.setAttribute("aria-label", "Agregar " + palabra);
+    selNuevo.innerHTML = "<option value=''>+ Agregar " + palabra + "…</option>";
+    catalogo.forEach(function (t) {
+      var o = document.createElement("option"); o.value = t.tipo; o.textContent = t.nombre; selNuevo.appendChild(o);
+    });
+    selNuevo.addEventListener("change", function () {
+      if (!selNuevo.value) { return; }
+      empujarHistorial();
+      var esc = escenarioLab();
+      if (!Array.isArray(esc[clave])) { esc[clave] = []; }
+      esc[clave].push(nuevo(S.topologia, selNuevo.value));
+      S.itemLab = esc[clave].length - 1;
+      cambioLab("Se agregó " + (palabra === "falla" ? "una falla" : "un objetivo") + " al laboratorio.");
+    });
+    cab.appendChild(selNuevo);
+    caja.appendChild(cab);
+    var lista = el("div", "pasos");
+    if (!items.length) {
+      lista.appendChild(el("p", "tenue", palabra === "falla"
+        ? "Sin fallas. Armá y probá la red sana; después agregá las fallas que el alumno tiene que encontrar."
+        : "Sin objetivos. Un objetivo dice qué tiene que funcionar (o fallar) cuando el alumno termine."));
+    }
+    items.forEach(function (it, i) {
+      var p = problemas[i] || [];
+      var fila = el("div", "labfila" + (i === S.itemLab ? " sel" : "") + (p.length ? " conproblema" : ""));
+      var bSel = boton((i + 1) + ". " + texto(S.topologia, it) + (p.length ? " ⚠" : ""), "labtexto");
+      bSel.setAttribute("aria-pressed", String(i === S.itemLab));
+      if (p.length) { bSel.title = p.join(" "); }
+      bSel.addEventListener("click", function () { S.itemLab = i; renderInferior(); });
+      fila.appendChild(bSel);
+      if (i > 0) {
+        var bSubir = boton("↑");
+        bSubir.setAttribute("aria-label", "Subir " + (palabra === "falla" ? "la falla " : "el objetivo ") + (i + 1));
+        bSubir.addEventListener("click", function () {
+          empujarHistorial();
+          var arr = escenarioLab()[clave];
+          arr.splice(i - 1, 0, arr.splice(i, 1)[0]);
+          S.itemLab = i - 1;
+          cambioLab();
+        });
+        fila.appendChild(bSubir);
+      }
+      var bQuitar = boton("✕");
+      bQuitar.setAttribute("aria-label", "Quitar " + (palabra === "falla" ? "la falla " : "el objetivo ") + (i + 1));
+      bQuitar.addEventListener("click", function () {
+        empujarHistorial();
+        escenarioLab()[clave].splice(i, 1);
+        cambioLab("Se quitó " + (palabra === "falla" ? "la falla " : "el objetivo ") + (i + 1) + " del laboratorio.");
+      });
+      fila.appendChild(bQuitar);
+      lista.appendChild(fila);
+    });
+    caja.appendChild(lista);
+    cuerpo.appendChild(caja);
+    var lado = el("div", "lado formlab");
+    var it = items[S.itemLab];
+    if (it) {
+      formularioItem(lado, it, catalogo, problemas[S.itemLab] || [], palabra, S.itemLab);
+    } else {
+      lado.appendChild(el("p", "tenue", palabra === "falla"
+        ? "Cada falla cambia algo de la red cuando se exporta para el alumno: un puerto, una ruta, un gateway, un servicio. " +
+          "La red que ves sigue sana: es la solución."
+        : "Los objetivos se verifican con el botón Verificar de Simulación (el alumno) y en la sección Verificar de acá (vos)."));
+    }
+    cuerpo.appendChild(lado);
+  }
+
+  function formularioItem(lado, it, catalogo, problemas, palabra, indice) {
+    var tipo = null;
+    catalogo.forEach(function (t) { if (t.tipo === it.tipo) { tipo = t; } });
+    var cab = el("div", "cablab", "<b>" + (palabra === "falla" ? "Falla " : "Objetivo ") + (indice + 1) + "</b>");
+    var selTipo = document.createElement("select");
+    selTipo.setAttribute("aria-label", "Tipo de " + palabra);
+    catalogo.forEach(function (t) {
+      var o = document.createElement("option"); o.value = t.tipo; o.textContent = t.nombre;
+      if (t.tipo === it.tipo) { o.selected = true; }
+      selTipo.appendChild(o);
+    });
+    selTipo.addEventListener("change", function () {
+      empujarHistorial();
+      // Otro tipo: el equipo y el origen se conservan si siguen valiendo.
+      var nuevo = { tipo: selTipo.value };
+      ["dispositivo", "origen", "destino", "descripcion"].forEach(function (k) { if (it[k] !== undefined) { nuevo[k] = it[k]; } });
+      var arr = escenarioLab()[palabra === "falla" ? "fallas" : "objetivos"];
+      var base = palabra === "falla" ? Escenarios.nuevaFalla(S.topologia, selTipo.value) : Escenarios.nuevoObjetivo(S.topologia, selTipo.value);
+      Object.keys(nuevo).forEach(function (k) { base[k] = nuevo[k]; });
+      arr[indice] = Escenarios.completarItem(S.topologia, base, catalogo);
+      cambioLab();
+    });
+    cab.appendChild(selTipo);
+    lado.appendChild(cab);
+    if (!tipo) { lado.appendChild(el("div", "", avisosHtml(problemas))); return; }
+    var campos = el("div", "camposlab");
+    tipo.campos.forEach(function (campo) {
+      if (campo.soloSi && Escenarios.leerCampo(it, campo.soloSi.clave) !== campo.soloSi.valor) { return; }
+      var caja = el("div", "campolab" + (campo.clase === "texto" ? " ancho" : ""));
+      var ops = Escenarios.opcionesCampo(S.topologia, it, campo);
+      var control;
+      if (ops) {
+        control = document.createElement("select");
+        var elegida = -1;
+        ops.forEach(function (o, k) { if (o.elegida && elegida < 0) { elegida = k; } });
+        if (elegida < 0) {
+          var actual = Escenarios.leerCampo(it, campo.clave);
+          var o0 = document.createElement("option");
+          o0.value = "";
+          o0.textContent = actual === undefined || actual === null || actual === "" ? "— elegí —" : "«" + actual + "» (no corresponde)";
+          control.appendChild(o0);
+        }
+        ops.forEach(function (o, k) {
+          var op = document.createElement("option"); op.value = String(k); op.textContent = o.texto;
+          if (k === elegida) { op.selected = true; }
+          control.appendChild(op);
+        });
+        if (!ops.length) { control.disabled = true; }
+        control.addEventListener("change", function () {
+          if (control.value === "") { return; }
+          empujarHistorial();
+          Escenarios.aplicarParche(it, ops[Number(control.value)].parche);
+          // Otro equipo: sus puertos, rutas o servicios son otros.
+          Escenarios.completarItem(S.topologia, it, catalogo);
+          cambioLab();
+        });
+      } else {
+        control = document.createElement("input");
+        control.type = ["prefijo", "puerto", "numero"].indexOf(campo.clase) >= 0 ? "number" : "text";
+        var v = Escenarios.leerCampo(it, campo.clave);
+        control.value = v === undefined || v === null ? "" : String(v);
+        control.setAttribute("autocomplete", "off");
+        if (campo.clase === "destino") {
+          var dl = document.createElement("datalist");
+          dl.id = idCampo("destinos-lab");
+          Escenarios.sugerenciasDestino(S.topologia).forEach(function (s) {
+            var o = document.createElement("option"); o.value = s.valor; o.label = s.texto; dl.appendChild(o);
+          });
+          caja.appendChild(dl);
+          control.setAttribute("list", dl.id);
+        }
+        if (Escenarios.normalizarCampo(campo, control.value).error && control.value !== "") { control.classList.add("invalido"); }
+        control.addEventListener("change", function () {
+          var n = Escenarios.normalizarCampo(campo, control.value);
+          if (n.error && control.value.trim() !== "") { control.classList.add("invalido"); avisar(n.error); return; }
+          empujarHistorial();
+          Escenarios.escribirCampo(it, campo.clave, n.error ? null : n.valor);
+          cambioLab();
+        });
+      }
+      caja.appendChild(etiqueta(campo.etiqueta, control));
+      caja.appendChild(control);
+      campos.appendChild(caja);
+    });
+    lado.appendChild(campos);
+    if (problemas.length) { lado.appendChild(el("div", "", avisosHtml(problemas))); }
+  }
+
+  // Candidatos a miembro de un sector: equipos finales y puertos de router.
+  function candidatosSector() {
+    var lista = [];
+    (S.topologia.dispositivos || []).forEach(function (d) {
+      if (d.tipo === "internet" || d.tipo === "switch-l2" || d.tipo === "ap") { return; }
+      if (d.tipo === "router") {
+        (d.interfaces || []).forEach(function (f) { lista.push({ valor: d.id + ":" + f.id, texto: (d.nombre || d.id) + " " + f.id }); });
+      } else {
+        lista.push({ valor: d.id, texto: d.nombre || d.id });
+      }
+    });
+    return lista;
+  }
+
+  function textoMiembro(m) {
+    var t = String(m);
+    var corte = t.indexOf(":");
+    return corte >= 0 ? nombreDe(t.slice(0, corte)) + " " + t.slice(corte + 1) : nombreDe(t);
+  }
+
+  function editorDesafio(cuerpo, rev) {
+    var sectores = sectoresLab(false);
+    var caja = el("div", "recorrido");
+    var cab = el("div", "cab", "<span>Sectores del desafío</span>");
+    var bArmar = boton("Armar desde la red");
+    bArmar.title = "Un sector por cada puerto de router con su LAN; después cargás los nombres y los hosts";
+    bArmar.addEventListener("click", function () {
+      var hallados = Escenarios.detectarSectores(S.topologia);
+      if (!hallados.length) { avisar("No hay sectores para armar: conectá equipos a los puertos de un router."); return; }
+      empujarHistorial();
+      var esc = escenarioLab();
+      delete esc.sectores;
+      // Los equipos finales van por su nombre; los routers, por puerto.
+      esc.requerimientos = hallados.map(function (s) {
+        return { sector: s.sector, hosts: 0, dispositivos: s.dispositivos.map(function (m) {
+          var id = m.split(":")[0];
+          var d = buscarDisp(id);
+          return d && d.tipo !== "router" ? id : m;
+        }) };
+      });
+      cambioLab("Se armaron " + hallados.length + " sectores desde la red. Faltan los hosts de cada uno.");
+    });
+    var bAgregar = boton("+ Sector");
+    bAgregar.addEventListener("click", function () {
+      empujarHistorial();
+      var arr = sectoresLab(true);
+      arr.push({ sector: "Sector " + (arr.length + 1), hosts: 0, dispositivos: [] });
+      cambioLab();
+    });
+    var botones = el("span", "botoneslab");
+    botones.appendChild(bArmar); botones.appendChild(bAgregar);
+    cab.appendChild(botones);
+    caja.appendChild(cab);
+    var lista = el("div", "pasos");
+    if (!sectores.length) {
+      lista.appendChild(el("p", "tenue", "Sin sectores: no es un desafío VLSM. Armalos desde la red o agregalos de a uno."));
+    }
+    var candidatos = candidatosSector();
+    sectores.forEach(function (s, i) {
+      var p = rev.sectores[i] || [];
+      var fila = el("div", "labsector" + (p.length ? " conproblema" : ""));
+      var inNom = document.createElement("input");
+      inNom.type = "text"; inNom.className = "nomsector"; inNom.value = s.sector || s.nombre || "";
+      inNom.setAttribute("aria-label", "Nombre del sector " + (i + 1));
+      inNom.addEventListener("change", function () {
+        empujarHistorial();
+        if (s.nombre !== undefined && s.sector === undefined) { s.nombre = inNom.value.trim(); } else { s.sector = inNom.value.trim(); }
+        cambioLab();
+      });
+      fila.appendChild(inNom);
+      var inHosts = document.createElement("input");
+      inHosts.type = "number"; inHosts.min = "0"; inHosts.className = "hosts"; inHosts.value = s.hosts || "";
+      inHosts.setAttribute("aria-label", "Hosts que necesita el sector " + (i + 1));
+      inHosts.addEventListener("change", function () {
+        var n = parseInt(inHosts.value, 10);
+        empujarHistorial();
+        s.hosts = isNaN(n) || n < 0 ? 0 : n;
+        cambioLab();
+      });
+      fila.appendChild(inHosts);
+      fila.appendChild(el("span", "tenue", "hosts"));
+      var miembros = s.dispositivos || s.equipos || [];
+      if (!s.dispositivos) { s.dispositivos = miembros; }
+      miembros.forEach(function (m, k) {
+        var ficha = boton(textoMiembro(m) + " ✕", "ficha");
+        ficha.setAttribute("aria-label", "Sacar " + textoMiembro(m) + " del sector " + (i + 1));
+        ficha.addEventListener("click", function () { empujarHistorial(); miembros.splice(k, 1); cambioLab(); });
+        fila.appendChild(ficha);
+      });
+      var selM = document.createElement("select");
+      selM.setAttribute("aria-label", "Agregar equipo o puerto al sector " + (i + 1));
+      selM.innerHTML = "<option value=''>+ equipo o puerto</option>";
+      candidatos.forEach(function (cand) {
+        if (miembros.indexOf(cand.valor) >= 0) { return; }
+        var o = document.createElement("option"); o.value = cand.valor; o.textContent = cand.texto; selM.appendChild(o);
+      });
+      selM.addEventListener("change", function () {
+        if (!selM.value) { return; }
+        empujarHistorial(); miembros.push(selM.value); cambioLab();
+      });
+      fila.appendChild(selM);
+      var bQ = boton("✕");
+      bQ.setAttribute("aria-label", "Quitar el sector " + (i + 1));
+      bQ.addEventListener("click", function () { empujarHistorial(); sectoresLab(false).splice(i, 1); cambioLab(); });
+      fila.appendChild(bQ);
+      lista.appendChild(fila);
+      if (p.length) { lista.appendChild(el("div", "", avisosHtml(p))); }
+    });
+    caja.appendChild(lista);
+    cuerpo.appendChild(caja);
+    var lado = el("div", "lado formlab");
+    var esc = S.topologia.escenario || {};
+    var inB = document.createElement("input");
+    inB.type = "text"; inB.placeholder = "p. ej. 10.45.7.0/24";
+    inB.value = esc.bloqueBase || esc.bloque || "";
+    inB.addEventListener("change", function () {
+      var v = inB.value.trim();
+      if (v && !/^\d{1,3}(\.\d{1,3}){3}\/\d{1,2}$/.test(v)) { inB.classList.add("invalido"); avisar("Escribí el bloque como red/prefijo, por ejemplo 10.45.7.0/24."); return; }
+      empujarHistorial();
+      var e = escenarioLab();
+      delete e.bloque;
+      if (v) { e.bloqueBase = v; } else { delete e.bloqueBase; }
+      cambioLab();
+    });
+    var campo = el("div", "campolab");
+    campo.appendChild(etiqueta("Bloque a repartir", inB));
+    campo.appendChild(inB);
+    lado.appendChild(campo);
+    if (rev.bloque) { lado.appendChild(el("div", "", avisosHtml([rev.bloque]))); }
+    lado.appendChild(el("p", "tenue", "Armá la red con tu solución y probala. Al exportar para el alumno, la red sale " +
+      "<b>sin direccionar</b>: se borran IP, máscaras, gateways, rutas, DHCP y DNS (la nube de Internet queda como está). " +
+      "El alumno reparte el bloque entre los sectores y lo verifica en el modo Desafío."));
+    cuerpo.appendChild(lado);
+  }
+
+  function celdaResultado(r) {
+    if (!r) { return "<td>—</td>"; }
+    return "<td class='" + (r.cumple ? "ok" : "mal") + "'" + (r.titulo ? " title='" + escapar(r.titulo) + "'" : "") + ">" +
+      (r.cumple ? "✓ cumple" : "✗ " + escapar(r.codigo && r.codigo !== "VALOR" ? r.codigo : (r.codigo === "VALOR" ? "otro valor" : "no cumple"))) + "</td>";
+  }
+
+  function verificarLaboratorio(cuerpo, rev) {
+    var cmp = Escenarios.compararLaboratorio(S.topologia);
+    var esc = S.topologia.escenario || {};
+    var caja = el("div", "recorrido");
+    var cab = el("div", "cab", "<span>Cada objetivo en la red sana (tu solución) y en la del alumno (con las fallas)</span>");
+    caja.appendChild(cab);
+    var lista = el("div", "pasos");
+    if (!cmp.objetivos.length) {
+      lista.appendChild(el("p", "tenue", "Sin objetivos para verificar."));
+    } else {
+      var tabla = el("table", "tablalab");
+      tabla.innerHTML = "<thead><tr><th>Objetivo</th><th>Sana</th><th>Alumno</th></tr></thead>";
+      var tb = document.createElement("tbody");
+      cmp.objetivos.forEach(function (x, i) {
+        var tr = document.createElement("tr");
+        tr.innerHTML = "<td>" + (i + 1) + ". " + escapar(Escenarios.textoObjetivo(S.topologia, x.objetivo)) + "</td>" +
+          celdaResultado(x.sana) + celdaResultado(x.alumno);
+        tb.appendChild(tr);
+      });
+      tabla.appendChild(tb);
+      lista.appendChild(tabla);
+    }
+    (esc.fallas || []).forEach(function (f, k) {
+      var rotos = cmp.porFalla[k] || [];
+      lista.appendChild(el("div", rotos.length ? "linpaso" : "linpaso tenue",
+        "<b>Falla " + (k + 1) + "</b> · " + escapar(Escenarios.textoFalla(S.topologia, f)) + " → " +
+        (rotos.length ? "rompe " + (rotos.length === 1 ? "el objetivo " : "los objetivos ") + rotos.map(function (n) { return n + 1; }).join(", ")
+          : "no rompe ningún objetivo")));
+    });
+    caja.appendChild(lista);
+    cuerpo.appendChild(caja);
+    var lado = el("div", "lado formlab");
+    var nRev = rev.fallas.concat(rev.objetivos, rev.sectores).filter(function (p) { return p.length; }).length + (rev.bloque ? 1 : 0);
+    var avisos = cmp.advertencias.slice();
+    if (nRev) { avisos.unshift(nRev + (nRev === 1 ? " ítem nombra" : " ítems nombran") + " algo que no está en la red o está incompleto: revisalos en su sección."); }
+    if (cmp.desafio && !cmp.desafio.resumen.errores) { lado.appendChild(el("div", "linpaso", "<span class='marca'>✓</span>El diseño VLSM de tu solución cumple el desafío.")); }
+    if (!avisos.length && (cmp.objetivos.length || cmp.desafio)) {
+      lado.appendChild(el("div", "linpaso", "<span class='marca'>✓</span>El laboratorio está bien armado: en tu solución se cumple todo" +
+        ((esc.fallas || []).length ? " y cada falla rompe al menos un objetivo." : ".")));
+    } else if (!avisos.length) {
+      lado.appendChild(el("p", "tenue", "Cargá fallas y objetivos (o los sectores de un desafío) para verificar el laboratorio."));
+    }
+    lado.appendChild(el("div", "", avisosHtml(avisos)));
+    cuerpo.appendChild(lado);
+  }
+
   /* Cálculo de subred atado al seleccionado, con binario en dos colores. */
   function panelCalculo(c) {
     var caja = el("div", "calc");
@@ -4492,8 +4949,10 @@ var UI = (function () {
     var fallas = (esc.fallas || []).length;
     try {
       descargarTexto(Escenarios.exportarParaAlumno(S.topologia), nombreDeArchivo(S.topologia.nombre) + "-ALUMNO.json");
+      var sectores = (esc.requerimientos || esc.sectores || []).length;
       var texto = "Se exportó la versión del alumno: " + fallas + (fallas === 1 ? " falla aplicada" : " fallas aplicadas") +
-        " y " + (esc.objetivos || []).length + " objetivos, sin la lista de fallas.";
+        " y " + (esc.objetivos || []).length + " objetivos, sin la lista de fallas" +
+        (sectores ? "; desafío de " + sectores + " sectores, con la red sin direccionar." : ".");
       registrar("exportar", texto);
       avisar(texto);
     } catch (e) { registrar("exportar", "No se pudo exportar la versión del alumno: " + e.message); }
@@ -4501,15 +4960,19 @@ var UI = (function () {
 
   /* ---------------- API pública ---------------- */
 
+  function actualizarBotonAlumno() {
+    if (!S.botonAlumno) { return; }
+    var escA = S.topologia.escenario;
+    var hayLab = !!(escA && ((escA.fallas || []).length || (escA.objetivos || []).length ||
+      (escA.requerimientos || escA.sectores || []).length));
+    S.botonAlumno.hidden = S.modo !== "docente";
+    S.botonAlumno.disabled = !hayLab;
+    S.botonAlumno.title = hayLab ? "Baja la red con las fallas aplicadas y sin la lista de fallas (en un desafío, sin direccionar), para repartir"
+      : "Esta red no tiene fallas, objetivos ni sectores: no es un laboratorio";
+  }
+
   function renderTodo() {
-    if (S.botonAlumno) {
-      var escA = S.topologia.escenario;
-      var hayLab = !!(escA && ((escA.fallas || []).length || (escA.objetivos || []).length));
-      S.botonAlumno.hidden = S.modo !== "docente";
-      S.botonAlumno.disabled = !hayLab;
-      S.botonAlumno.title = hayLab ? "Baja la red con las fallas aplicadas y sin la lista de fallas, para repartir"
-        : "Esta red no tiene fallas ni objetivos: no es un laboratorio";
-    }
+    actualizarBotonAlumno();
     renderLienzo();
     renderPropiedades();
     renderInferior();

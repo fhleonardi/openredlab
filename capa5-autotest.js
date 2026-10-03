@@ -1124,7 +1124,51 @@ var Autotest = (function () {
    * pruebas internas de las capas, quedan para quien programa:
    * Autotest.correr({ tecnico: true }) desde la consola. */
   var CRITERIOS_DIDACTICOS = [crit02, crit17, crit03, crit04, crit05, crit06, crit20, crit18, crit19, crit21, crit22, crit23, crit07, crit08, crit12];
-  var CRITERIOS_TECNICOS = [crit01, crit09, crit10, crit11, crit13, crit14, crit15, crit16];
+  // La pestaña Laboratorio: sólo en modo Docente, con sus cuatro secciones
+  // y sin scroll de página. correr() restaura la red del usuario.
+  function crit24() {
+    var nombre = "La pestaña Laboratorio aparece sólo en modo Docente y sus cuatro secciones se dibujan sin scroll de página";
+    var previo = modoActualDom();
+    try {
+      var prob = [];
+      UI.cargarTopologia(clonar(ejemploPorId("complejo-roto").topologia));
+      function pestanaLab() {
+        var bs = document.querySelectorAll(".siminf .tabs button[role=tab]");
+        for (var i = 0; i < bs.length; i++) { if (bs[i].textContent === "Laboratorio") { return bs[i]; } }
+        return null;
+      }
+      UI.setModo("topologia");
+      if (pestanaLab()) { prob.push("la pestaña está fuera del modo Docente"); }
+      UI.setModo("docente");
+      var tab = pestanaLab();
+      if (!tab) {
+        prob.push("no está la pestaña en modo Docente");
+      } else {
+        tab.click();
+        ["Fallas", "Objetivos", "Desafío", "Verificar"].forEach(function (sec) {
+          var bs = document.querySelectorAll(".lab .modosim button");
+          var b = null;
+          for (var i = 0; i < bs.length; i++) { if (bs[i].textContent.indexOf(sec) === 0) { b = bs[i]; } }
+          if (!b) { prob.push("falta la sección " + sec); return; }
+          b.click();
+          if (!document.querySelector(".lab .simres .recorrido")) { prob.push(sec + " no dibuja su lista"); }
+          if (document.documentElement.scrollHeight > window.innerHeight + 1) { prob.push(sec + " deja scroll de página"); }
+        });
+        var filas = document.querySelectorAll(".tablalab tbody tr").length;
+        if (filas !== 2) { prob.push("Verificar muestra " + filas + " objetivos y la plantilla tiene 2"); }
+      }
+      if (prob.length === 0) {
+        return fila(24, nombre, true, "Pestaña sólo en Docente; Fallas, Objetivos, Desafío VLSM y Verificar sin scroll; 2 objetivos comparados.");
+      }
+      return fila(24, nombre, false, "Falla: " + prob.join("; ") + ".");
+    } catch (e) {
+      return fila(24, nombre, false, "Excepción: " + e.message);
+    } finally {
+      try { UI.setModo(previo); } catch (e2) { /* se sigue igual */ }
+    }
+  }
+
+  var CRITERIOS_TECNICOS = [crit01, crit09, crit10, crit11, crit13, crit14, crit15, crit16, crit24];
 
   function correr(opciones) {
     var tecnico = !!(opciones && opciones.tecnico);
