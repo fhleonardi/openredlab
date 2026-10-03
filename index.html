@@ -3591,11 +3591,13 @@ var Motor = (function () {
       var ri = red && red.redireccion;
       segmentos.forEach(function (x) {
         var base = x.de === "cliente" ? idaDe(red) : vueltaDe(red);
-        var nombreProt = x.datos && protocolo === "tcp" ? ((servicioConocido("tcp", puerto) || {}).nombre || "TCP") : protocolo.toUpperCase();
         base.forEach(function (t) {
           var po = x.puertoOrigen, pd = x.puertoDestino;
           if (ri && x.de === "cliente" && t.ipDestino === ri.ipInterna) { pd = ri.puertoInterno; }
           if (ri && x.de === "servidor" && t.ipOrigen === ri.ipInterna) { po = ri.puertoInterno; }
+          // El nombre del protocolo sale del puerto del servidor en ese tramo.
+          var puertoSrv = x.de === "cliente" ? pd : po;
+          var nombreProt = x.datos && protocolo === "tcp" ? ((servicioConocido("tcp", puertoSrv) || {}).nombre || "TCP") : protocolo.toUpperCase();
           var info = po + " → " + pd + (x.flags ? " [" + x.flags.replace("-", ", ") + "]" : "") +
             (protocolo === "tcp" ? " Seq=" + x.seq + (x.ack ? " Ack=" + x.ack : "") : "") + (x.datos ? " «" + x.datos + "»" : "");
           Array.prototype.push.apply(lista, tramasCon([t], {
@@ -5612,6 +5614,11 @@ var Motor = (function () {
          puertosSyn(pub, "web", "rb").split(">")[0], puertosSyn(pub, "rb", "nube2").split(">")[0]],
         ["200.9.9.2:8080", "192.168.60.10:80", "192.168.60.10:80", "200.9.9.2:8080"]);
       var pingPub = ping(crearEstado(conPublicado()), "pc1", "200.9.9.2");
+      var datosAdentro = pub.tramas.filter(function (x) { return x.datos && (x.ipDestino === "192.168.60.10" || x.ipOrigen === "192.168.60.10"); });
+      var datosAfuera = pub.tramas.filter(function (x) { return x.datos && x.de.dispositivo === "nube2" && x.a.dispositivo === "rb"; });
+      comparar("redirección: en la captura, adentro los datos son HTTP (puerto 80) y afuera, TCP (8080)",
+        [datosAdentro.length > 0 && datosAdentro.every(function (x) { return x.protocolo === "HTTP"; }), datosAfuera.length > 0 && datosAfuera[0].protocolo],
+        [true, "TCP"]);
       comparar("redirección: el ping (ICMP) a la IP pública lo responde el router",
         [pingPub.exito, pingPub.respondio, pingPub.redireccion], [true, "rb", null]);
       comparar("redirección: lo que genera el propio router no se redirige",
