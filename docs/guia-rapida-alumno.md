@@ -51,7 +51,9 @@ Cuando hacés ping a un nombre, primero se averigua su IP, y eso se ve en el rec
 3. Si no, el servidor hace **consultas iterativas**: le pregunta a la **raíz**, que lo deriva al servidor del **TLD** (.com), que lo deriva al **autoritativo** del dominio (google.com), que le da la IP.
 4. El servidor guarda la respuesta en su **caché** por el TTL del registro: la segunda vez contesta sin preguntarle a nadie.
 
-Un servidor se agrega desde la paleta (**Servidor**); su pestaña **DNS** muestra la zona y los registros: **A** (nombre → IP), **CNAME** (un nombre que es alias de otro), **MX** (el servidor de correo de un dominio) y **NS** (el servidor DNS de un dominio). El ejemplo **Oficina con DNS propio** trae todo armado.
+Para preguntar sin hacer ping, en **Simulación** elegí **Consultar DNS**: escribís el nombre y el tipo de registro y ves la respuesta como en `nslookup` (qué servidor respondió, si es autoritativa, si vino de la caché). **Vaciar caché** sirve para volver a ver la consulta a la raíz.
+
+Un servidor se agrega desde la paleta (**Servidor**); en su pestaña **DNS** se cargan la zona y los registros: **A** (nombre → IP), **CNAME** (un nombre que es alias de otro), **MX** (el servidor de correo de un dominio) y **NS** (el servidor DNS de un dominio). El ejemplo **Oficina con DNS propio** trae todo armado.
 
 Los diagnósticos que más te van a aparecer:
 
