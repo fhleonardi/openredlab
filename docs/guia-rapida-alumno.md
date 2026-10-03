@@ -40,6 +40,8 @@ Después de un ping, el botón **Cómo viaja el paquete** cambia los pasos por l
 
 **Con NAT, en el router de borde cambia también la IP de origen.** Una IP privada (10.x, 172.16–31.x, 192.168.x) no sale a internet: el router que da a internet la cambia por la IP pública de su puerto (paso *Traducir la dirección de origen (NAT)*) y, cuando vuelve la respuesta, la traduce al revés. En las tramas se ve: la línea del router a Internet dice «cambia: … IP». El NAT se activa con la casilla **NAT** del puerto que va a internet (pestaña Interfaces del router); un firewall nuevo ya lo trae en wan.
 
+**Entre dos sitios, el paquete cruza internet.** Si la IP pública de destino es de un equipo de otro sitio, la nube no responde ella: le lleva el paquete a la nube de ese sitio, porque todas son la misma internet (paso *Cruzar internet hacia …*). En las tramas, ese tramo dice «por internet». En la realidad son muchos saltos entre routers de los proveedores, cada uno con su trama, que el simulador no dibuja.
+
 Los switches y puntos de acceso aparecen como «pasa por… sin cambiar la trama»: trabajan con la MAC y no la modifican. **Ver los encabezados** muestra cada trama con lo que lleva adentro: la trama (MAC), el paquete IP (IP y TTL) y el mensaje ICMP del ping, con lo que cambió resaltado. Al pasar el mouse por una línea se resalta su cable en el lienzo.
 
 ## Puertos y conexiones (TCP y UDP)
@@ -106,7 +108,8 @@ Los diagnósticos que más te van a aparecer:
 | **D30** | El servidor DNS no llega a internet | La salida a internet del servidor: puerta de enlace, rutas y NAT |
 | **D31** | Puerto cerrado: la red llega, pero nadie atiende ese servicio | Pestaña Servicios del servidor, y el puerto y protocolo elegidos |
 | **D32** | Se perdieron todos los paquetes | La pérdida (%) de los cables del recorrido |
-| **D33** | Nadie atiende en esa IP de internet | Que la IP de destino exista; un servidor de otro sitio se alcanza uniendo los sitios con routers |
+| **D33** | Nadie atiende en esa IP de internet | Que la IP de destino exista |
+| **D34** | Internet no llega hasta ese equipo | La conexión del otro sitio con su nube: el cable, el router de borde y su IP en la red de la nube |
 
 ## La pestaña Cálculo de subred
 

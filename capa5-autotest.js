@@ -153,6 +153,13 @@ var Autotest = (function () {
       esperado: "Con jitter, los 10 vuelven, pero con tiempos distintos: el ping informa mínimo, media y máximo. Con 100 % de pérdida " +
         "no vuelve ninguno, aunque el camino existe: D32, un problema de calidad del enlace y no de configuración."
     },
+    29: {
+      conError: true,
+      situacion: "En «Dos sitios por internet», PC-Casa se conecta por HTTP a SRV-Web (203.0.113.10), en la oficina. Después se cae el cable " +
+        "entre R-Oficina y su nube.",
+      esperado: "Con todo conectado, el paquete sale por el NAT de R-Casa, cruza de Internet (casa) a Internet (oficina), que son la misma internet, " +
+        "y R-Oficina se lo entrega al servidor: la conexión se abre. Con el cable caído, internet no llega hasta el servidor: D34, y falla también el ping."
+    },
     12: {
       conError: true,
       situacion: "En el desafío VLSM, el sector Cámaras se arma con el router en 10.45.7.41/28, al lado del Wi-Fi " +
@@ -1127,7 +1134,26 @@ var Autotest = (function () {
    * puede leer y discutir. Los criterios de la interfaz y del archivo, y las
    * pruebas internas de las capas, quedan para quien programa:
    * Autotest.correr({ tecnico: true }) desde la consola. */
-  var CRITERIOS_DIDACTICOS = [crit02, crit17, crit03, crit04, crit05, crit06, crit20, crit18, crit19, crit21, crit22, crit23, crit07, crit08, crit12];
+  // Internet une sitios (SRE-1031): la conexión cruza de una nube a la
+  // otra, y sin el cable del borde del otro sitio, D34.
+  function crit29() {
+    var nombre = "Internet une dos sitios: el paquete cruza de una nube a la otra (D34 si no llega)";
+    try {
+      var t = clonar(ejemploPorId("dos-sitios").topologia);
+      var http = Motor.conectar(Motor.crearEstado(t), "pc-casa", "203.0.113.10", "tcp", 80);
+      var cruza = http.exito && http.tramas.some(function (x) { return x.medio === "internet"; });
+      t.enlaces.forEach(function (e) { if (e.id === "l-ofi-inet") { e.estado = "down"; } });
+      var caido = Motor.conectar(Motor.crearEstado(t), "pc-casa", "203.0.113.10", "tcp", 80);
+      var ping = Motor.ping(Motor.crearEstado(t), "pc-casa", "203.0.113.10");
+      var pasa = cruza && caido.diagnostico && caido.diagnostico.codigo === "D34" && !ping.exito;
+      return fila(29, nombre, pasa, "Conectados: " + (http.exito ? "la conexión se abre" + (cruza ? ", cruzando internet" : " sin cruzar internet") : diagnosticoTexto(http)) +
+        ". Con el cable caído: " + diagnosticoTexto(caido) + "; el ping " + (ping.exito ? "responde" : "falla") + ".");
+    } catch (e) {
+      return fila(29, nombre, false, "Excepción: " + e.message);
+    }
+  }
+
+  var CRITERIOS_DIDACTICOS = [crit02, crit17, crit03, crit04, crit05, crit06, crit20, crit18, crit19, crit21, crit22, crit23, crit29, crit07, crit08, crit12];
   // La pestaña Laboratorio: sólo en modo Docente, con sus cuatro secciones
   // y sin scroll de página. correr() restaura la red del usuario.
   function crit24() {
@@ -1549,7 +1575,77 @@ var Autotest = (function () {
     }
   }
 
-  var CRITERIOS_TECNICOS = [crit01, crit09, crit10, crit11, crit13, crit14, crit15, crit16, crit24, crit25, crit26, crit27, crit28];
+  // El cruce de internet en la interfaz (SRE-1031): las tramas dicen «por
+  // internet», la captura marca el tramo y el detalle no inventa una trama.
+  function crit30() {
+    var nombre = "El cruce de internet se nombra en las tramas, la captura y el detalle por capas";
+    var previo = modoActualDom();
+    try {
+      var prob = [];
+      var inf = document.querySelector(".siminf");
+      if (!inf || getComputedStyle(inf).display === "none") {
+        return fila(30, nombre, true, "No aplica con el diseño de celular, donde la franja inferior está oculta.");
+      }
+      function boton(raiz, texto) {
+        var bs = raiz.querySelectorAll("button");
+        for (var i = 0; i < bs.length; i++) { if (bs[i].textContent.indexOf(texto) === 0) { return bs[i]; } }
+        return null;
+      }
+      UI.setModo("topologia");
+      UI.cargarTopologia(clonar(ejemploPorId("dos-sitios").topologia));
+      // El ping desde la franja, como lo haría el usuario.
+      document.getElementById("sim-tab-inf-simulacion").click();
+      var selO = Array.prototype.filter.call(inf.querySelectorAll("select"), function (x) {
+        return Array.prototype.some.call(x.options, function (o) { return o.value === "pc-casa"; });
+      })[0];
+      if (!selO) { return fila(30, nombre, false, "Falla: no está el selector de origen."); }
+      selO.value = "pc-casa";
+      selO.dispatchEvent(new Event("change", { bubbles: true }));
+      var selD = inf.querySelector("input[inputmode=url]");
+      selD.value = "203.0.113.10";
+      selD.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      var bTramas = boton(inf, "Cómo viaja el paquete");
+      if (!bTramas) {
+        prob.push("el ping no mostró el recorrido");
+      } else {
+        bTramas.click();
+        var lineas = Array.prototype.map.call(inf.querySelectorAll(".trama"), function (x) { return x.textContent; });
+        if (!lineas.some(function (x) { return x.indexOf("Internet (casa) → Internet (oficina)") >= 0 && x.indexOf("por internet") >= 0; })) {
+          prob.push("ninguna trama dice «Internet (casa) → Internet (oficina) · por internet»");
+        }
+      }
+      // La captura de todos los cables marca el tramo y el detalle.
+      document.getElementById("sim-tab-inf-captura").click();
+      boton(inf, "Limpiar").click();
+      boton(inf, "Iniciar captura").click();
+      var res = Motor.ping(Motor.crearEstado(clonar(ejemploPorId("dos-sitios").topologia)), "pc-casa", "203.0.113.10");
+      UI.capturarTramas(res.tramas || []);
+      document.getElementById("sim-tab-inf-simulacion").click();
+      document.getElementById("sim-tab-inf-captura").click();
+      var fila30 = Array.prototype.filter.call(inf.querySelectorAll(".tablacap tbody tr"), function (tr) {
+        return tr.textContent.indexOf("(cruza internet)") >= 0;
+      })[0];
+      if (!fila30) {
+        prob.push("la captura no marca el tramo «(cruza internet)»");
+      } else {
+        fila30.click();
+        if (inf.textContent.indexOf("Cruce de internet") < 0) { prob.push("el detalle no dice «Cruce de internet»"); }
+      }
+      boton(inf, "Limpiar").click();
+      var bDet = boton(inf, "Detener");
+      if (bDet) { bDet.click(); }
+      if (prob.length === 0) {
+        return fila(30, nombre, true, "La trama del cruce dice «por internet»; la captura marca «(cruza internet)» y el detalle, «Cruce de internet».");
+      }
+      return fila(30, nombre, false, "Falla: " + prob.join("; ") + ".");
+    } catch (e) {
+      return fila(30, nombre, false, "Excepción: " + e.message);
+    } finally {
+      try { UI.setModo(previo); } catch (e2) { /* se sigue igual */ }
+    }
+  }
+
+  var CRITERIOS_TECNICOS = [crit01, crit09, crit10, crit11, crit13, crit14, crit15, crit16, crit24, crit25, crit26, crit27, crit28, crit30];
 
   function correr(opciones) {
     var tecnico = !!(opciones && opciones.tecnico);

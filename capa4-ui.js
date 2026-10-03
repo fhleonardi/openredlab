@@ -3478,9 +3478,16 @@ var UI = (function () {
 
   function detalleCapas(t) {
     var cap = [];
-    cap.push("<b>Trama (capa 2)</b> MAC " + escapar(t.macOrigen || "?") + " → " + escapar(t.macDestino || "?") +
-      " · de " + escapar(nombreDe(t.de.dispositivo)) + " a " + escapar(nombreDe(t.a.dispositivo)) +
-      (t.atraviesa && t.atraviesa.length ? " (cruza " + t.atraviesa.map(function (id) { return escapar(nombreDe(id)); }).join(", ") + ")" : ""));
+    if (t.medio === "internet") {
+      // El cruce de internet no es una trama: son muchos saltos entre routers
+      // de los proveedores, cada uno con su trama, que no se dibujan.
+      cap.push("<b>Cruce de internet</b> de " + escapar(nombreDe(t.de.dispositivo)) + " a " + escapar(nombreDe(t.a.dispositivo)) +
+        ": el paquete pasa por los routers de los proveedores, y en cada salto lleva una trama distinta.");
+    } else {
+      cap.push("<b>Trama (capa 2)</b> MAC " + escapar(t.macOrigen || "?") + " → " + escapar(t.macDestino || "?") +
+        " · de " + escapar(nombreDe(t.de.dispositivo)) + " a " + escapar(nombreDe(t.a.dispositivo)) +
+        (t.atraviesa && t.atraviesa.length ? " (cruza " + t.atraviesa.map(function (id) { return escapar(nombreDe(id)); }).join(", ") + ")" : ""));
+    }
     cap.push("<b>Paquete IP (capa 3)</b> " + escapar(t.ipOrigen) + " → " + escapar(t.ipDestino) + " · TTL " + t.ttl);
     var tr = transporteDe(t);
     if (tr === "ICMP") {
@@ -3567,7 +3574,7 @@ var UI = (function () {
         tr.setAttribute("data-foco", "cap-" + p.n);
         tr.innerHTML = "<td>" + p.n + "</td><td>" + escapar(t.ipOrigen) + "</td><td>" + escapar(t.ipDestino) + "</td><td>" +
           escapar(t.protocolo || "ICMP") + "</td><td>" + escapar(t.info || t.mensaje || "") + "</td>" +
-          (cap.enlace ? "" : "<td>" + escapar(nombreDe(t.de.dispositivo) + " → " + nombreDe(t.a.dispositivo)) + "</td>");
+          (cap.enlace ? "" : "<td>" + escapar(nombreDe(t.de.dispositivo) + " → " + nombreDe(t.a.dispositivo) + (t.medio === "internet" ? " (cruza internet)" : "")) + "</td>");
         function elegir() { cap.sel = p.n; renderInferior(); resaltarTrama(t); }
         tr.addEventListener("click", elegir);
         tr.addEventListener("keydown", function (ev) {
@@ -3713,7 +3720,7 @@ var UI = (function () {
       ". Lo que viaja: " + c.pdu + ".") + "'>Capa " + capa + " · " + escapar(c.osi) + "</span>";
   }
 
-  var PALABRA_MEDIO = { ethernet: "cobre", fibra: "fibra", wireless: "inalámbrico" };
+  var PALABRA_MEDIO = { ethernet: "cobre", fibra: "fibra", wireless: "inalámbrico", internet: "internet (cruza las redes de los proveedores)" };
 
   // Cable resaltado mientras se señala una trama: el tramo completo, con
   // los switches que cruza.
