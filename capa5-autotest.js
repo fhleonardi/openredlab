@@ -1465,7 +1465,91 @@ var Autotest = (function () {
     }
   }
 
-  var CRITERIOS_TECNICOS = [crit01, crit09, crit10, crit11, crit13, crit14, crit15, crit16, crit24, crit25, crit26, crit27];
+  /* Pulido (SRE-1028): la captura guarda los últimos 500 paquetes sin cortar la
+   * numeración y lo avisa; los textos de ejemplo terminan en «…»; los títulos
+   * se equilibran y el movimiento reducido apaga transiciones y animaciones. */
+  function crit28() {
+    var nombre = "La captura guarda los últimos 500 paquetes y avisa; textos de ejemplo y movimiento reducido";
+    var previo = modoActualDom();
+    try {
+      var prob = [];
+      var inf = document.querySelector(".siminf");
+      if (!inf || getComputedStyle(inf).display === "none") {
+        return fila(28, nombre, true, "No aplica con el diseño de celular, donde la franja inferior está oculta.");
+      }
+      function boton(raiz, texto) {
+        var bs = raiz.querySelectorAll("button");
+        for (var i = 0; i < bs.length; i++) { if (bs[i].textContent.indexOf(texto) === 0) { return bs[i]; } }
+        return null;
+      }
+      function estado() { var s = inf.querySelector(".simctrl .tenue"); return s ? s.textContent : ""; }
+      function verCaptura() {
+        document.getElementById("sim-tab-inf-simulacion").click();
+        document.getElementById("sim-tab-inf-captura").click();
+      }
+      UI.setModo("topologia");
+      var topo = clonar(ejemploPorId("complejo").topologia);
+      UI.cargarTopologia(topo);
+      document.getElementById("sim-tab-inf-captura").click();
+      boton(inf, "Limpiar").click();
+      boton(inf, "Iniciar captura").click();
+      // Las tramas de un ping real, repetidas hasta pasar el tope, entran por el
+      // mismo camino que las de cualquier ping (UI.capturarTramas).
+      var res = Motor.ping(Motor.crearEstado(topo), "pc-admin", "10.45.7.122");
+      var tramas = res.tramas || [];
+      if (!tramas.length) { return fila(28, nombre, false, "Falla: el ping de referencia no dio tramas."); }
+      var lote = [];
+      while (lote.length < 520) { lote = lote.concat(tramas); }
+      UI.capturarTramas(lote);
+      verCaptura();
+      var filas = inf.querySelectorAll(".tablacap tbody tr");
+      if (filas.length !== 500) { prob.push("la tabla tiene " + filas.length + " paquetes y el tope es 500"); }
+      if (estado().indexOf("se muestran los últimos 500") < 0) { prob.push("no avisa que se muestran los últimos 500"); }
+      var primero = filas.length ? Number(filas[0].cells[0].textContent) : 0;
+      var ultimo = filas.length ? Number(filas[filas.length - 1].cells[0].textContent) : 0;
+      if (filas.length && (ultimo !== lote.length || ultimo - primero !== 499)) { prob.push("la numeración no sigue (" + primero + " a " + ultimo + ")"); }
+      // Elegir el más viejo y capturar más: se descarta y la elección se borra.
+      if (filas.length) {
+        filas[0].click();
+        UI.capturarTramas(tramas);
+        verCaptura();
+        if (inf.querySelector(".tablacap tbody tr.sel")) { prob.push("queda elegido un paquete que ya se descartó"); }
+      }
+      boton(inf, "Limpiar").click();
+      var bDet = boton(inf, "Detener");
+      if (bDet) { bDet.click(); }
+      if (estado().indexOf("últimos") >= 0) { prob.push("«Limpiar» no borra el aviso"); }
+
+      // Textos de ejemplo visibles con «…».
+      var sinPuntos = [];
+      document.getElementById("sim-tab-inf-simulacion").click();
+      document.querySelectorAll(".simraiz input[placeholder]").forEach(function (n) {
+        if (n.placeholder && !/…$/.test(n.placeholder)) { sinPuntos.push(n.placeholder); }
+      });
+      if (sinPuntos.length) { prob.push("textos de ejemplo sin «…»: " + sinPuntos.join(", ")); }
+
+      // Reglas de estilo.
+      var hoja = document.getElementById("sim-estilos");
+      var reglas = hoja && hoja.sheet ? Array.prototype.slice.call(hoja.sheet.cssRules) : [];
+      var titulos = reglas.some(function (r) { return /\.simraiz h2/.test(r.selectorText || "") && /text-wrap/.test(r.cssText); });
+      var reducido = reglas.some(function (r) {
+        return r.media && /reduce/.test(r.media.mediaText) && /transition/.test(r.cssText) && /animation/.test(r.cssText);
+      });
+      if (!titulos) { prob.push("los títulos no tienen text-wrap"); }
+      if (!reducido) { prob.push("el movimiento reducido no apaga transiciones y animaciones"); }
+
+      if (prob.length === 0) {
+        return fila(28, nombre, true, "Captura en 500 (del " + primero + " al " + ultimo + ") con aviso; el paquete descartado deja de estar elegido; textos de ejemplo con «…»; text-wrap y movimiento reducido.");
+      }
+      return fila(28, nombre, false, "Falla: " + prob.join("; ") + ".");
+    } catch (e) {
+      return fila(28, nombre, false, "Excepción: " + e.message);
+    } finally {
+      try { UI.setModo(previo); } catch (e2) { /* se sigue igual */ }
+    }
+  }
+
+  var CRITERIOS_TECNICOS = [crit01, crit09, crit10, crit11, crit13, crit14, crit15, crit16, crit24, crit25, crit26, crit27, crit28];
 
   function correr(opciones) {
     var tecnico = !!(opciones && opciones.tecnico);

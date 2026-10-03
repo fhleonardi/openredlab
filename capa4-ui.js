@@ -63,7 +63,7 @@ var UI = (function () {
     verTramas: false,
     // Captura al estilo Wireshark: se inicia en un cable (o en todos) y
     // acumula lo que pasa por ahí, numerado, hasta detenerla o limpiarla.
-    captura: { activa: false, enlace: "", paquetes: [], filtro: "", sel: null, n: 0 },
+    captura: { activa: false, enlace: "", paquetes: [], filtro: "", sel: null, n: 0, descartados: 0 },
     verEncabezados: false,
     consolaAbierta: false,
     lineasConsola: [],
@@ -616,7 +616,8 @@ var UI = (function () {
       ".simtools{flex-wrap:wrap;max-width:calc(100% - 16px);}" +
       ".simraiz input,.simraiz select{font-size:16px;}" +
     "}",
-    "@media (prefers-reduced-motion:reduce){.simraiz *{scroll-behavior:auto;}}",
+    ".simraiz h2,.simraiz h3{text-wrap:balance;}",
+    "@media (prefers-reduced-motion:reduce){.simraiz *,.simraiz *::before,.simraiz *::after{scroll-behavior:auto;transition:none !important;animation:none !important;}}",
     ".fantasma{position:fixed;pointer-events:none;opacity:.6;z-index:99;background:var(--sim-panel);border:1px dashed var(--sim-acento);border-radius:8px;padding:4px 8px;font-size:12px;}"
   ].join("\n");
 
@@ -2719,9 +2720,9 @@ var UI = (function () {
       c.appendChild(fila);
     });
     var form = el("div", "nuevoservicio");
-    var inNom = document.createElement("input"); inNom.type = "text"; inNom.placeholder = "Intranet"; inNom.setAttribute("aria-label", "Nombre del servicio");
+    var inNom = document.createElement("input"); inNom.type = "text"; inNom.placeholder = "p. ej. Intranet…"; inNom.setAttribute("aria-label", "Nombre del servicio");
     var selP = document.createElement("select"); selP.innerHTML = "<option value='tcp'>TCP</option><option value='udp'>UDP</option>"; selP.setAttribute("aria-label", "Protocolo");
-    var inPu = document.createElement("input"); inPu.type = "number"; inPu.min = "1"; inPu.max = "65535"; inPu.placeholder = "8080"; inPu.setAttribute("aria-label", "Puerto");
+    var inPu = document.createElement("input"); inPu.type = "number"; inPu.min = "1"; inPu.max = "65535"; inPu.placeholder = "p. ej. 8080…"; inPu.setAttribute("aria-label", "Puerto");
     var bA = boton("Agregar");
     bA.addEventListener("click", function () {
       var n = Number(inPu.value);
@@ -2783,7 +2784,7 @@ var UI = (function () {
     (dns.registros || []).forEach(function (x, k) {
       var fila = el("div", "fila");
       var inNombre = document.createElement("input");
-      inNombre.type = "text"; inNombre.value = x.nombre || ""; inNombre.placeholder = "www." + zona; inNombre.className = "nombre";
+      inNombre.type = "text"; inNombre.value = x.nombre || ""; inNombre.placeholder = "p. ej. www." + zona + "…"; inNombre.className = "nombre";
       inNombre.setAttribute("aria-label", "Nombre del registro " + (k + 1));
       var selTipo = document.createElement("select");
       (Motor.TIPOS_REGISTRO || ["A", "CNAME", "MX", "NS"]).forEach(function (t) {
@@ -2793,11 +2794,11 @@ var UI = (function () {
       selTipo.setAttribute("aria-label", "Tipo del registro " + (k + 1));
       var inValor = document.createElement("input");
       inValor.type = "text"; inValor.value = x.valor || "";
-      inValor.placeholder = x.tipo === "A" || !x.tipo ? "192.168.1.10" : "otro." + zona;
+      inValor.placeholder = x.tipo === "A" || !x.tipo ? "p. ej. 192.168.1.10…" : "p. ej. otro." + zona + "…";
       inValor.setAttribute("aria-label", "Valor del registro " + (k + 1));
       var inPrio = document.createElement("input");
       inPrio.type = "number"; inPrio.min = "0"; inPrio.className = "prio"; inPrio.value = x.prioridad !== undefined && x.prioridad !== null ? x.prioridad : "";
-      inPrio.placeholder = "10"; inPrio.hidden = x.tipo !== "MX";
+      inPrio.placeholder = "10…"; inPrio.hidden = x.tipo !== "MX";
       inPrio.setAttribute("aria-label", "Prioridad del MX " + (k + 1));
       function cambiar() {
         empujarHistorialSuave();
@@ -2957,7 +2958,7 @@ var UI = (function () {
       extra.appendChild(selProt);
       if (r.protocolo === "tcp" || r.protocolo === "udp") {
         var inPuerto = document.createElement("input");
-        inPuerto.type = "number"; inPuerto.min = "1"; inPuerto.max = "65535"; inPuerto.placeholder = "puerto";
+        inPuerto.type = "number"; inPuerto.min = "1"; inPuerto.max = "65535"; inPuerto.placeholder = "puerto…";
         inPuerto.value = r.puerto || "";
         inPuerto.setAttribute("aria-label", "Regla " + (i + 1) + ": puerto de destino");
         inPuerto.addEventListener("change", function () {
@@ -3247,7 +3248,7 @@ var UI = (function () {
     });
     ctrl.appendChild(modos);
     if (enDns) {
-      selD.placeholder = "p. ej. google.com o www.oficina.local";
+      selD.placeholder = "p. ej. google.com o www.oficina.local…";
       selD.value = S.ultimoNombre || "";
     }
     var selTipoDns = document.createElement("select");
@@ -3258,7 +3259,7 @@ var UI = (function () {
     selTipoDns.addEventListener("change", function () { S.tipoDns = selTipoDns.value; });
     var enConectar = S.modoSim === "conectar";
     if (enConectar) {
-      selD.placeholder = "IP o nombre, p. ej. www.google.com";
+      selD.placeholder = "IP o nombre, p. ej. www.google.com…";
       selD.value = S.ultimoConectar || "";
     }
     // Servicio: los del catálogo o un puerto a mano.
@@ -3524,11 +3525,11 @@ var UI = (function () {
     ctrl.appendChild(bIni);
     var bLim = boton("Limpiar");
     bLim.disabled = !cap.paquetes.length;
-    bLim.addEventListener("click", function () { cap.paquetes = []; cap.n = 0; cap.sel = null; renderInferior(); });
+    bLim.addEventListener("click", function () { cap.paquetes = []; cap.n = 0; cap.sel = null; cap.descartados = 0; renderInferior(); });
     ctrl.appendChild(bLim);
     var inF = document.createElement("input");
     inF.type = "text"; inF.value = cap.filtro; inF.className = "filtrocap";
-    inF.placeholder = "Filtro: icmp, tcp, dns, ip.addr==10.0.0.1, tcp.port==80";
+    inF.placeholder = "Filtro: icmp, tcp, dns, ip.addr==10.0.0.1, tcp.port==80…";
     inF.setAttribute("autocomplete", "off");
     ctrl.appendChild(etiqueta("Filtro", inF)); ctrl.appendChild(inF);
     var filtro = armarFiltro(cap.filtro);
@@ -3536,7 +3537,8 @@ var UI = (function () {
     inF.addEventListener("change", function () { cap.filtro = inF.value; cap.sel = null; renderInferior(); });
     var visibles = filtro ? cap.paquetes.filter(function (p) { return filtro(p.t); }) : [];
     ctrl.appendChild(el("span", "tenue", cap.paquetes.length + (cap.paquetes.length === 1 ? " paquete" : " paquetes") +
-      (cap.filtro && filtro ? " · " + visibles.length + " con el filtro" : "") + (cap.activa ? " · capturando…" : "")));
+      (cap.filtro && filtro ? " · " + visibles.length + " con el filtro" : "") +
+      (cap.descartados ? " · se muestran los últimos " + MAX_CAPTURA : "") + (cap.activa ? " · capturando…" : "")));
     c.appendChild(ctrl);
 
     var cuerpo = el("div", "simres");
@@ -3897,7 +3899,7 @@ var UI = (function () {
     filaBloque.appendChild(el("span", "nota", "Cada puerto de router, con sus switches, es un sector. " +
       "Para controlar también si alcanzan las direcciones, cargá los hosts de cada sector y el bloque:"));
     var inBloque = document.createElement("input");
-    inBloque.type = "text"; inBloque.placeholder = "p. ej. 10.45.7.0/24"; inBloque.value = inf.bloqueBase || "";
+    inBloque.type = "text"; inBloque.placeholder = "p. ej. 10.45.7.0/24…"; inBloque.value = inf.bloqueBase || "";
     inBloque.addEventListener("change", function () {
       var v = inBloque.value.trim();
       if (v && !/^\d{1,3}(\.\d{1,3}){3}\/\d{1,2}$/.test(v)) { avisar("Escribí el bloque como red/prefijo, por ejemplo 10.45.7.0/24."); return; }
@@ -4036,6 +4038,10 @@ var UI = (function () {
     return cont;
   }
 
+  // La captura guarda los últimos MAX_CAPTURA paquetes: en una clase larga la
+  // tabla se redibuja entera y, sin tope, la pestaña se pone lenta.
+  var MAX_CAPTURA = 500;
+
   function capturarTramas(lista) {
     var cap = S.captura;
     if (!cap.activa) { return; }
@@ -4044,6 +4050,12 @@ var UI = (function () {
       cap.n += 1;
       cap.paquetes.push({ n: cap.n, t: t });
     });
+    var sobra = cap.paquetes.length - MAX_CAPTURA;
+    if (sobra > 0) {
+      cap.paquetes.splice(0, sobra);
+      cap.descartados = (cap.descartados || 0) + sobra;
+      if (cap.sel !== null && cap.sel <= cap.paquetes[0].n - 1) { cap.sel = null; }
+    }
   }
 
   function pintarPing(origen, destino, res, qos) {
@@ -4507,7 +4519,7 @@ var UI = (function () {
     var lado = el("div", "lado formlab");
     var esc = S.topologia.escenario || {};
     var inB = document.createElement("input");
-    inB.type = "text"; inB.placeholder = "p. ej. 10.45.7.0/24";
+    inB.type = "text"; inB.placeholder = "p. ej. 10.45.7.0/24…";
     inB.value = esc.bloqueBase || esc.bloque || "";
     inB.addEventListener("change", function () {
       var v = inB.value.trim();
@@ -5287,6 +5299,8 @@ var UI = (function () {
     seleccionar: seleccionar,
     animarPing: animarPing,
     animarDhcp: animarDhcp,
+    // Suma tramas a la captura activa, como cualquier ping o conexión; lo usa el Autotest.
+    capturarTramas: capturarTramas,
     setModo: setModo,
     registrar: registrar
   };
