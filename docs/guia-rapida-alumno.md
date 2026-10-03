@@ -42,6 +42,17 @@ Después de un ping, el botón **Cómo viaja el paquete** cambia los pasos por l
 
 Los switches y puntos de acceso aparecen como «pasa por… sin cambiar la trama»: trabajan con la MAC y no la modifican. **Ver los encabezados** muestra cada trama con lo que lleva adentro: la trama (MAC), el paquete IP (IP y TTL) y el mensaje ICMP del ping, con lo que cambió resaltado. Al pasar el mouse por una línea se resalta su cable en el lienzo.
 
+## DNS: de un nombre a una IP
+
+Cuando hacés ping a un nombre, primero se averigua su IP, y eso se ve en el recorrido (pasos de **Capa 7 · Aplicación**):
+
+1. **Consulta recursiva:** tu PC le pregunta a su servidor DNS (el de Configuración) y le pide la respuesta final.
+2. Si el nombre es de la **zona** de ese servidor (por ejemplo `oficina.local`), responde él, con autoridad.
+3. Si no, el servidor hace **consultas iterativas**: le pregunta a la **raíz**, que lo deriva al servidor del **TLD** (.com), que lo deriva al **autoritativo** del dominio (google.com), que le da la IP.
+4. El servidor guarda la respuesta en su **caché** por el TTL del registro: la segunda vez contesta sin preguntarle a nadie.
+
+Un servidor se agrega desde la paleta (**Servidor**); su pestaña **DNS** muestra la zona y los registros: **A** (nombre → IP), **CNAME** (un nombre que es alias de otro), **MX** (el servidor de correo de un dominio) y **NS** (el servidor DNS de un dominio). El ejemplo **Oficina con DNS propio** trae todo armado.
+
 Los diagnósticos que más te van a aparecer:
 
 | Código | Qué pasó | Por dónde empezar |
@@ -61,6 +72,8 @@ Los diagnósticos que más te van a aparecer:
 | **D23** | El paquete quedó dando vueltas entre routers | La ruta hacia ese destino en cada router del recorrido |
 | **D27** | Una regla de filtrado bloqueó el paquete | Pestaña Filtrado del router o firewall: el orden de las reglas |
 | **D28** | Falta NAT: la respuesta no puede volver de internet | Casilla NAT del puerto del router que va a internet |
+| **D29** | Esa IP no es un servidor DNS | El DNS de la PC tiene que ser un servidor con DNS o un público como 8.8.8.8 |
+| **D30** | El servidor DNS no llega a internet | La salida a internet del servidor: puerta de enlace, rutas y NAT |
 
 ## La pestaña Cálculo de subred
 

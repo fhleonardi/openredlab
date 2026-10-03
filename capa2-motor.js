@@ -314,10 +314,28 @@ var Motor = (function () {
       titulo: "El nombre no existe",
       explicacion: function (ctx) {
         ctx = ctx || {};
-        return "El servidor DNS respondió que no conoce \"" + valor(ctx.nombre, "ese nombre") + "\": puede estar mal escrito. " +
-          "Los nombres disponibles en el simulador son google.com, www.google.com, dns.google y one.one.one.one.";
+        var nombre = "\"" + valor(ctx.nombre, "ese nombre") + "\"";
+        if (ctx.noRecursivo) {
+          return valor(ctx.quien, "El servidor DNS") + " sólo responde por su zona (" + valor(ctx.zona, "?") + ") y no busca nombres de afuera: " +
+            "no puede resolver " + nombre + ".";
+        }
+        if (ctx.zona) {
+          return valor(ctx.quien, "El servidor DNS") + " es el servidor de la zona " + ctx.zona + " y responde que " + nombre +
+            " no existe en ella: puede estar mal escrito o faltar el registro.";
+        }
+        if (ctx.tld) {
+          return "La raíz del DNS responde que ." + ctx.tld + " no existe en internet, así que " + nombre + " no se puede resolver afuera. " +
+            "Los nombres como ." + ctx.tld + " sólo los conoce un servidor DNS propio de la red.";
+        }
+        return valor(ctx.quien, "El servidor DNS") + " responde que " + nombre + " no existe: puede estar mal escrito.";
       },
-      sugerencia: "Revisá cómo escribiste el nombre."
+      sugerencia: function (ctx) {
+        ctx = ctx || {};
+        if (ctx.noRecursivo) { return "Marcá «Resolver nombres de afuera» en el servidor, o usá otro servidor DNS para los nombres de internet."; }
+        if (ctx.zona) { return "Revisá el nombre, o agregá el registro en la pestaña DNS del servidor de " + ctx.zona + "."; }
+        if (ctx.tld) { return "Para un nombre de la red interna, configurá como DNS el servidor propio que tiene esa zona."; }
+        return "Revisá cómo escribiste el nombre.";
+      }
     },
     D26: {
       titulo: "El servidor DNS no responde",
@@ -372,6 +390,28 @@ var Motor = (function () {
         return ctx.router
           ? "Seleccioná " + ctx.router + ", pestaña Interfaces, y marcá NAT en el puerto " + valor(ctx.puerto, "?") + ", el que va a internet."
           : "Conectá la red a internet a través de un router (o firewall) con NAT en su puerto hacia internet.";
+      }
+    },
+    D29: {
+      titulo: "Esa IP no es un servidor DNS",
+      explicacion: function (ctx) {
+        ctx = ctx || {};
+        return valor(ctx.origen, "El equipo") + " le pregunta por " + valor(ctx.nombre, "el nombre") + " a " + valor(ctx.dns, "?") +
+          (ctx.equipo ? " (" + ctx.equipo + ")" : "") + ". Esa IP responde, pero no da el servicio de DNS: nadie contesta la consulta. " +
+          "En una red hogareña el router suele reenviar el DNS; acá ese papel lo cumple un servidor.";
+      },
+      sugerencia: "En Configuración, poné como DNS la IP de un servidor con el servicio DNS, o un DNS público como 8.8.8.8."
+    },
+    D30: {
+      titulo: "El servidor DNS no llega a internet",
+      explicacion: function (ctx) {
+        ctx = ctx || {};
+        return valor(ctx.servidor, "El servidor DNS") + " no tiene " + valor(ctx.nombre, "ese nombre") + " en su zona y, para resolverlo, " +
+          "tiene que preguntarle a la raíz del DNS en internet. Esa consulta no llega." + (ctx.causa ? " " + ctx.causa : "");
+      },
+      sugerencia: function (ctx) {
+        ctx = ctx || {};
+        return "Revisá la salida a internet de " + valor(ctx.servidor, "el servidor") + ": su puerta de enlace, las rutas y el NAT del router de borde.";
       }
     },
     D23: {
@@ -2273,12 +2313,253 @@ var Motor = (function () {
    * consulta es un viaje de ida y vuelta hasta esa IP) y, si el nombre
    * existe, hace el ping a la IP que resultó. */
 
-  var NOMBRES_PUBLICOS = {
-    "google.com": "142.250.79.46",
-    "www.google.com": "142.250.79.46",
-    "dns.google": "8.8.8.8",
-    "one.one.one.one": "1.1.1.1"
+  /* ---------------- DNS: jerarquía pública, servidores y caché ----------------
+   * La nube trae la jerarquía armada: la raíz, los servidores de cada TLD y
+   * los autoritativos de algunas zonas. Las IP de la raíz, de .com y de
+   * ns1.google.com son las reales; las demás, ilustrativas. */
+  var TIPOS_REGISTRO = ["A", "CNAME", "MX", "NS"];
+  var TTL_DNS = 300;
+  var JERARQUIA = {
+    raiz: { nombre: "a.root-servers.net", ip: "198.41.0.4" },
+    tld: {
+      com: { nombre: "a.gtld-servers.net", ip: "192.5.6.30" },
+      net: { nombre: "a.gtld-servers.net", ip: "192.5.6.30" },
+      org: { nombre: "a0.org.afilias-nst.info", ip: "199.19.56.1" },
+      ar: { nombre: "a.dns.ar", ip: "200.108.145.50" },
+      google: { nombre: "ns-tld1.charlestonroadregistry.com", ip: "216.239.32.105" },
+      one: { nombre: "a.nic.one", ip: "37.209.192.12" }
+    },
+    zonas: {
+      "google.com": { ns: "ns1.google.com", ip: "216.239.32.10", registros: [
+        { nombre: "google.com", tipo: "A", valor: "142.250.79.46" },
+        { nombre: "www.google.com", tipo: "CNAME", valor: "google.com" },
+        { nombre: "google.com", tipo: "MX", valor: "smtp.google.com", prioridad: 10 },
+        { nombre: "smtp.google.com", tipo: "A", valor: "142.250.0.27" },
+        { nombre: "google.com", tipo: "NS", valor: "ns1.google.com" }
+      ] },
+      "dns.google": { ns: "ns1.zdns.google", ip: "216.239.32.114", registros: [
+        { nombre: "dns.google", tipo: "A", valor: "8.8.8.8" },
+        { nombre: "dns.google", tipo: "NS", valor: "ns1.zdns.google" }
+      ] },
+      "one.one": { ns: "ns1.cloudflare.com", ip: "173.245.58.51", registros: [
+        { nombre: "one.one.one.one", tipo: "A", valor: "1.1.1.1" },
+        { nombre: "one.one", tipo: "NS", valor: "ns1.cloudflare.com" }
+      ] },
+      "wikipedia.org": { ns: "ns0.wikimedia.org", ip: "208.80.154.238", registros: [
+        { nombre: "wikipedia.org", tipo: "A", valor: "208.80.154.224" },
+        { nombre: "www.wikipedia.org", tipo: "CNAME", valor: "wikipedia.org" },
+        { nombre: "wikipedia.org", tipo: "NS", valor: "ns0.wikimedia.org" }
+      ] }
+    }
   };
+  var RESOLVERS_PUBLICOS = { "8.8.8.8": "Google Public DNS", "1.1.1.1": "Cloudflare" };
+
+  function dentroDeZona(nombre, zona) {
+    return nombre === zona || nombre.slice(-(zona.length + 1)) === "." + zona;
+  }
+
+  // Los registros que contestan nombre/tipo, siguiendo los CNAME dentro de
+  // la misma lista. Devuelve null si el nombre no tiene ningún registro.
+  function buscarRegistros(registros, nombre, tipo) {
+    var cadena = [];
+    var actual = nombre;
+    for (var vueltas = 0; vueltas < 5; vueltas++) {
+      var delNombre = registros.filter(function (x) { return x.nombre === actual; });
+      if (!delNombre.length) { return cadena.length ? { registros: cadena, pendiente: actual } : null; }
+      var directos = delNombre.filter(function (x) { return x.tipo === tipo; });
+      if (directos.length) { return { registros: cadena.concat(directos), pendiente: null }; }
+      var alias = delNombre.filter(function (x) { return x.tipo === "CNAME"; })[0];
+      if (!alias) { return { registros: cadena, pendiente: null }; }
+      cadena.push(alias);
+      actual = alias.valor;
+    }
+    return { registros: cadena, pendiente: null };
+  }
+
+  function textoRegistro(x) {
+    return x.nombre + " " + x.tipo + " " + (x.prioridad !== undefined && x.prioridad !== null ? x.prioridad + " " : "") + x.valor;
+  }
+
+  function zonaPublicaDe(nombre) {
+    var mejor = null;
+    Object.keys(JERARQUIA.zonas).forEach(function (z) {
+      if (dentroDeZona(nombre, z) && (!mejor || z.length > mejor.length)) { mejor = z; }
+    });
+    return mejor;
+  }
+
+  // Consultas iterativas por la jerarquía, desde quien resuelve. agregar
+  // suma un paso de capa 7; devuelve { registros } o { fallo: {ctx} }.
+  function iterarJerarquia(nombre, tipo, quien, agregar, profundidad) {
+    var etiquetas = nombre.split(".");
+    var tld = etiquetas[etiquetas.length - 1];
+    var datosTld = JERARQUIA.tld[tld];
+    var raiz = JERARQUIA.raiz;
+    if (!datosTld) {
+      agregar("Preguntar a la raíz (consulta iterativa)", quien + " le pregunta a " + raiz.nombre + " (" + raiz.ip + "), un servidor raíz, por " +
+        nombre + ". La raíz responde que ." + tld + " no existe en internet.", false);
+      return { fallo: { tld: tld } };
+    }
+    agregar("Preguntar a la raíz (consulta iterativa)", quien + " le pregunta a " + raiz.nombre + " (" + raiz.ip + "), un servidor raíz, por " +
+      nombre + ". La raíz no sabe la respuesta, pero sabe quién atiende ." + tld + ": " + datosTld.nombre + " (" + datosTld.ip + ").", true);
+    var zona = zonaPublicaDe(nombre);
+    if (!zona) {
+      agregar("Preguntar al servidor de ." + tld + " (consulta iterativa)", quien + " le pregunta a " + datosTld.nombre + " por " + nombre +
+        ", y responde que ese nombre no está registrado en ." + tld + ".", false);
+      return { fallo: { quien: datosTld.nombre + ", el servidor de ." + tld } };
+    }
+    var auth = JERARQUIA.zonas[zona];
+    agregar("Preguntar al servidor de ." + tld + " (consulta iterativa)", quien + " le pregunta a " + datosTld.nombre + " por " + nombre +
+      ". Tampoco sabe la respuesta, pero sabe cuál es el servidor autoritativo de " + zona + ": " + auth.ns + " (" + auth.ip + ").", true);
+    var hallado = buscarRegistros(auth.registros, nombre, tipo);
+    if (!hallado || (!hallado.registros.length && !hallado.pendiente)) {
+      agregar("Preguntar al autoritativo de " + zona + " (consulta iterativa)", quien + " le pregunta a " + auth.ns +
+        ", el servidor autoritativo de " + zona + ", y responde que " + nombre + " no tiene registros " + tipo + ".", false);
+      return { fallo: { quien: auth.ns, zona: zona } };
+    }
+    agregar("Preguntar al autoritativo de " + zona + " (consulta iterativa)", quien + " le pregunta a " + auth.ns +
+      ", el servidor autoritativo de " + zona + ", que responde: " + hallado.registros.map(textoRegistro).join("; ") + ".", true);
+    if (hallado.pendiente && (profundidad || 0) < 3) {
+      // El CNAME apunta a otra zona: se resuelve el nombre nuevo.
+      var resto = iterarJerarquia(hallado.pendiente, tipo, quien, agregar, (profundidad || 0) + 1);
+      if (resto.fallo) { return resto; }
+      return { registros: hallado.registros.concat(resto.registros) };
+    }
+    return { registros: hallado.registros };
+  }
+
+  function ttlDe(registros) {
+    var minimo = null;
+    registros.forEach(function (x) {
+      var t = Number(x.ttl) > 0 ? Number(x.ttl) : TTL_DNS;
+      if (minimo === null || t < minimo) { minimo = t; }
+    });
+    return minimo === null ? TTL_DNS : minimo;
+  }
+
+  function vaciarCacheDns(estado, idResolver) {
+    if (!estado.cacheDns) { return; }
+    if (idResolver) { delete estado.cacheDns[idResolver]; } else { estado.cacheDns = {}; }
+  }
+
+  /* Resolución completa de un nombre desde un equipo. La consulta del
+   * cliente a su servidor es recursiva (pide la respuesta final); las del
+   * servidor a la jerarquía son iterativas (cada una lo deriva a otra). */
+  function resolverNombre(estado, idCliente, nombre, tipo) {
+    var pasos = [];
+    function agregar(titulo, detalle, ok) {
+      pasos.push({ n: pasos.length + 1, titulo: titulo, detalle: detalle, ok: !!ok, capa: 7 });
+    }
+    function fallar(codigo, ctx, saltos) {
+      return { exito: false, pasos: pasos, respuesta: null, diagnostico: diagnosticoDe(codigo, ctx), saltos: saltos || [] };
+    }
+    var cliente = buscarDispositivo(estado, idCliente);
+    var nombreCliente = cliente ? (cliente.nombre || cliente.id) : idCliente;
+    var titulo = "Consultar al servidor DNS (consulta recursiva)";
+    var dnsIp = cliente && cliente.dns ? String(cliente.dns).trim() : "";
+    if (!dnsIp || !Red.esIpValida(dnsIp)) {
+      agregar(titulo, nombreCliente + " necesita la IP de " + nombre + ", pero no tiene servidor DNS configurado.", false);
+      return fallar("D24", { origen: nombreCliente, nombre: nombre });
+    }
+    var viaje = ejecutarPing(estado, idCliente, dnsIp, { registrar: false, profundidad: 0 });
+    if (!viaje.exito) {
+      var dc = viaje.diagnostico;
+      agregar(titulo, nombreCliente + " le pregunta al servidor DNS " + dnsIp + " por " + nombre + " y la consulta no llega" +
+        (dc ? ": " + dc.titulo.charAt(0).toLowerCase() + dc.titulo.slice(1) + "." : "."), false);
+      return fallar("D26", { origen: nombreCliente, nombre: nombre, dns: dnsIp, causa: dc ? dc.explicacion : "" }, viaje.saltos);
+    }
+    // ¿Quién atiende en esa IP?
+    var duenos = configuradosConIp(estado, dnsIp).filter(function (e) { return e.interfaz.habilitada; });
+    var servidor = duenos.length ? duenos[0].dispositivo : null;
+    var servicio = servidor && servidor.tipo === "servidor" && servidor.servicios && servidor.servicios.dns;
+    var publico = !servidor && RESOLVERS_PUBLICOS[dnsIp];
+    if (!servicio && !publico) {
+      agregar(titulo, nombreCliente + " le pregunta a " + dnsIp + " por " + nombre + ". La IP responde, pero ahí no hay un servidor DNS.", false);
+      return fallar("D29", { origen: nombreCliente, nombre: nombre, dns: dnsIp, equipo: servidor ? (servidor.nombre || servidor.id) : null });
+    }
+    var quien = servicio ? (servidor.nombre || servidor.id) : dnsIp + " (" + publico + ")";
+    agregar(titulo, nombreCliente + " le pregunta a su servidor DNS, " + quien + ", por " + nombre + " (tipo " + tipo + "). " +
+      "Es una consulta recursiva: le pide la respuesta final.", true);
+
+    function responder(registros, autoritativa, desdeCache) {
+      return {
+        exito: true, pasos: pasos, diagnostico: null, saltos: viaje.saltos,
+        respuesta: { registros: registros, servidor: quien, autoritativa: autoritativa, desdeCache: desdeCache }
+      };
+    }
+
+    // Servidor propio: autoritativo de su zona.
+    if (servicio) {
+      var zona = String(servicio.zona || "");
+      if (zona && dentroDeZona(nombre, zona)) {
+        var propio = buscarRegistros(servicio.registros || [], nombre, tipo);
+        if (!propio || !propio.registros.length) {
+          agregar("Buscar en la zona " + zona, quien + " es el servidor de la zona " + zona + " y no tiene registros " + tipo + " para " + nombre + ".", false);
+          return fallar("D25", { nombre: nombre, quien: quien, zona: zona });
+        }
+        agregar("Responder con autoridad (zona " + zona + ")", quien + " es el servidor de la zona " + zona + " y tiene el registro: " +
+          propio.registros.map(textoRegistro).join("; ") + ".", true);
+        return responder(propio.registros, true, false);
+      }
+      if (servicio.recursivo === false) {
+        agregar("Buscar afuera de la zona", quien + " sólo responde por " + (zona || "su zona") + ": no busca " + nombre + " en internet.", false);
+        return fallar("D25", { nombre: nombre, quien: quien, zona: zona || "?", noRecursivo: true });
+      }
+    }
+
+    // Caché del resolver.
+    estado.cacheDns = estado.cacheDns || {};
+    var claveResolver = servicio ? servidor.id : dnsIp;
+    var cache = estado.cacheDns[claveResolver] || (estado.cacheDns[claveResolver] = {});
+    var ahora = estado.ahora || Date.now();
+    var guardado = cache[nombre + "|" + tipo];
+    if (guardado && guardado.vence > ahora) {
+      var quedan = Math.max(1, Math.round((guardado.vence - ahora) / 1000));
+      agregar("Responder desde la caché", quien + " ya resolvió " + nombre + " hace poco: lo tiene en su caché (le quedan " + quedan +
+        " s). Responde sin preguntarle a nadie: " + guardado.registros.map(textoRegistro).join("; ") + ".", true);
+      return responder(guardado.registros, false, true);
+    }
+
+    // Un servidor propio necesita llegar a internet para recursar.
+    if (servicio) {
+      var aRaiz = ejecutarPing(estado, servidor.id, JERARQUIA.raiz.ip, { registrar: false, profundidad: 0 });
+      if (!aRaiz.exito) {
+        var dr = aRaiz.diagnostico;
+        agregar("Preguntar a la raíz (consulta iterativa)", quien + " no tiene " + nombre + " en su zona y le quiere preguntar a la raíz (" +
+          JERARQUIA.raiz.ip + "), pero la consulta no llega" + (dr ? ": " + dr.titulo.charAt(0).toLowerCase() + dr.titulo.slice(1) + "." : "."), false);
+        return fallar("D30", { servidor: quien, nombre: nombre, causa: dr ? dr.explicacion : "" });
+      }
+    }
+    var resultado = iterarJerarquia(nombre, tipo, quien, agregar, 0);
+    if (resultado.fallo) {
+      var ctxFallo = resultado.fallo;
+      ctxFallo.nombre = nombre;
+      return fallar("D25", ctxFallo);
+    }
+    cache[nombre + "|" + tipo] = { registros: resultado.registros, vence: ahora + ttlDe(resultado.registros) * 1000 };
+    agregar("Responder al cliente", quien + " le contesta a " + nombreCliente + " (respuesta no autoritativa: la obtuvo de otros servidores) " +
+      "y la guarda en su caché por " + ttlDe(resultado.registros) + " s.", true);
+    return responder(resultado.registros, false, false);
+  }
+
+  // Herramienta tipo nslookup.
+  function consultarDns(estado, idCliente, nombre, tipo, opciones) {
+    opciones = opciones || {};
+    estado.ahora = opciones.ahora || Date.now();
+    var texto = String(nombre === undefined || nombre === null ? "" : nombre).trim().toLowerCase().replace(/\.$/, "");
+    var t = TIPOS_REGISTRO.indexOf(tipo) >= 0 ? tipo : "A";
+    if (!pareceNombre(texto)) {
+      return {
+        exito: false, pasos: [], respuesta: null, saltos: [],
+        diagnostico: {
+          codigo: "ENTRADA", titulo: "El nombre no es válido",
+          explicacion: "\"" + texto + "\" no es un nombre de dominio: tiene que tener partes separadas por puntos, como www.google.com.",
+          sugerencia: "Revisá lo que escribiste."
+        }
+      };
+    }
+    return resolverNombre(estado, idCliente, texto, t);
+  }
 
   function pareceNombre(texto) {
     return /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(texto) && /[a-z]/.test(texto);
@@ -2291,41 +2572,20 @@ var Motor = (function () {
     }
     var origen = buscarDispositivo(estado, idOrigen);
     if (!origen) { return ejecutarPing(estado, idOrigen, texto, opciones); }
-    var nombreOrigen = origen.nombre || origen.id;
-    var salida = { dispositivo: origen.id, interfaz: "" };
-    var dns = origen.dns ? String(origen.dns).trim() : "";
-    var titulo = "Averiguar la IP de " + texto + " (DNS)";
-    if (!dns || !Red.esIpValida(dns)) {
+    var resuelto = resolverNombre(estado, idOrigen, texto, "A");
+    if (!resuelto.exito) {
       return {
-        exito: false,
-        pasos: [{ n: 1, titulo: titulo, detalle: nombreOrigen + " no tiene servidor DNS configurado.", ok: false, capa: 7 }],
-        saltos: [salida], diagnostico: diagnosticoDe("D24", { origen: nombreOrigen, nombre: texto }), respuestas: [], tramas: []
+        exito: false, pasos: resuelto.pasos, saltos: resuelto.saltos && resuelto.saltos.length ? resuelto.saltos : [{ dispositivo: origen.id, interfaz: "" }],
+        diagnostico: resuelto.diagnostico, respuestas: [], tramas: []
       };
     }
-    var consulta = ejecutarPing(estado, idOrigen, dns, { registrar: false, profundidad: 0 });
-    if (!consulta.exito) {
-      var dc = consulta.diagnostico;
-      return {
-        exito: false,
-        pasos: [{ n: 1, titulo: titulo, detalle: nombreOrigen + " le pregunta al servidor DNS " + dns + " y la consulta no llega" +
-          (dc ? ": " + dc.titulo.charAt(0).toLowerCase() + dc.titulo.slice(1) + "." : "."), ok: false, capa: 7 }],
-        saltos: consulta.saltos,
-        diagnostico: diagnosticoDe("D26", { origen: nombreOrigen, nombre: texto, dns: dns, causa: dc ? dc.explicacion : "" }),
-        respuestas: [],
-        tramas: []
-      };
-    }
-    var ip = NOMBRES_PUBLICOS[texto];
-    if (!ip) {
-      return {
-        exito: false,
-        pasos: [{ n: 1, titulo: titulo, detalle: "El servidor DNS " + dns + " respondió que no conoce " + texto + ".", ok: false, capa: 7 }],
-        saltos: [salida], diagnostico: diagnosticoDe("D25", { nombre: texto }), respuestas: [], tramas: []
-      };
-    }
+    var as = resuelto.respuesta.registros.filter(function (x) { return x.tipo === "A"; });
+    var ip = as.length ? as[as.length - 1].valor : null;
     var res = ejecutarPing(estado, idOrigen, ip, opciones);
-    res.pasos = [{ n: 1, titulo: titulo, detalle: "El servidor DNS " + dns + " responde que " + texto + " es " + ip + ".", ok: true, capa: 7 }]
-      .concat(res.pasos.map(function (pn) { return { n: pn.n + 1, titulo: pn.titulo, detalle: pn.detalle, ok: pn.ok, capa: pn.capa }; }));
+    var previos = resuelto.pasos.length;
+    res.pasos = resuelto.pasos.concat(res.pasos.map(function (pn) {
+      return { n: pn.n + previos, titulo: pn.titulo, detalle: pn.detalle, ok: pn.ok, capa: pn.capa };
+    }));
     res.nombre = texto;
     res.ipResuelta = ip;
     return res;
@@ -3812,7 +4072,8 @@ var Motor = (function () {
       comparar("tramas: el bloqueo corta en el firewall",
         res.tramas.map(function (t) { return t.sentido + ":" + t.a.dispositivo; }), ["ida:r1"]);
       var porNombre = ping(crearEstado(conInternet([{ destino: "0.0.0.0", prefijo: 0, siguienteSalto: "200.45.7.1" }], "8.8.8.8")), "pc1", "google.com");
-      comparar("capas: la consulta DNS es capa 7", [porNombre.pasos[0].capa, porNombre.pasos[1].capa], [7, 1]);
+      comparar("capas: la consulta DNS es capa 7 y el ping empieza en la 1", [porNombre.pasos[0].capa,
+        porNombre.pasos.filter(function (p) { return p.capa !== 7; })[0].capa], [7, 1]);
       comparar("tramas: el ping a internet sale y vuelve",
         porNombre.tramas.map(function (t) { return t.sentido + ":" + t.a.dispositivo; }), ["ida:r1", "ida:nube", "vuelta:r1", "vuelta:pc1"]);
     })();
@@ -3862,6 +4123,77 @@ var Motor = (function () {
         [rFw.exito, rFw.pasos.some(function (p) { return p.titulo === "Traducir la dirección de origen (NAT)"; })], [true, true]);
     })();
 
+    // DNS: pc1 y un servidor de la zona oficina.local detrás de r1 (con NAT).
+    (function () {
+      var porDefecto = [{ destino: "0.0.0.0", prefijo: 0, siguienteSalto: "200.45.7.1" }];
+      function oficina(opc) {
+        opc = opc || {};
+        var topo = conInternet(porDefecto, opc.dnsPc || "192.168.1.53", opc.sinNat);
+        var srv = fabPc("srv", "192.168.1.53", 24, "192.168.1.1");
+        srv.tipo = "servidor";
+        srv.interfaces = [srv.interfaces[0]];
+        srv.servicios = { dns: { zona: "oficina.local", recursivo: opc.recursivo !== false, registros: [
+          { nombre: "www.oficina.local", tipo: "A", valor: "192.168.1.53" },
+          { nombre: "intranet.oficina.local", tipo: "CNAME", valor: "www.oficina.local" },
+          { nombre: "oficina.local", tipo: "MX", valor: "correo.oficina.local", prioridad: 10 },
+          { nombre: "correo.oficina.local", tipo: "A", valor: "192.168.1.53" }
+        ] } };
+        topo.dispositivos.push(srv);
+        topo.enlaces.push(fabEnlace("l9", "srv", "eth0", "sw1", "fa0/3"));
+        return topo;
+      }
+      function titulos(res) { return res.pasos.map(function (p) { return p.titulo; }).join(" | "); }
+      var est = crearEstado(oficina());
+      var www = consultarDns(est, "pc1", "www.oficina.local", "A");
+      comparar("DNS: el servidor propio responde con autoridad",
+        [www.exito, www.respuesta.autoritativa, www.respuesta.registros.map(function (x) { return x.valor; })], [true, true, ["192.168.1.53"]]);
+      comparar("DNS: sin pasar por la raíz", /raíz/.test(titulos(www)), false);
+      comparar("DNS: la consulta al servidor es recursiva", /consulta recursiva/.test(www.pasos[0].titulo) && www.pasos[0].capa === 7, true);
+      var alias = consultarDns(est, "pc1", "intranet.oficina.local", "A");
+      comparar("DNS: el CNAME trae la cadena", alias.respuesta.registros.map(function (x) { return x.tipo; }), ["CNAME", "A"]);
+      var mx = consultarDns(est, "pc1", "oficina.local", "MX");
+      comparar("DNS: MX con prioridad", [mx.respuesta.registros[0].valor, mx.respuesta.registros[0].prioridad], ["correo.oficina.local", 10]);
+      var falta = consultarDns(est, "pc1", "fotos.oficina.local", "A");
+      comparar("DNS: un nombre que no está en la zona da D25 sin salir",
+        [falta.diagnostico.codigo, /oficina\.local/.test(falta.diagnostico.explicacion), /raíz/.test(titulos(falta))], ["D25", true, false]);
+
+      var t0 = 1000000;
+      var g1 = consultarDns(est, "pc1", "google.com", "A", { ahora: t0 });
+      comparar("DNS: google.com por jerarquía", [g1.exito, g1.respuesta.registros[0].valor, g1.respuesta.autoritativa], [true, "142.250.79.46", false]);
+      comparar("DNS: pasos raíz, .com y autoritativo, iterativos",
+        ["Preguntar a la raíz (consulta iterativa)", "Preguntar al servidor de .com (consulta iterativa)", "Preguntar al autoritativo de google.com (consulta iterativa)"]
+          .every(function (t) { return titulos(g1).indexOf(t) >= 0; }), true);
+      comparar("DNS: respuesta no autoritativa", /respuesta no autoritativa/.test(g1.pasos[g1.pasos.length - 1].detalle), true);
+      var g2 = consultarDns(est, "pc1", "google.com", "A", { ahora: t0 + 60000 });
+      comparar("DNS: la segunda vez sale de la caché", [g2.respuesta.desdeCache, /raíz/.test(titulos(g2)), /le quedan 240 s/.test(titulos(g2) + g2.pasos.map(function (p) { return p.detalle; }).join(" "))],
+        [true, false, true]);
+      var g3 = consultarDns(est, "pc1", "google.com", "A", { ahora: t0 + 301000 });
+      comparar("DNS: vencido el TTL, vuelve a preguntar", [g3.respuesta.desdeCache, /raíz/.test(titulos(g3))], [false, true]);
+      vaciarCacheDns(est);
+      comparar("DNS: vaciar la caché", consultarDns(est, "pc1", "google.com", "A", { ahora: t0 + 302000 }).respuesta.desdeCache, false);
+      var ns = consultarDns(est, "pc1", "google.com", "NS");
+      comparar("DNS: NS de google.com", ns.respuesta.registros[0].valor, "ns1.google.com");
+      var wwwG = consultarDns(est, "pc1", "www.google.com", "A");
+      comparar("DNS: www.google.com es un CNAME", wwwG.respuesta.registros.map(function (x) { return x.tipo; }), ["CNAME", "A"]);
+
+      var afuera = consultarDns(crearEstado(oficina({ dnsPc: "8.8.8.8" })), "pc1", "www.oficina.local", "A");
+      comparar("DNS: un nombre .local preguntado a 8.8.8.8 da D25 de la raíz",
+        [afuera.diagnostico.codigo, /\.local no existe/.test(afuera.diagnostico.explicacion)], ["D25", true]);
+      var publico = consultarDns(crearEstado(oficina({ dnsPc: "8.8.8.8" })), "pc1", "google.com", "A");
+      comparar("DNS: 8.8.8.8 resuelve por jerarquía", [publico.exito, publico.respuesta.servidor], [true, "8.8.8.8 (Google Public DNS)"]);
+      var noDns = consultarDns(crearEstado(oficina({ dnsPc: "192.168.1.1" })), "pc1", "google.com", "A");
+      comparar("DNS: el router no es servidor DNS (D29)", [noDns.diagnostico.codigo, /router suele reenviar/.test(noDns.diagnostico.explicacion)], ["D29", true]);
+      var sinSalida = consultarDns(crearEstado(oficina({ sinNat: true })), "pc1", "google.com", "A");
+      comparar("DNS: el servidor sin salida a internet da D30", sinSalida.diagnostico.codigo, "D30");
+      comparar("DNS: sin salida, los nombres propios igual responden",
+        consultarDns(crearEstado(oficina({ sinNat: true })), "pc1", "www.oficina.local", "A").exito, true);
+      var noRec = consultarDns(crearEstado(oficina({ recursivo: false })), "pc1", "google.com", "A");
+      comparar("DNS: un servidor no recursivo no busca afuera", [noRec.diagnostico.codigo, /no busca nombres de afuera/.test(noRec.diagnostico.explicacion)], ["D25", true]);
+      var pingNombre = ping(crearEstado(oficina()), "pc1", "intranet.oficina.local");
+      comparar("DNS: ping a un nombre propio", [pingNombre.exito, pingNombre.ipResuelta], [true, "192.168.1.53"]);
+      comparar("DNS: tipos de registro", TIPOS_REGISTRO, ["A", "CNAME", "MX", "NS"]);
+    })();
+
     // 36. Un destino mal escrito no es un diagnóstico de red.
     (function () {
       var topo = fabTopo([fabPc("pc-admin", "10.45.7.66", 27, "10.45.7.65")], []);
@@ -3882,6 +4214,10 @@ var Motor = (function () {
     avisosDhcp: avisosServidorDhcp,
     esFirewall: esFirewall,
     CAPAS: CAPAS,
+    TIPOS_REGISTRO: TIPOS_REGISTRO,
+    JERARQUIA_DNS: JERARQUIA,
+    consultarDns: consultarDns,
+    vaciarCacheDns: vaciarCacheDns,
     // Puertos ("equipo:interfaz") del mismo dominio de difusión que el dado.
     puertosDelSegmento: segmentoL2,
     rutaElegida: rutaElegida,
