@@ -141,3 +141,7 @@ El alcance es limitado: si alejás un cliente de su punto de acceso, el ping fal
 > El simulador **no reemplaza el cálculo a mano**. Si diseñás el direccionamiento acá a fuerza de probar hasta que deje de fallar, en el parcial —que es en papel— no te va a servir de nada. Calculá primero, verificá después.
 >
 > En los laboratorios de diagnóstico, el simulador **no te avisa de los errores mientras configurás**: tenés que encontrarlos vos. Es a propósito.
+
+---
+
+*OpenRedLab es un proyecto de Francisco Leonardi con [Open Tecnología](https://opentecnologia.ar). Se publica con licencia MIT.*
