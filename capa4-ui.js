@@ -359,6 +359,16 @@ var UI = (function () {
     ".simprop label.enlinea{display:flex;align-items:center;gap:8px;color:var(--sim-texto);font-size:13px;}",
     ".simprop input.invalido,.siminf input.invalido{border-color:var(--sim-mal);outline:2px solid var(--sim-mal);}",
     ".simprop .borrar{margin-top:14px;}",
+    ".registrosdns{margin:6px 0;font-size:12px;}",
+    ".registrosdns .fila{display:grid;grid-template-columns:78px minmax(0,1fr) auto;grid-template-areas:'n n n' 't v q';gap:3px 4px;align-items:center;padding:4px 0;border-bottom:1px dotted var(--sim-borde);}",
+    ".registrosdns .fila .nombre{grid-area:n;}",
+    ".registrosdns .fila select{grid-area:t;}",
+    ".registrosdns .fila .valor{grid-area:v;}",
+    ".registrosdns .fila button{grid-area:q;}",
+    ".registrosdns .fila input,.registrosdns .fila select{width:100%;min-width:0;box-sizing:border-box;font-size:12px;}",
+    ".registrosdns .valor{display:flex;gap:3px;min-width:0;}",
+    ".registrosdns .valor .prio{width:44px;flex:0 0 44px;}",
+    ".registrosdns .errreg{color:var(--sim-mal);font-size:11.5px;margin:-1px 0 4px;}",
     ".simprop table.registros{width:100%;border-collapse:collapse;font-size:12px;margin:4px 0;}",
     ".simprop table.registros th,.simprop table.registros td{text-align:left;padding:2px 4px;border-bottom:1px dotted var(--sim-borde);overflow-wrap:anywhere;}",
     ".simprop table.registros td:nth-child(2){white-space:nowrap;}",
@@ -399,6 +409,9 @@ var UI = (function () {
     ".ayuda .teclas span:nth-child(odd){white-space:nowrap;}",
     ".ayuda kbd{font-family:ui-monospace,Consolas,monospace;font-size:11px;background:var(--sim-panel);border:1px solid var(--sim-borde);border-bottom-width:2px;border-radius:4px;padding:0 4px;}",
     ".siminf .cuerpoinf.sim{display:flex;flex-direction:column;overflow:hidden;}",
+    ".modosim{display:inline-flex;border:1px solid var(--sim-borde);border-radius:6px;overflow:hidden;}",
+    ".modosim button{border:0;border-radius:0;margin:0;}",
+    ".modosim button.activo{background:var(--sim-acento);color:#fff;}",
     ".simctrl{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;}",
     ".simctrl label{font-size:12px;color:var(--sim-tenue);}",
     ".simctrl .flecha{color:var(--sim-tenue);}",
@@ -2326,34 +2339,113 @@ var UI = (function () {
     if (pie) { c.appendChild(pie); }
   }
 
-  // La zona y los registros del servidor DNS.
+  // La zona y los registros del servidor DNS, editables. Cada registro
+  // muestra a su lado el error que le encuentra la validación.
   function panelDnsServidor(c, d) {
     var dns = d.servicios && d.servicios.dns;
     if (!dns) {
+      var bActivar = boton("Activar el servicio DNS");
+      bActivar.addEventListener("click", function () {
+        empujarHistorial();
+        d.servicios = d.servicios || {};
+        d.servicios.dns = { zona: "red.local", recursivo: true, registros: [] };
+        reconstruirEstado(); renderPropiedades();
+      });
       c.appendChild(el("p", "", "Este servidor no da el servicio de DNS."));
+      c.appendChild(bActivar);
       return;
     }
-    c.appendChild(el("p", "", "Zona: <b>" + escapar(dns.zona || "—") + "</b>. " +
-      (dns.recursivo === false
-        ? "Sólo responde por su zona."
-        : "Responde por su zona y resuelve los nombres de afuera preguntándole a la jerarquía de internet.")));
-    var regs = dns.registros || [];
-    if (!regs.length) {
-      c.appendChild(el("p", "tenue", "Todavía no tiene registros."));
-    } else {
-      var tabla = el("table", "registros");
-      tabla.innerHTML = "<thead><tr><th>Nombre</th><th>Tipo</th><th>Valor</th></tr></thead>";
-      var cuerpo = document.createElement("tbody");
-      regs.forEach(function (x) {
-        var tr = document.createElement("tr");
-        tr.innerHTML = "<td>" + escapar(x.nombre) + "</td><td>" + escapar(x.tipo) + "</td><td>" +
-          (x.prioridad !== undefined && x.prioridad !== null ? escapar(String(x.prioridad)) + " " : "") + escapar(x.valor) + "</td>";
-        cuerpo.appendChild(tr);
-      });
-      tabla.appendChild(cuerpo);
-      c.appendChild(tabla);
+    function guardar(texto) {
+      reconstruirEstado();
+      if (texto) { registrar("DNS", texto); }
     }
-    c.appendChild(el("p", "tenue", "Los registros se editan en el archivo de la red (Exportar); el editor en pantalla llega en la próxima versión."));
+    campoTexto(c, "Zona (el dominio del que es autoritativo)", dns.zona || "", function (v) {
+      empujarHistorialSuave(); dns.zona = v.trim().toLowerCase(); guardar();
+    }, function (v) { return /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i.test(v.trim()); });
+    var labRec = el("label", "enlinea");
+    var cbRec = document.createElement("input");
+    cbRec.type = "checkbox"; cbRec.checked = dns.recursivo !== false;
+    cbRec.addEventListener("change", function () {
+      empujarHistorial(); dns.recursivo = cbRec.checked;
+      guardar((d.nombre || d.id) + (cbRec.checked ? " resuelve" : " ya no resuelve") + " nombres de afuera.");
+    });
+    labRec.appendChild(cbRec);
+    labRec.appendChild(document.createTextNode("Resolver nombres de afuera (recursivo)"));
+    labRec.setAttribute("title", "Si no conoce un nombre, le pregunta a la raíz, al TLD y al autoritativo, y guarda la respuesta en su caché.");
+    c.appendChild(labRec);
+
+    var errores = {};
+    try {
+      (Escenarios.validarTopologia(S.topologia).errores || []).forEach(function (e) {
+        var m = /servicios\.dns\.registros\[(\d+)\]/.exec(e.campo || "");
+        if (m && (e.campo || "").indexOf("dispositivos." + d.id + ".") === 0) { (errores[m[1]] = errores[m[1]] || []).push(e.mensaje); }
+      });
+    } catch (e) { /* sin validación: se edita igual */ }
+
+    var lista = el("div", "registrosdns");
+    var zona = dns.zona || "red.local";
+    (dns.registros || []).forEach(function (x, k) {
+      var fila = el("div", "fila");
+      var inNombre = document.createElement("input");
+      inNombre.type = "text"; inNombre.value = x.nombre || ""; inNombre.placeholder = "www." + zona; inNombre.className = "nombre";
+      inNombre.setAttribute("aria-label", "Nombre del registro " + (k + 1));
+      var selTipo = document.createElement("select");
+      (Motor.TIPOS_REGISTRO || ["A", "CNAME", "MX", "NS"]).forEach(function (t) {
+        var op = document.createElement("option"); op.value = t; op.textContent = t; selTipo.appendChild(op);
+      });
+      selTipo.value = x.tipo || "A";
+      selTipo.setAttribute("aria-label", "Tipo del registro " + (k + 1));
+      var inValor = document.createElement("input");
+      inValor.type = "text"; inValor.value = x.valor || "";
+      inValor.placeholder = x.tipo === "A" || !x.tipo ? "192.168.1.10" : "otro." + zona;
+      inValor.setAttribute("aria-label", "Valor del registro " + (k + 1));
+      var inPrio = document.createElement("input");
+      inPrio.type = "number"; inPrio.min = "0"; inPrio.className = "prio"; inPrio.value = x.prioridad !== undefined && x.prioridad !== null ? x.prioridad : "";
+      inPrio.placeholder = "10"; inPrio.hidden = x.tipo !== "MX";
+      inPrio.setAttribute("aria-label", "Prioridad del MX " + (k + 1));
+      function cambiar() {
+        empujarHistorialSuave();
+        x.nombre = inNombre.value.trim().toLowerCase().replace(/\.$/, "");
+        x.tipo = selTipo.value;
+        x.valor = inValor.value.trim().toLowerCase().replace(/\.$/, "");
+        if (x.tipo === "MX") { x.prioridad = inPrio.value === "" ? 10 : Number(inPrio.value); } else { delete x.prioridad; }
+        guardar();
+      }
+      [inNombre, inValor, inPrio].forEach(function (inp) { inp.addEventListener("change", function () { cambiar(); renderPropiedades(); }); });
+      selTipo.addEventListener("change", function () { cambiar(); renderPropiedades(); });
+      var bQuitar = boton("Quitar");
+      bQuitar.setAttribute("aria-label", "Quitar el registro " + (k + 1));
+      bQuitar.addEventListener("click", function () {
+        empujarHistorial();
+        dns.registros.splice(k, 1);
+        guardar("Se quitó un registro DNS de " + (d.nombre || d.id) + ".");
+        renderPropiedades();
+      });
+      var celdaValor = el("span", "valor");
+      celdaValor.appendChild(inPrio); celdaValor.appendChild(inValor);
+      fila.appendChild(inNombre); fila.appendChild(selTipo); fila.appendChild(celdaValor); fila.appendChild(bQuitar);
+      lista.appendChild(fila);
+      if (errores[k]) {
+        inNombre.classList.add("invalido"); inValor.classList.add("invalido");
+        lista.appendChild(el("div", "errreg", escapar(errores[k].join(" "))));
+      }
+    });
+    if (!(dns.registros || []).length) {
+      lista.appendChild(el("p", "tenue", "Sin registros. Por ejemplo: <code>www." + escapar(zona) + "</code> tipo A con la IP de un equipo."));
+    }
+    c.appendChild(lista);
+    var bAgregar = boton("Agregar registro");
+    bAgregar.addEventListener("click", function () {
+      empujarHistorial();
+      dns.registros = dns.registros || [];
+      dns.registros.push({ nombre: "", tipo: "A", valor: "" });
+      guardar();
+      renderPropiedades();
+      var nombres = S.prop ? S.prop.querySelectorAll(".registrosdns .fila input.nombre") : [];
+      if (nombres.length) { try { nombres[nombres.length - 1].focus(); } catch (e) { /* sin foco */ } }
+    });
+    c.appendChild(bAgregar);
+    c.appendChild(el("p", "tenue", "A: nombre → IP · CNAME: alias de otro nombre · MX: servidor de correo del dominio · NS: servidor DNS del dominio."));
   }
 
   function panelRutas(c, d) {
@@ -2667,11 +2759,48 @@ var UI = (function () {
     selD.setAttribute("inputmode", "url");
     selD.placeholder = "p. ej. 10.45.7.122 o google.com…";
     selD.value = S.ultimoDestino || "";
-    var bPing = boton("Ping", "primario");
+    var enDns = S.modoSim === "dns";
+    // Dos herramientas sobre el mismo origen: el ping y la consulta DNS
+    // (como nslookup), con el tipo de registro.
+    var modos = el("div", "modosim");
+    modos.setAttribute("role", "group");
+    modos.setAttribute("aria-label", "Herramienta");
+    [["ping", "Ping"], ["dns", "Consultar DNS"]].forEach(function (m) {
+      var b = boton(m[1], (S.modoSim || "ping") === m[0] ? "activo" : "");
+      b.setAttribute("aria-pressed", String((S.modoSim || "ping") === m[0]));
+      b.addEventListener("click", function () {
+        if ((S.modoSim || "ping") === m[0]) { return; }
+        S.modoSim = m[0]; renderInferior();
+      });
+      modos.appendChild(b);
+    });
+    ctrl.appendChild(modos);
+    if (enDns) {
+      selD.placeholder = "p. ej. google.com o www.oficina.local";
+      selD.value = S.ultimoNombre || "";
+    }
+    var selTipoDns = document.createElement("select");
+    ["A", "CNAME", "MX", "NS"].forEach(function (t) {
+      var op = document.createElement("option"); op.value = t; op.textContent = t; selTipoDns.appendChild(op);
+    });
+    selTipoDns.value = S.tipoDns || "A";
+    selTipoDns.addEventListener("change", function () { S.tipoDns = selTipoDns.value; });
+    var bPing = enDns ? boton("Consultar", "primario") : boton("Ping", "primario");
     ctrl.appendChild(etiqueta("Origen", selO)); ctrl.appendChild(selO);
     ctrl.appendChild(el("span", "flecha", "→")).setAttribute("aria-hidden", "true");
-    ctrl.appendChild(etiqueta("Destino", selD)); ctrl.appendChild(selD);
+    ctrl.appendChild(etiqueta(enDns ? "Nombre" : "Destino", selD)); ctrl.appendChild(selD);
+    if (enDns) { ctrl.appendChild(etiqueta("Tipo", selTipoDns)); ctrl.appendChild(selTipoDns); }
     ctrl.appendChild(bPing);
+    if (enDns) {
+      var bVaciar = boton("Vaciar caché");
+      bVaciar.title = "Borra lo que guardaron los servidores DNS: la próxima consulta vuelve a preguntarle a la jerarquía";
+      bVaciar.addEventListener("click", function () {
+        if (S.estado && Motor.vaciarCacheDns) { Motor.vaciarCacheDns(S.estado); }
+        registrar("DNS", "Se vació la caché de los servidores DNS.");
+        avisar("Caché DNS vaciada: la próxima consulta vuelve a preguntarle a la jerarquía.");
+      });
+      ctrl.appendChild(bVaciar);
+    }
     ctrl.appendChild(el("span", "espacio"));
     // Los botones están siempre en el mismo lugar; si no aplican, quedan
     // deshabilitados en lugar de desaparecer.
@@ -2695,7 +2824,31 @@ var UI = (function () {
     c.appendChild(ctrl);
     c.appendChild(renderResultado());
 
+    function hacerConsulta() {
+      S.ultimoNombre = selD.value;
+      S.origenElegido = selO.value;
+      if (!S.estado) { reconstruirEstado(); }
+      var res;
+      try { res = Motor.consultarDns(S.estado, selO.value, selD.value.trim(), selTipoDns.value); }
+      catch (e) { registrar("error", "La consulta DNS falló por un error interno: " + e.message); return; }
+      S.ultimo = { origen: selO.value, destino: selD.value.trim(), res: res, dns: true, tipo: selTipoDns.value };
+      S.panelRes = "ping";
+      S.verTodos = true;
+      S.verTramas = false;
+      if (res.exito) {
+        consolaAgregar("Servidor: " + res.respuesta.servidor);
+        consolaAgregar(res.respuesta.autoritativa ? "Respuesta autoritativa:" : "Respuesta no autoritativa" + (res.respuesta.desdeCache ? " (desde la caché):" : ":"));
+        res.respuesta.registros.forEach(function (x) { consolaAgregar(textoRegistroUI(x)); });
+      } else if (res.diagnostico) {
+        consolaAgregar("La consulta de " + selD.value.trim() + " falló: " + res.diagnostico.titulo + " (" + res.diagnostico.codigo + ")", true);
+      }
+      registrar("DNS", "Consulta " + selTipoDns.value + " de " + selD.value.trim() + " desde " + nombreDe(selO.value) + ": " +
+        (res.exito ? res.respuesta.registros.map(textoRegistroUI).join("; ") : (res.diagnostico ? res.diagnostico.codigo : "falló")));
+      renderInferior();
+    }
+
     function hacerPing() {
+      if (S.modoSim === "dns") { hacerConsulta(); return; }
       S.ultimoDestino = selD.value;
       S.origenElegido = selO.value;
       if (!S.estado) { reconstruirEstado(); }
@@ -2765,7 +2918,17 @@ var UI = (function () {
     var res = S.ultimo.res;
     cont.appendChild(renderRecorrido(res));
     var lado = el("div", "lado");
-    if (res.exito) {
+    if (S.ultimo.dns && res.exito) {
+      // Respuesta como la de nslookup: quién respondió, si es autoritativa
+      // y los registros, con la cadena de CNAME.
+      var resp = res.respuesta;
+      lado.appendChild(el("div", "banda-ok",
+        "<b>✓ " + escapar(S.ultimo.destino) + " (" + escapar(S.ultimo.tipo) + ")</b>" +
+        "<div>Servidor: " + escapar(resp.servidor) + " · " +
+        (resp.autoritativa ? "respuesta autoritativa" : "respuesta no autoritativa" + (resp.desdeCache ? ", desde la caché" : "")) + "</div>" +
+        "<div class='ruta'>" + resp.registros.map(function (x) { return escapar(textoRegistroUI(x)); }).join("<br>") + "</div>"));
+      lado.appendChild(renderConsola());
+    } else if (res.exito) {
       var r = res.respuestas[0] || { ms: 1, ttl: 64 };
       var ruta = rutaNombres(res);
       lado.appendChild(el("div", "banda-ok",
@@ -2779,6 +2942,10 @@ var UI = (function () {
     }
     cont.appendChild(lado);
     return cont;
+  }
+
+  function textoRegistroUI(x) {
+    return x.nombre + "  " + x.tipo + "  " + (x.tipo === "MX" && x.prioridad !== undefined ? x.prioridad + " " : "") + x.valor;
   }
 
   function renderDiagnostico(dg) {
