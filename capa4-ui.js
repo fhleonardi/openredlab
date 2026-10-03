@@ -2404,9 +2404,9 @@ var UI = (function () {
     var tabs = el("div", "tabs");
     tabs.setAttribute("role", "tablist");
     tabs.setAttribute("aria-label", "Propiedades de " + (d.nombre || d.id));
-    var nombres = [["config", "Configuración"], ["ifs", "Interfaces"], ["rutas", "Rutas"], ["filtrado", "Filtrado"], ["dhcp", "DHCP"], ["estado", "Estado"]];
+    var nombres = [["config", "Configuración"], ["ifs", "Interfaces"], ["rutas", "Rutas"], ["filtrado", "Filtrado"], ["nat", "NAT"], ["dhcp", "DHCP"], ["estado", "Estado"]];
     if (d.tipo !== "router") {
-      nombres = nombres.filter(function (p) { return p[0] !== "rutas" && p[0] !== "filtrado" && p[0] !== "dhcp"; });
+      nombres = nombres.filter(function (p) { return ["rutas", "filtrado", "nat", "dhcp"].indexOf(p[0]) < 0; });
     }
     if (d.tipo === "servidor") { nombres.splice(2, 0, ["servicios", "Servicios"], ["dns", "DNS"]); }
     if (!nombres.some(function (p) { return p[0] === S.pestañaProps; })) { S.pestañaProps = "config"; }
@@ -2421,6 +2421,7 @@ var UI = (function () {
     else if (S.pestañaProps === "ifs") { panelInterfaces(panel, d); }
     else if (S.pestañaProps === "rutas") { panelRutas(panel, d); }
     else if (S.pestañaProps === "filtrado") { panelFiltrado(panel, d); }
+    else if (S.pestañaProps === "nat") { panelNat(panel, d); }
     else if (S.pestañaProps === "dhcp") { panelDhcp(panel, d); }
     else if (S.pestañaProps === "dns") { panelDnsServidor(panel, d); }
     else if (S.pestañaProps === "servicios") { panelServicios(panel, d); }
@@ -3002,6 +3003,72 @@ var UI = (function () {
       empujarHistorial();
       d.reglas.push({ accion: "bloquear", origen: "", destino: "" });
       reconstruirEstado(); renderPropiedades();
+    });
+    c.appendChild(bAgregar);
+  }
+
+  // Las dos caras del NAT (SRE-1021): qué puertos cambian el origen de lo
+  // que sale (se marca en Interfaces) y qué puertos públicos se redirigen
+  // hacia un equipo de adentro.
+  function panelNat(c, d) {
+    var lista = Array.isArray(d.redirecciones) ? d.redirecciones : [];
+    var conNat = (d.interfaces || []).filter(function (f) { return f.nat; });
+    c.appendChild(el("p", "", "<span style='font-size:13px'><b>NAT de origen.</b> Lo que sale a internet por un puerto con NAT " +
+      "lleva como origen la IP de ese puerto, y la respuesta se traduce de vuelta. Se marca en la pestaña Interfaces.</span>"));
+    c.appendChild(el("p", "", conNat.length
+      ? "Hacen NAT: " + conNat.map(function (f) { return escapar(f.id) + (f.ip ? " (" + escapar(f.ip) + ")" : ""); }).join(", ") + "."
+      : "Ningún puerto hace NAT: sin eso, las redirecciones no se aplican."));
+    c.appendChild(el("p", "", "<span style='font-size:13px'><b>Redirección de puertos (NAT de destino).</b> Lo que llega a la IP de un puerto " +
+      "con NAT por un protocolo y un puerto se reenvía a un equipo de adentro, en el puerto que elijas. Así se publica un servidor con IP privada. " +
+      "El ping a esa IP lo sigue respondiendo " + (Motor.esFirewall(d) ? "el firewall" : "el router") + ".</span>"));
+    if (lista.length === 0) {
+      c.appendChild(el("p", "", "Sin redirecciones: lo que llega de afuera a su IP pública lo atiende " + (Motor.esFirewall(d) ? "el firewall" : "el router") + ", que no da servicios."));
+    }
+    function numero(r, clave, nombre, i) {
+      var inp = document.createElement("input");
+      inp.type = "number"; inp.min = "1"; inp.max = "65535"; inp.placeholder = "puerto…";
+      inp.value = r[clave] || "";
+      inp.setAttribute("aria-label", "Redirección " + (i + 1) + ": " + nombre);
+      inp.addEventListener("change", function () {
+        var n = Number(inp.value);
+        if (n >= 1 && n <= 65535 && Math.floor(n) === n) { empujarHistorial(); r[clave] = n; reconstruirEstado(); renderPropiedades(); }
+        else { avisar("El puerto va de 1 a 65535."); inp.value = r[clave] || ""; }
+      });
+      return inp;
+    }
+    lista.forEach(function (r, i) {
+      var completa = (r.protocolo === "tcp" || r.protocolo === "udp") && r.puerto && r.puertoInterno && Red.esIpValida(r.ipInterna || "");
+      var texto = (i + 1) + ". " + String(r.protocolo || "?").toUpperCase() + " " + (r.puerto || "?") + " → " + (r.ipInterna || "?") + ":" +
+        (r.puertoInterno || "?") + (completa ? "" : " (incompleta: no se aplica)");
+      var fila = el("div", "filaif", "<span class='datos'>" + escapar(texto) + "</span>");
+      var bQuitar = boton("Quitar");
+      bQuitar.setAttribute("aria-label", "Quitar la redirección " + (i + 1));
+      bQuitar.addEventListener("click", function () { empujarHistorial(); d.redirecciones.splice(i, 1); reconstruirEstado(); renderPropiedades(); });
+      fila.appendChild(bQuitar);
+      c.appendChild(fila);
+      var extra = el("div", "reglaextra");
+      var selProt = document.createElement("select");
+      [["tcp", "TCP"], ["udp", "UDP"]].forEach(function (op) {
+        var o = document.createElement("option"); o.value = op[0]; o.textContent = op[1]; selProt.appendChild(o);
+      });
+      selProt.value = r.protocolo === "udp" ? "udp" : "tcp";
+      selProt.setAttribute("aria-label", "Redirección " + (i + 1) + ": protocolo");
+      selProt.addEventListener("change", function () { empujarHistorial(); r.protocolo = selProt.value; reconstruirEstado(); renderPropiedades(); });
+      extra.appendChild(selProt);
+      extra.appendChild(numero(r, "puerto", "puerto público", i));
+      extra.appendChild(numero(r, "puertoInterno", "puerto interno", i));
+      c.appendChild(extra);
+      campoTexto(c, "Redirección " + (i + 1) + ": IP interna", r.ipInterna, function (v) {
+        empujarHistorialSuave(); r.ipInterna = v.trim(); reconstruirEstado();
+      }, function (v) { return Red.esIpValida(String(v).trim()); }, true);
+    });
+    var bAgregar = boton("Agregar redirección");
+    bAgregar.addEventListener("click", function () {
+      empujarHistorial();
+      if (!Array.isArray(d.redirecciones)) { d.redirecciones = []; }
+      d.redirecciones.push({ protocolo: "tcp", puerto: 80, ipInterna: "", puertoInterno: 80 });
+      reconstruirEstado(); renderPropiedades();
+      registrar("nat", "Redirección nueva en " + (d.nombre || d.id) + ".");
     });
     c.appendChild(bAgregar);
   }
@@ -4866,11 +4933,11 @@ var UI = (function () {
     caja.appendChild(el("section", "",
       "<h3>Qué simplifica el simulador</h3><ul>" +
       "<li>Rutas a mano (sin OSPF, BGP ni RIP); sin STP, VLAN ni IPv6.</li>" +
-      "<li>NAT de salida; DHCP, un rango por router; wireless, sólo distancia (" + alcance + " m).</li>" +
+      "<li>NAT de salida y redirección de puertos; DHCP, un rango por router; wireless, sólo distancia (" + alcance + " m).</li>" +
       "<li>Reglas: red, protocolo, puerto y entrada.</li>" +
       "<li>TCP sin retransmisiones ni congestión; la QoS es latencia, jitter y pérdida por cable.</li>" +
       "<li>Sin colisiones en el hub; la captura no muestra ARP ni DHCP.</li>" +
-      "<li>Internet: jerarquía DNS y algunos sitios (IP ilustrativas).</li></ul>"));
+      "<li>Internet: una sola para todas las nubes; jerarquía DNS y algunos sitios (IP ilustrativas).</li></ul>"));
     c.appendChild(caja);
   }
 

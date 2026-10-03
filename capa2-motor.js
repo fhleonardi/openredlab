@@ -764,6 +764,17 @@ var Motor = (function () {
     return !!dispositivo && dispositivo.tipo === "internet";
   }
 
+  // Redirección de puertos (NAT de destino, SRE-1021): la regla del router
+  // que corresponde a un segmento que llega a la IP de su puerto con NAT.
+  function redireccionDe(dev, iface, ip, paquete) {
+    if (!esRouter(dev) || esInternet(dev) || !iface || !iface.nat || iface.ip !== ip) { return null; }
+    if (!paquete || (paquete.protocolo !== "tcp" && paquete.protocolo !== "udp")) { return null; }
+    return (dev.redirecciones || []).filter(function (r) {
+      return r && r.protocolo === paquete.protocolo && Number(r.puerto) === Number(paquete.puertoDestino) &&
+        Red.esIpValida(r.ipInterna) && Number(r.puertoInterno) >= 1 && Number(r.puertoInterno) <= 65535;
+    })[0] || null;
+  }
+
   // Internet que une sitios (SRE-1031): si una IP pública es de un equipo
   // del lienzo, la nube no responde ella. Se busca por los cables, sin
   // cruzar nubes y sin mirar si están caídos (eso lo revisa el ruteo), la
@@ -1540,6 +1551,10 @@ var Motor = (function () {
     // que trae el ping de vuelta para deshacerla al llegar a ese router.
     var traduccion = null;
     var natInverso = opciones.natInverso || null;
+    // Redirección de puertos: la que se aplicó en la ida, y la que trae la
+    // vuelta para deshacerla al salir por ese router.
+    var redireccion = null;
+    var dnatInverso = opciones.dnatInverso || null;
     // Protocolo y puertos del paquete (ICMP en un ping) y el puerto por el
     // que entró a cada equipo: los usan las reglas de filtrado.
     var paquete = opciones.paquete || { protocolo: "icmp" };
@@ -2258,6 +2273,33 @@ var Motor = (function () {
           continue;
         }
 
+        // Redirección de puertos: el segmento llegó a la IP pública del router
+        // con un protocolo y un puerto redirigidos; sigue hacia adentro con
+        // otra IP y otro puerto de destino.
+        // Lo que genera el propio router no se redirige: la regla es para lo que entra.
+        var reglaRedir = !redireccion && destPar.dispositivo.id !== origen.id ? redireccionDe(destPar.dispositivo, destPar.interfaz, destinoIp, paquete) : null;
+        if (reglaRedir) {
+          var destinoInterno = reglaRedir.ipInterna + ":" + Number(reglaRedir.puertoInterno);
+          agregarPaso("Redirigir el puerto (NAT de destino)",
+            nombreDestinoFinal + " tiene una redirección: lo que llega a " + destinoIp + " por " + paquete.protocolo.toUpperCase() + " " +
+            paquete.puertoDestino + " va a " + destinoInterno + ". Cambia la IP y el puerto de destino y lo reenvía hacia adentro; " +
+            "a la respuesta le va a devolver el origen público.", true, 3);
+          redireccion = {
+            router: destPar.dispositivo.id, ipPublica: destinoIp, puertoPublico: Number(paquete.puertoDestino),
+            ipInterna: reglaRedir.ipInterna, puertoInterno: Number(reglaRedir.puertoInterno)
+          };
+          destinoIp = reglaRedir.ipInterna;
+          var redirigido = {};
+          for (var kp in paquete) { redirigido[kp] = paquete[kp]; }
+          redirigido.puertoDestino = Number(reglaRedir.puertoInterno);
+          paquete = redirigido;
+          actualId = destPar.dispositivo.id;
+          actualIface = destPar.interfaz;
+          actualIp = destPar.interfaz.ip;
+          reenvioPropio = false;
+          continue;
+        }
+
         // Paso 11: la vuelta. Sin camino de retorno, el ping falla aunque la
         // ida haya sido perfecta: ese es el D12.
         var tramasVuelta = null;
@@ -2271,6 +2313,7 @@ var Motor = (function () {
             respuestaDe: conexionIda,
             porEstado: firewallsConEstado,
             natInverso: traduccion,
+            dnatInverso: redireccion,
             paquete: invertirPaquete(paquete)
           });
           var tramasVuelta = tramasDeVuelta(vuelta);
@@ -2309,7 +2352,7 @@ var Motor = (function () {
           }
         }
         respuestas.push({ ttl: ttlDeRespuesta(tramasVuelta || [], saltos), ms: Math.max(1, Math.round(msTotal)) });
-        return { exito: true, pasos: pasos, saltos: saltos, diagnostico: null, respuestas: respuestas, respondio: destPar.dispositivo.id };
+        return { exito: true, pasos: pasos, saltos: saltos, diagnostico: null, respuestas: respuestas, respondio: destPar.dispositivo.id, redireccion: redireccion };
       }
 
       // Distinta red: pasos 6 a 9. Un router consulta su propia tabla de
@@ -2593,6 +2636,20 @@ var Motor = (function () {
         siguienteIp = vecinos[0].interfaz.ip;
         agregarArp(estado, router.id, ruta.siguienteSalto, vecinos[0].interfaz.mac, registrar);
         agregarArp(estado, vecinos[0].dispositivo.id, egreso.ip, egreso.mac, registrar);
+      }
+      // La respuesta de un servidor publicado: el router que redirigió el
+      // pedido le devuelve el origen público (IP y puerto), haga o no NAT.
+      if (dnatInverso && router.id === dnatInverso.router && ipOrigen === dnatInverso.ipInterna &&
+          Number(paquete.puertoOrigen) === dnatInverso.puertoInterno) {
+        agregarPaso("Deshacer la redirección (NAT de destino)",
+          nom(router.id) + " recuerda la redirección: cambia el origen " + dnatInverso.ipInterna + ":" + dnatInverso.puertoInterno +
+          " por " + dnatInverso.ipPublica + ":" + dnatInverso.puertoPublico + ", que es a donde mandó el pedido el cliente.", true, 3);
+        ipOrigen = dnatInverso.ipPublica;
+        var devuelto = {};
+        for (var kd in paquete) { devuelto[kd] = paquete[kd]; }
+        devuelto.puertoOrigen = dnatInverso.puertoPublico;
+        paquete = devuelto;
+        dnatInverso = null;
       }
       // NAT de salida: con el filtrado ya hecho (las reglas ven la IP
       // privada), el router cambia el origen privado por la IP del puerto.
@@ -2968,17 +3025,27 @@ var Motor = (function () {
     var red = null;
     // Cada segmento viaja por el camino de la red: los del cliente por la
     // ida, los del servidor por la vuelta.
+    // Con una redirección, del router hacia adentro el puerto del servidor
+    // es el interno.
     function tramasDeSegmentos() {
       var lista = tramasConexion.slice();
+      var ri = red && red.redireccion;
       segmentos.forEach(function (x) {
         var base = x.de === "cliente" ? idaDe(red) : vueltaDe(red);
-        var nombreProt = x.datos && protocolo === "tcp" ? ((servicioConocido("tcp", puerto) || {}).nombre || "TCP") : protocolo.toUpperCase();
-        var info = x.puertoOrigen + " → " + x.puertoDestino + (x.flags ? " [" + x.flags.replace("-", ", ") + "]" : "") +
-          (protocolo === "tcp" ? " Seq=" + x.seq + (x.ack ? " Ack=" + x.ack : "") : "") + (x.datos ? " «" + x.datos + "»" : "");
-        Array.prototype.push.apply(lista, tramasCon(base, {
-          protocolo: nombreProt, puertoOrigen: x.puertoOrigen, puertoDestino: x.puertoDestino,
-          flags: x.flags || null, seq: x.seq, ack: x.ack, datos: x.datos, info: info, mensaje: protocolo.toUpperCase() + " " + info
-        }));
+        base.forEach(function (t) {
+          var po = x.puertoOrigen, pd = x.puertoDestino;
+          if (ri && x.de === "cliente" && t.ipDestino === ri.ipInterna) { pd = ri.puertoInterno; }
+          if (ri && x.de === "servidor" && t.ipOrigen === ri.ipInterna) { po = ri.puertoInterno; }
+          // El nombre del protocolo sale del puerto del servidor en ese tramo.
+          var puertoSrv = x.de === "cliente" ? pd : po;
+          var nombreProt = x.datos && protocolo === "tcp" ? ((servicioConocido("tcp", puertoSrv) || {}).nombre || "TCP") : protocolo.toUpperCase();
+          var info = po + " → " + pd + (x.flags ? " [" + x.flags.replace("-", ", ") + "]" : "") +
+            (protocolo === "tcp" ? " Seq=" + x.seq + (x.ack ? " Ack=" + x.ack : "") : "") + (x.datos ? " «" + x.datos + "»" : "");
+          Array.prototype.push.apply(lista, tramasCon([t], {
+            protocolo: nombreProt, puertoOrigen: po, puertoDestino: pd,
+            flags: x.flags || null, seq: x.seq, ack: x.ack, datos: x.datos, info: info, mensaje: protocolo.toUpperCase() + " " + info
+          }));
+        });
       });
       return lista;
     }
@@ -3009,6 +3076,9 @@ var Motor = (function () {
     // Atiende el equipo al que llegó el paquete, no cualquiera con esa IP.
     var atiende = red.exito ? atiendeEn(estado, red, ip) : null;
     var nombreDestino = atiende ? (atiende.nombre || atiende.id) : ip;
+    // Con una redirección, el servicio se busca en el puerto interno.
+    var redir = red.exito ? red.redireccion : null;
+    var puertoServicio = redir ? redir.puertoInterno : puerto;
     if (!red.exito) {
       agregar("Comprobar que la red llega a " + ip, "Antes de conectarse, el paquete tiene que poder ir y volver; " +
         (red.diagnostico ? red.diagnostico.titulo.charAt(0).toLowerCase() + red.diagnostico.titulo.slice(1) + "." : "no llega."), false, 3);
@@ -3017,9 +3087,13 @@ var Motor = (function () {
     var ida = (red.tramas || []).filter(function (t) { return t.sentido === "ida"; });
     var ipCliente = ida.length ? ida[0].ipOrigen : null;
     var ipVista = ida.length ? ida[ida.length - 1].ipOrigen : ipCliente;
-    agregar("Comprobar que la red llega a " + ip, "La red llega a " + nombreDestino + " (" + ip + ") y vuelve: el resto es de las capas de arriba." +
+    agregar("Comprobar que la red llega a " + ip, (redir
+      ? "La red llega a " + ip + ", y " + nombreDe(estado, redir.router) + " redirige el puerto " + puerto + " a " + nombreDestino +
+        " (" + redir.ipInterna + ":" + redir.puertoInterno + "). La respuesta vuelve: el resto es de las capas de arriba."
+      : "La red llega a " + nombreDestino + " (" + ip + ") y vuelve: el resto es de las capas de arriba.") +
       (ipVista && ipVista !== ipCliente ? " Por el NAT, el servidor va a ver la conexión desde " + ipVista + "." : ""), true, 3);
     var socket = { cliente: ipCliente + ":" + efimero, servidor: ip + ":" + puerto, vistoPorServidor: (ipVista || ipCliente) + ":" + efimero, protocolo: protocolo };
+    if (redir) { socket.redirigidoA = redir.ipInterna + ":" + redir.puertoInterno; }
     function seg(deCliente, flags, seq, ack, datos) {
       segmentos.push({
         n: segmentos.length + 1, de: deCliente ? "cliente" : "servidor", protocolo: protocolo,
@@ -3027,9 +3101,9 @@ var Motor = (function () {
         flags: flags, seq: seq, ack: ack, datos: datos || null
       });
     }
-    var servicio = quienEscucha(atiende, ip, protocolo, puerto);
-    var info = servicioConocido(protocolo, puerto);
-    var etiqueta = protocolo.toUpperCase() + " " + puerto;
+    var servicio = quienEscucha(atiende, ip, protocolo, puertoServicio);
+    var info = servicioConocido(protocolo, puertoServicio);
+    var etiqueta = protocolo.toUpperCase() + " " + puertoServicio;
     // El ping lo contestó la nube, pero en esa IP no hay nadie (D33): ni
     // un RST ni un ICMP, el pedido se pierde.
     var nadie = !atiende && !SERVICIOS_INTERNET[ip];
@@ -3051,7 +3125,7 @@ var Motor = (function () {
       if (!servicio) {
         seg(false, "RST-ACK", 0, 1001);
         agregar("Recibir la respuesta al SYN", nombreDestino + " no tiene ningún programa escuchando en " + etiqueta + ": responde RST («acá no hay nadie») y la conexión no se abre.", false, 4);
-        return fallo(diagnosticoDe("D31", { equipo: nombreDestino, puerto: puerto, protocolo: protocolo }));
+        return fallo(diagnosticoDe("D31", { equipo: nombreDestino, puerto: puertoServicio, protocolo: protocolo }));
       }
       seg(false, "SYN-ACK", 5000, 1001);
       agregar("Aceptar la conexión (SYN-ACK)", servicio + " escucha en " + etiqueta + " de " + nombreDestino + ": responde SYN-ACK (seq=5000, ack=1001): «acepto, y espero tu byte 1001».", true, 4);
@@ -3080,7 +3154,7 @@ var Motor = (function () {
       }
       if (!servicio) {
         agregar("Recibir la respuesta", nombreDestino + " no tiene ningún programa escuchando en " + etiqueta + ": responde con un ICMP de «puerto inalcanzable».", false, 4);
-        return fallo(diagnosticoDe("D31", { equipo: nombreDestino, puerto: puerto, protocolo: protocolo }));
+        return fallo(diagnosticoDe("D31", { equipo: nombreDestino, puerto: puertoServicio, protocolo: protocolo }));
       }
       var resp = info ? info.respuesta : "respuesta";
       seg(false, "", null, null, resp);
@@ -4956,6 +5030,61 @@ var Motor = (function () {
       dosNubes.enlaces.unshift(fabEnlace("b0", "swb", "fa0/5", "nube3", "eth0"));
       var porLaOtra = ping(crearEstado(dosNubes), "pc1", "201.2.2.10");
       comparar("internet: si una nube del sitio no tiene vecino, usa otra que sí", [porLaOtra.exito, porLaOtra.respondio], [true, "web"]);
+      // Redirección de puertos (SRE-1021): el sitio B con el servidor privado,
+      // RB con NAT y el TCP 8080 de su IP pública redirigido al 80 del servidor.
+      function conPublicado() {
+        var t = conSitioB(false);
+        t.dispositivos.forEach(function (d) {
+          if (d.id === "web") { d.interfaces[0].ip = "192.168.60.10"; d.gateway = "192.168.60.1"; }
+          if (d.id === "rb") {
+            d.interfaces[0].ip = "192.168.60.1"; d.interfaces[1].nat = true;
+            d.redirecciones = [{ protocolo: "tcp", puerto: 8080, ipInterna: "192.168.60.10", puertoInterno: 80 }];
+          }
+        });
+        return t;
+      }
+      var pub = conectar(crearEstado(conPublicado()), "pc1", "200.9.9.2", "tcp", 8080);
+      function puertosSyn(r, de, a) {
+        var t = r.tramas.filter(function (x) { return (x.flags === "SYN" || x.flags === "SYN-ACK") && x.de.dispositivo === de && x.a.dispositivo === a; })[0];
+        return t ? t.ipOrigen + ":" + t.puertoOrigen + ">" + t.ipDestino + ":" + t.puertoDestino : null;
+      }
+      comparar("redirección: la conexión a la IP pública la atiende el servidor privado",
+        [pub.exito, pub.socket && pub.socket.redirigidoA, pub.servicio], [true, "192.168.60.10:80", "HTTP"]);
+      comparar("redirección: afuera el puerto público, adentro el interno, y la respuesta vuelve con el público",
+        [puertosSyn(pub, "nube2", "rb").split(">")[1], puertosSyn(pub, "rb", "web").split(">")[1],
+         puertosSyn(pub, "web", "rb").split(">")[0], puertosSyn(pub, "rb", "nube2").split(">")[0]],
+        ["200.9.9.2:8080", "192.168.60.10:80", "192.168.60.10:80", "200.9.9.2:8080"]);
+      var pingPub = ping(crearEstado(conPublicado()), "pc1", "200.9.9.2");
+      var datosAdentro = pub.tramas.filter(function (x) { return x.datos && (x.ipDestino === "192.168.60.10" || x.ipOrigen === "192.168.60.10"); });
+      var datosAfuera = pub.tramas.filter(function (x) { return x.datos && x.de.dispositivo === "nube2" && x.a.dispositivo === "rb"; });
+      comparar("redirección: en la captura, adentro los datos son HTTP (puerto 80) y afuera, TCP (8080)",
+        [datosAdentro.length > 0 && datosAdentro.every(function (x) { return x.protocolo === "HTTP"; }), datosAfuera.length > 0 && datosAfuera[0].protocolo],
+        [true, "TCP"]);
+      comparar("redirección: el ping (ICMP) a la IP pública lo responde el router",
+        [pingPub.exito, pingPub.respondio, pingPub.redireccion], [true, "rb", null]);
+      comparar("redirección: lo que genera el propio router no se redirige",
+        cod(conectar(crearEstado(conPublicado()), "rb", "200.9.9.2", "tcp", 8080)), "D31");
+      comparar("redirección: un puerto sin regla da D31 en el router",
+        cod(conectar(crearEstado(conPublicado()), "pc1", "200.9.9.2", "tcp", 80)), "D31");
+      var sinNatPub = conPublicado();
+      sinNatPub.dispositivos.forEach(function (d) { if (d.id === "rb") { delete d.interfaces[1].nat; } });
+      comparar("redirección: sólo se aplica a la IP del puerto con NAT",
+        cod(conectar(crearEstado(sinNatPub), "pc1", "200.9.9.2", "tcp", 8080)), "D31");
+      var cerradoPub = conPublicado();
+      cerradoPub.dispositivos.forEach(function (d) { if (d.id === "web") { d.servicios.escuchando = []; } });
+      var cerrado80 = conectar(crearEstado(cerradoPub), "pc1", "200.9.9.2", "tcp", 8080);
+      comparar("redirección: si el servidor no escucha en el puerto interno, D31 con su nombre y ese puerto",
+        [cod(cerrado80), /web/.test(expl(cerrado80)), /TCP 80\b/.test(expl(cerrado80))], ["D31", true, true]);
+      // Un firewall con política bloquear: la regla ve el destino ya redirigido.
+      var conFw = conPublicado();
+      conFw.dispositivos.forEach(function (d) {
+        if (d.id === "rb") {
+          d.modelo = "firewall"; d.politica = "bloquear";
+          d.reglas = [{ accion: "permitir", origen: "0.0.0.0/0", destino: "192.168.60.10/32", protocolo: "tcp", puerto: 80, entrada: "g0/1" }];
+        }
+      });
+      comparar("redirección: el firewall filtra con el destino interno y deja volver la respuesta",
+        conectar(crearEstado(conFw), "pc1", "200.9.9.2", "tcp", 8080).exito, true);
       var enMisma = ping(crearEstado(misma), "pc1", "201.2.2.10");
       comparar("internet: con los dos sitios en la misma nube, no cruza a otra",
         [enMisma.exito, enMisma.respondio, enMisma.tramas.some(function (t) { return t.medio === "internet"; })], [true, "web", false]);

@@ -31,6 +31,7 @@ No hace falta instalar nada: es un único archivo HTML, sin dependencias y sin c
 - **Ver DHCP** con los cuatro mensajes DORA animados sobre los cables.
 - **Salir a internet con NAT:** el router o firewall de borde cambia la IP privada de origen por su IP pública, y a la respuesta la traduce de vuelta; se ve en el recorrido y en las tramas. Sin NAT, el pedido llega pero la respuesta no vuelve, y el simulador lo explica (D28).
 - **Unir sitios por internet:** si la IP pública de destino es de un equipo del lienzo, la nube le lleva el paquete hasta su sitio. Cada sitio puede tener su nube, pero todas son la misma internet. El ejemplo *Dos sitios por internet* tiene una PC en su casa que consulta un servidor web de la oficina. Si internet no llega hasta ese equipo, el diagnóstico lo dice (D34).
+- **Publicar un servidor con redirección de puertos:** en la pestaña *NAT* del router, lo que llega a su IP pública por un protocolo y un puerto se reenvía a un equipo de adentro. Las tramas muestran el cambio de IP y de puerto de destino en el borde. El ejemplo *Servidor publicado con redirección de puertos* lo arma con el servidor de la oficina en una IP privada.
 - **Filtrar tráfico** con reglas por red de origen y destino, protocolo (ICMP, TCP, UDP), puerto de destino y puerto por el que entra el paquete, más una política por defecto (permitir o bloquear). El router revisa cada paquete; el firewall recuerda las conversaciones y deja volver las respuestas. Un firewall nuevo bloquea lo que entra por wan.
 - **Verificar un diseño VLSM:** el de un desafío del docente o uno propio. En una red armada por vos, el simulador detecta los sectores solo y revisa subredes solapadas o desalineadas y puertas de enlace; si cargás los hosts de cada sector y el bloque, también revisa si alcanzan.
 - **Resolver laboratorios de diagnóstico:** redes con fallas plantadas y objetivos que hay que cumplir. En un laboratorio el simulador no avisa las fallas mientras configurás: encontrarlas es el ejercicio.
@@ -98,7 +99,7 @@ OpenRedLab numera sus versiones como MAYOR.MENOR.PARCHE. La versión actual figu
 
 ## Simplificaciones
 
-Es una herramienta para aprender, no un emulador: las rutas se cargan a mano (no hay OSPF, BGP ni RIP), no hay VLAN ni IPv6, el NAT es sólo de salida (sin redirección de puertos), no hay retransmisiones ni control de congestión en TCP, DHCP reparte un rango por router y sin relay, y el wireless se modela por distancia. La pestaña **Ayuda** del simulador lista todas.
+Es una herramienta para aprender, no un emulador: las rutas se cargan a mano (no hay OSPF, BGP ni RIP), no hay VLAN ni IPv6, el NAT es de salida y con redirección de puertos (sin otras formas de NAT de destino), no hay retransmisiones ni control de congestión en TCP, DHCP reparte un rango por router y sin relay, y el wireless se modela por distancia. La pestaña **Ayuda** del simulador lista todas.
 
 ## Reportar un problema
 

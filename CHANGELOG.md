@@ -10,6 +10,14 @@ Los números siguen la forma MAYOR.MENOR.PARCHE:
 
 Los archivos de red llevan el número de su formato (`version`) y la versión del simulador que los exportó (`generador`). Un archivo de un formato anterior se actualiza solo al abrirlo.
 
+## 1.2.0 — 2026-10-03
+
+- **Redirección de puertos (NAT de destino).** Un router o firewall puede publicar un servidor con IP privada. Lo que llega a la IP de su puerto con NAT por un protocolo y un puerto (por ejemplo TCP 80) se reenvía a un equipo de adentro, en el puerto que se elija. En el recorrido aparece el paso «Redirigir el puerto (NAT de destino)». En las tramas y en la captura se ve el puerto público afuera y el interno adentro, y la respuesta vuelve con el origen público del router. El ping a esa IP lo sigue respondiendo el router.
+- **Pestaña NAT** en routers y firewalls: muestra qué puertos hacen NAT de origen y permite agregar y quitar redirecciones.
+- **Falla nueva para laboratorios: «Sin redirección».** Quita una redirección. Desde afuera, el pedido lo recibe el router, que no da servicios: D31.
+- **Ejemplo nuevo: Servidor publicado con redirección de puertos.** Es el de los dos sitios, pero con el servidor de la oficina en una IP privada.
+- En un desafío, el archivo del alumno sale sin redirecciones, igual que sin el resto del direccionamiento.
+
 ## 1.1.0 — 2026-10-03
 
 - **Internet une sitios.** Si la IP pública de destino es de un equipo del lienzo, la nube de Internet ya no responde ella: le lleva el paquete hasta el sitio de ese equipo. Cada sitio puede tener su propia nube, pero todas son la misma internet, y el paquete cruza de una a la otra. En el recorrido aparece el paso «Cruzar internet hacia …». En *Cómo viaja el paquete* y en la captura, el tramo de una nube a la otra figura «por internet». La animación pasa de una nube a la otra. La respuesta vuelve por el mismo camino, y el NAT la traduce al llegar.
