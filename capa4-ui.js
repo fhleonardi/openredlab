@@ -366,6 +366,9 @@ var UI = (function () {
     ".nuevoservicio{display:grid;grid-template-columns:minmax(0,1fr) 64px 72px auto;gap:4px;margin:4px 0;}",
     ".nuevoservicio input,.nuevoservicio select{min-width:0;width:100%;box-sizing:border-box;}",
     ".segmentos{font-family:ui-monospace,Consolas,monospace;font-size:12px;margin-top:4px;line-height:1.45;}",
+    ".reglaextra{display:flex;flex-wrap:wrap;gap:4px;margin:4px 0 10px;}",
+    ".reglaextra select,.reglaextra input{font-size:12px;min-width:0;}",
+    ".reglaextra input{width:76px;}",
     ".registrosdns{margin:6px 0;font-size:12px;}",
     ".registrosdns .fila{display:grid;grid-template-columns:78px minmax(0,1fr) auto;grid-template-areas:'n n n' 't v q';gap:3px 4px;align-items:center;padding:4px 0;border-bottom:1px dotted var(--sim-borde);}",
     ".registrosdns .fila .nombre{grid-area:n;}",
@@ -1945,6 +1948,9 @@ var UI = (function () {
       gateway: null, dns: null, rutas: [], dhcp: null
     };
     if (equipo.modelo) { nuevo.modelo = equipo.modelo; }
+    // Como un firewall real: lo que entra desde internet se bloquea, salvo
+    // las respuestas de lo que salió (estado).
+    if (equipo.modelo === "firewall") { nuevo.reglas = [{ accion: "bloquear", origen: "0.0.0.0/0", destino: "0.0.0.0/0", entrada: "wan" }]; }
     if (tipo === "servidor") { nuevo.servicios = { dns: { zona: "red.local", recursivo: true, registros: [] } }; }
     lista.push(nuevo);
     reconstruirEstado(); renderTodo();
@@ -2609,18 +2615,21 @@ var UI = (function () {
     if (!Array.isArray(d.reglas)) { d.reglas = []; }
     c.appendChild(el("p", "",
       "<span style='font-size:13px'>" + (Motor.esFirewall(d)
-        ? "El firewall revisa contra estas reglas los paquetes que reenvía, en orden: gana la primera que coincide con su origen y su destino. " +
+        ? "El firewall revisa contra estas reglas los paquetes que reenvía, en orden: gana la primera que coincide. " +
           "Además <b>recuerda las conversaciones</b>: la respuesta de un paquete que dejó pasar vuelve sin revisarse. "
-        : "El router revisa cada paquete que reenvía contra estas reglas, en orden: gana la primera que coincide con su origen y su destino. " +
+        : "El router revisa cada paquete que reenvía contra estas reglas, en orden: gana la primera que coincide. " +
           "No recuerda conversaciones: una regla puede frenar también la respuesta. ") +
-      "Lo que no coincide con ninguna pasa. Escribí redes como 10.45.7.0/26; 0.0.0.0/0 quiere decir cualquiera.</span>"));
+      "Una regla mira el origen y el destino (redes como 10.45.7.0/26; 0.0.0.0/0 es cualquiera) y, si se los indicás, el protocolo, " +
+      "el puerto de destino y por qué puerto entra el paquete. Lo que no coincide con ninguna lo decide la política por defecto.</span>"));
     if (d.reglas.length === 0) {
       c.appendChild(el("p", "", "Sin reglas: " + (Motor.esFirewall(d) ? "el firewall" : "el router") + " deja pasar todo lo que sabe enrutar."));
     }
     d.reglas.forEach(function (r, i) {
       var completa = esCidr(r.origen) && esCidr(r.destino);
       var texto = (i + 1) + ". " + (r.accion === "permitir" ? "Permitir" : "Bloquear") + " " +
-        (r.origen || "?") + " → " + (r.destino || "?") + (completa ? "" : " (incompleta: no se aplica)");
+        (r.protocolo ? r.protocolo.toUpperCase() + (r.puerto ? " " + r.puerto : "") + " " : "") +
+        (r.origen || "?") + " → " + (r.destino || "?") + (r.entrada ? " (entra por " + r.entrada + ")" : "") +
+        (completa ? "" : " (incompleta: no se aplica)");
       var fila = el("div", "filaif", "<span class='datos'>" + escapar(texto) + "</span>");
       if (i > 0) {
         var bSubir = boton("Subir");
@@ -2654,7 +2663,62 @@ var UI = (function () {
       campoTexto(c, "Regla " + (i + 1) + ": red de destino", r.destino, function (v) {
         empujarHistorialSuave(); r.destino = v.trim(); reconstruirEstado();
       }, esCidr, true);
+      // Protocolo, puerto de destino y puerto de entrada: opcionales.
+      var extra = el("div", "reglaextra");
+      var selProt = document.createElement("select");
+      [["", "Cualquier protocolo"], ["icmp", "ICMP (ping)"], ["tcp", "TCP"], ["udp", "UDP"]].forEach(function (op) {
+        var o = document.createElement("option"); o.value = op[0]; o.textContent = op[1]; selProt.appendChild(o);
+      });
+      selProt.value = r.protocolo || "";
+      selProt.setAttribute("aria-label", "Regla " + (i + 1) + ": protocolo");
+      selProt.addEventListener("change", function () {
+        empujarHistorial();
+        if (selProt.value) { r.protocolo = selProt.value; } else { delete r.protocolo; }
+        if (r.protocolo !== "tcp" && r.protocolo !== "udp") { delete r.puerto; }
+        reconstruirEstado(); renderPropiedades();
+      });
+      extra.appendChild(selProt);
+      if (r.protocolo === "tcp" || r.protocolo === "udp") {
+        var inPuerto = document.createElement("input");
+        inPuerto.type = "number"; inPuerto.min = "1"; inPuerto.max = "65535"; inPuerto.placeholder = "puerto";
+        inPuerto.value = r.puerto || "";
+        inPuerto.setAttribute("aria-label", "Regla " + (i + 1) + ": puerto de destino");
+        inPuerto.addEventListener("change", function () {
+          empujarHistorial();
+          var n = Number(inPuerto.value);
+          if (inPuerto.value === "") { delete r.puerto; } else if (n >= 1 && n <= 65535) { r.puerto = n; } else { avisar("El puerto va de 1 a 65535."); }
+          reconstruirEstado(); renderPropiedades();
+        });
+        extra.appendChild(inPuerto);
+      }
+      var selEnt = document.createElement("select");
+      var oCual = document.createElement("option"); oCual.value = ""; oCual.textContent = "Entra por cualquier puerto"; selEnt.appendChild(oCual);
+      (d.interfaces || []).forEach(function (f) {
+        var o = document.createElement("option"); o.value = f.id; o.textContent = "Entra por " + f.id; selEnt.appendChild(o);
+      });
+      selEnt.value = r.entrada || "";
+      selEnt.setAttribute("aria-label", "Regla " + (i + 1) + ": puerto por el que entra el paquete");
+      selEnt.addEventListener("change", function () {
+        empujarHistorial();
+        if (selEnt.value) { r.entrada = selEnt.value; } else { delete r.entrada; }
+        reconstruirEstado(); renderPropiedades();
+      });
+      extra.appendChild(selEnt);
+      c.appendChild(extra);
     });
+    var labPol = el("label", "", "Si ninguna regla coincide");
+    var selPol = document.createElement("select");
+    selPol.innerHTML = "<option value='permitir'>Permitir (política por defecto)</option><option value='bloquear'>Bloquear (política por defecto)</option>";
+    selPol.value = d.politica === "bloquear" ? "bloquear" : "permitir";
+    selPol.id = idCampo("politica"); labPol.htmlFor = selPol.id;
+    selPol.addEventListener("change", function () {
+      empujarHistorial();
+      if (selPol.value === "bloquear") { d.politica = "bloquear"; } else { delete d.politica; }
+      reconstruirEstado(); renderPropiedades();
+      registrar("filtrado", "Política por defecto de " + (d.nombre || d.id) + ": " + selPol.value + ".");
+    });
+    c.appendChild(labPol);
+    c.appendChild(selPol);
     var bAgregar = boton("Agregar regla");
     bAgregar.addEventListener("click", function () {
       empujarHistorial();
@@ -3841,7 +3905,8 @@ var UI = (function () {
       "<li>Las rutas se cargan a mano: no hay OSPF, BGP ni RIP. Tampoco STP, VLAN ni IPv6, y el NAT es sólo de salida (no hay redirección de puertos).</li>" +
       "<li>El ping tiene tiempos aproximados.</li>" +
       "<li>El wireless sólo mira la distancia: llega hasta " + alcance + " m.</li>" +
-      "<li>El router filtra <b>cada paquete por separado</b>; el firewall recuerda la conversación y deja volver la respuesta.</li>" +
+      "<li>El router filtra <b>cada paquete por separado</b>; el firewall recuerda la conversación y deja volver la respuesta. " +
+      "Las reglas miran redes, protocolo, puerto de destino y puerto de entrada (no el puerto de origen ni zonas). Un firewall nuevo bloquea lo que entra por wan.</li>" +
       "<li>Cada router reparte por DHCP un solo rango, sólo a su propia red.</li>" +
       "<li>La nube Internet responde por cualquier IP pública y trae armada la jerarquía del DNS (raíz, .com, .org, .ar, .google, .one) " +
       "con google.com, www.google.com, dns.google, one.one.one.one y wikipedia.org. Las IP de la raíz, de .com y de ns1.google.com son las reales; " +

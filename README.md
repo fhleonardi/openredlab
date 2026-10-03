@@ -28,7 +28,7 @@ No hace falta instalar nada: es un único archivo HTML, sin dependencias y sin c
 - **Calcular subredes** con el equipo seleccionado: IP y máscara en binario, clase de la IP (y si es privada o pública), red, broadcast, rango de hosts y si la puerta de enlace está en la red.
 - **Ver DHCP** con los cuatro mensajes DORA animados sobre los cables.
 - **Salir a internet con NAT:** el router o firewall de borde cambia la IP privada de origen por su IP pública, y a la respuesta la traduce de vuelta; se ve en el recorrido y en las tramas. Sin NAT, el pedido llega pero la respuesta no vuelve, y el simulador lo explica (D28).
-- **Filtrar tráfico** con reglas en el router, que revisa cada paquete, o en un firewall, que recuerda las conversaciones y deja volver las respuestas.
+- **Filtrar tráfico** con reglas por red de origen y destino, protocolo (ICMP, TCP, UDP), puerto de destino y puerto por el que entra el paquete, más una política por defecto (permitir o bloquear). El router revisa cada paquete; el firewall recuerda las conversaciones y deja volver las respuestas. Un firewall nuevo bloquea lo que entra por wan.
 - **Verificar un diseño VLSM:** el de un desafío del docente o uno propio. En una red armada por vos, el simulador detecta los sectores solo y revisa subredes solapadas o desalineadas y puertas de enlace; si cargás los hosts de cada sector y el bloque, también revisa si alcanzan.
 - **Resolver laboratorios de diagnóstico:** redes con fallas plantadas y objetivos que hay que cumplir. En un laboratorio el simulador no avisa las fallas mientras configurás: encontrarlas es el ejercicio.
 - Exportar e importar la red como JSON, deshacer y rehacer, tema oscuro y modo presentación para el aula.

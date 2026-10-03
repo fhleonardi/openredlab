@@ -912,11 +912,14 @@ var Motor = (function () {
       titulo: "Una regla de filtrado bloqueó el paquete",
       explicacion: function (ctx) {
         ctx = ctx || {};
-        var regla = "una regla que bloquea el tráfico de " + (ctx.reglaOrigen || "?") + " hacia " + (ctx.reglaDestino || "?");
+        var regla = ctx.porDefecto
+          ? "ninguna regla que permita ese paquete, y su política por defecto es bloquear"
+          : "una regla que bloquea " + (ctx.reglaTexto || ("el tráfico de " + (ctx.reglaOrigen || "?") + " hacia " + (ctx.reglaDestino || "?")));
         if (ctx.enLaVuelta) {
           return "El paquete llegó a " + (ctx.destinoNombre || "destino") + ", pero la respuesta (de " +
             (ctx.ipOrigen || "?") + " hacia " + (ctx.ipDestino || "?") + ") pasa por " + (ctx.router || "un router") +
-            ", que tiene " + regla + ", y la descarta. " + (ctx.esFirewall
+            (ctx.porDefecto ? ", que no tiene ninguna regla que la permita y bloquea por defecto, así que la descarta. "
+              : ", que tiene " + regla + ", y la descarta. ") + (ctx.esFirewall
               // Un firewall sólo recuerda lo que vio pasar: si la ida fue por
               // otro camino (rutas asimétricas), la respuesta le es nueva.
               ? (ctx.router || "Ese equipo") + " es un firewall, pero el pedido no pasó por él a la ida: la respuesta vuelve " +
@@ -924,11 +927,15 @@ var Motor = (function () {
               : "Un router revisa cada paquete por separado: un firewall, en cambio, recuerda las conversaciones y deja " +
                 "volver la respuesta de una que ya permitió.");
         }
-        return (ctx.router || "El router") + " tiene " + regla + ". El paquete de " + (ctx.ipOrigen || "?") +
-          " hacia " + (ctx.ipDestino || "?") + " coincide con ella y " + (ctx.esFirewall ? "el firewall" : "el router") +
-          " lo descarta: la ruta existe, pero una regla prohíbe que pase.";
+        if (ctx.porDefecto) {
+          return (ctx.router || "El router") + " no tiene ninguna regla que permita " + (ctx.paqueteTexto || "ese paquete") +
+            ", y su política por defecto es bloquear: lo que no está permitido, se descarta.";
+        }
+        return (ctx.router || "El router") + " tiene " + regla + ". " +
+          (ctx.paqueteTexto ? ctx.paqueteTexto.charAt(0).toUpperCase() + ctx.paqueteTexto.slice(1) : "El paquete de " + (ctx.ipOrigen || "?") + " hacia " + (ctx.ipDestino || "?")) +
+          " coincide con ella y " + (ctx.esFirewall ? "el firewall" : "el router") + " lo descarta: la ruta existe, pero una regla prohíbe que pase.";
       },
-      sugerencia: "Si ese bloqueo es el que buscabas, el aislamiento funciona. Si no, revisá la pestaña Filtrado del router: las reglas se leen en orden y gana la primera que coincide."
+      sugerencia: "Si ese bloqueo es el que buscabas, el aislamiento funciona. Si no, revisá la pestaña Filtrado del router: las reglas se leen en orden, gana la primera que coincide (origen, destino, protocolo, puerto y por dónde entra) y, si ninguna coincide, decide la política por defecto."
     },
     D28: {
       titulo: "Falta NAT: la respuesta no puede volver de internet",
@@ -1232,7 +1239,10 @@ var Motor = (function () {
     return { red: Red.direccionDeRed(partes[0], prefijo), prefijo: prefijo };
   }
 
-  function reglaQueAplica(router, ipOrigen, ipDestino) {
+  // La primera regla que coincide con el paquete: origen, destino y, si la
+  // regla los dice, protocolo, puerto de destino y puerto de entrada.
+  function reglaQueAplica(router, ipOrigen, ipDestino, paquete, entrada) {
+    paquete = paquete || { protocolo: "icmp" };
     var reglas = Array.isArray(router.reglas) ? router.reglas : [];
     for (var i = 0; i < reglas.length; i++) {
       var regla = reglas[i];
@@ -1241,11 +1251,31 @@ var Motor = (function () {
       if (!o || !d) {
         continue;
       }
+      if (regla.protocolo && regla.protocolo !== paquete.protocolo) { continue; }
+      if (regla.puerto && Number(regla.puerto) !== Number(paquete.puertoDestino)) { continue; }
+      if (regla.entrada && regla.entrada !== entrada) { continue; }
       if (Red.mismaRed(ipOrigen, o.red, o.prefijo) && Red.mismaRed(ipDestino, d.red, d.prefijo)) {
         return { indice: i, regla: regla, origen: o.red + "/" + o.prefijo, destino: d.red + "/" + d.prefijo };
       }
     }
     return null;
+  }
+
+  function textoRegla(regla, origen, destino) {
+    var que = regla.protocolo ? regla.protocolo.toUpperCase() + (regla.puerto ? " " + regla.puerto : "") : "el tráfico";
+    return que + " de " + (origen || regla.origen) + " hacia " + (destino || regla.destino) +
+      (regla.entrada ? " que entra por " + regla.entrada : "");
+  }
+
+  function textoPaquete(paquete, ipOrigen, ipDestino) {
+    paquete = paquete || { protocolo: "icmp" };
+    if (paquete.protocolo === "icmp") { return "el paquete ICMP (ping) de " + ipOrigen + " hacia " + ipDestino; }
+    return "el paquete " + paquete.protocolo.toUpperCase() + " de " + ipOrigen + ":" + paquete.puertoOrigen + " hacia " + ipDestino + ":" + paquete.puertoDestino;
+  }
+
+  function invertirPaquete(paquete) {
+    if (!paquete || paquete.protocolo === "icmp") { return { protocolo: "icmp" }; }
+    return { protocolo: paquete.protocolo, puertoOrigen: paquete.puertoDestino, puertoDestino: paquete.puertoOrigen };
   }
 
   function esInternet(dispositivo) {
@@ -1877,6 +1907,7 @@ var Motor = (function () {
     // Una trama por tramo entre equipos de capa 3: las MAC son las de las
     // interfaces de los extremos; las IP, las del paquete, que no cambian.
     function anotarTrama(idDe, ifDe, idA, ifA, ttlTrama) {
+      llegoPor[idA] = ifA.id;
       var tramo = tramoL2(estado, idDe, ifDe.id, idA, ifA.id);
       tramas.push({
         sentido: "ida",
@@ -1949,6 +1980,10 @@ var Motor = (function () {
     // que trae el ping de vuelta para deshacerla al llegar a ese router.
     var traduccion = null;
     var natInverso = opciones.natInverso || null;
+    // Protocolo y puertos del paquete (ICMP en un ping) y el puerto por el
+    // que entró a cada equipo: los usan las reglas de filtrado.
+    var paquete = opciones.paquete || { protocolo: "icmp" };
+    var llegoPor = {};
     var ultimoRouter = null;
     saltos.push({ dispositivo: origen.id, interfaz: srcIface.id });
 
@@ -2255,28 +2290,33 @@ var Motor = (function () {
         return null;
       }
       if (esFirewall(router)) { conexionIda[router.id] = true; }
-      if (!Array.isArray(router.reglas) || router.reglas.length === 0) {
+      var bloqueaPorDefecto = router.politica === "bloquear";
+      if ((!Array.isArray(router.reglas) || router.reglas.length === 0) && !bloqueaPorDefecto) {
         return null;
       }
       filtrados[router.id] = true;
-      var aplica = reglaQueAplica(router, ipOrigen, destinoIp);
-      if (!aplica) {
+      var entrada = llegoPor[router.id] || null;
+      var descPaquete = textoPaquete(paquete, ipOrigen, destinoIp) + (entrada ? ", que entra por " + entrada : "");
+      var aplica = reglaQueAplica(router, ipOrigen, destinoIp, paquete, entrada);
+      if (!aplica && !bloqueaPorDefecto) {
         agregarPaso("Revisar las reglas de filtrado de " + nombreRouter,
-          "Ninguna regla coincide con un paquete de " + ipOrigen + " hacia " + destinoIp + ": pasa.", true, 3);
+          "Ninguna regla coincide con " + descPaquete + ": pasa (la política por defecto es permitir).", true, 3);
         return null;
       }
-      if (aplica.regla.accion === "permitir") {
+      if (aplica && aplica.regla.accion === "permitir") {
         agregarPaso("Revisar las reglas de filtrado de " + nombreRouter,
-          "La regla " + (aplica.indice + 1) + " permite el tráfico de " + aplica.origen + " hacia " + aplica.destino + ": pasa.", true, 3);
+          "La regla " + (aplica.indice + 1) + " permite " + textoRegla(aplica.regla, aplica.origen, aplica.destino) + ": pasa.", true, 3);
         return null;
       }
       delete conexionIda[router.id];
-      agregarPaso("Revisar las reglas de filtrado de " + nombreRouter,
-        "La regla " + (aplica.indice + 1) + " bloquea el tráfico de " + aplica.origen + " hacia " + aplica.destino +
-        ", y el paquete de " + ipOrigen + " hacia " + destinoIp + " coincide: " + nombreRouter + " lo descarta.", false, 3);
+      agregarPaso("Revisar las reglas de filtrado de " + nombreRouter, aplica
+        ? "La regla " + (aplica.indice + 1) + " bloquea " + textoRegla(aplica.regla, aplica.origen, aplica.destino) +
+          ", y " + descPaquete + " coincide: " + nombreRouter + " lo descarta."
+        : "Ninguna regla permite " + descPaquete + ", y la política por defecto es bloquear: " + nombreRouter + " lo descarta.", false, 3);
       var ctxFiltro = {
-        router: nombreRouter, reglaOrigen: aplica.origen, reglaDestino: aplica.destino,
-        ipOrigen: ipOrigen, ipDestino: destinoIp, esFirewall: esFirewall(router)
+        router: nombreRouter, reglaOrigen: aplica ? aplica.origen : null, reglaDestino: aplica ? aplica.destino : null,
+        reglaTexto: aplica ? textoRegla(aplica.regla, aplica.origen, aplica.destino) : null, porDefecto: !aplica,
+        paqueteTexto: descPaquete, ipOrigen: ipOrigen, ipDestino: destinoIp, esFirewall: esFirewall(router)
       };
       return {
         exito: false,
@@ -2356,7 +2396,7 @@ var Motor = (function () {
       if (profundidad < 1) {
         var vueltaNube = ejecutarPing(estado, dispositivo.id, ipOrigen, {
           registrar: false, profundidad: profundidad + 1, respuestaDe: conexionIda,
-          ipRespuesta: destinoIp, natInverso: traduccion
+          ipRespuesta: destinoIp, natInverso: traduccion, paquete: invertirPaquete(paquete)
         });
         var tramasNube = tramasDeVuelta(vueltaNube);
         Array.prototype.push.apply(tramas, tramasNube);
@@ -2590,7 +2630,8 @@ var Motor = (function () {
             profundidad: profundidad + 1,
             respuestaDe: conexionIda,
             porEstado: firewallsConEstado,
-            natInverso: traduccion
+            natInverso: traduccion,
+            paquete: invertirPaquete(paquete)
           });
           var tramasVuelta = tramasDeVuelta(vuelta);
           Array.prototype.push.apply(tramas, tramasVuelta);
@@ -3095,7 +3136,8 @@ var Motor = (function () {
       agregar(titulo, nombreCliente + " necesita la IP de " + nombre + ", pero no tiene servidor DNS configurado.", false);
       return fallar("D24", { origen: nombreCliente, nombre: nombre });
     }
-    var viaje = ejecutarPing(estado, idCliente, dnsIp, { registrar: false, profundidad: 0 });
+    var viaje = ejecutarPing(estado, idCliente, dnsIp, { registrar: false, profundidad: 0,
+      paquete: { protocolo: "udp", puertoOrigen: puertoEfimero(dnsIp, 53), puertoDestino: 53 } });
     if (!viaje.exito) {
       var dc = viaje.diagnostico;
       agregar(titulo, nombreCliente + " le pregunta al servidor DNS " + dnsIp + " por " + nombre + " y la consulta no llega" +
@@ -3156,7 +3198,8 @@ var Motor = (function () {
 
     // Un servidor propio necesita llegar a internet para recursar.
     if (servicio) {
-      var aRaiz = ejecutarPing(estado, servidor.id, JERARQUIA.raiz.ip, { registrar: false, profundidad: 0 });
+      var aRaiz = ejecutarPing(estado, servidor.id, JERARQUIA.raiz.ip, { registrar: false, profundidad: 0,
+        paquete: { protocolo: "udp", puertoOrigen: puertoEfimero(JERARQUIA.raiz.ip, 53), puertoDestino: 53 } });
       if (!aRaiz.exito) {
         var dr = aRaiz.diagnostico;
         agregar("Preguntar a la raíz (consulta iterativa)", quien + " no tiene " + nombre + " en su zona y le quiere preguntar a la raíz (" +
@@ -3249,7 +3292,10 @@ var Motor = (function () {
       ip = as[as.length - 1].valor;
     }
     // La red tiene que llegar, de ida y de vuelta: lo dice el ping.
-    var red = ejecutarPing(estado, idCliente, ip, { registrar: false, profundidad: 0 });
+    var salida = cliente ? elegirInterfazOrigen(estado, cliente, ip) : null;
+    var efimero = puertoEfimero((salida && salida.ip) || "0.0.0.0", puerto);
+    var red = ejecutarPing(estado, idCliente, ip, { registrar: false, profundidad: 0,
+      paquete: { protocolo: protocolo, puertoOrigen: efimero, puertoDestino: puerto } });
     var destinoNombre = (configuradosConIp(estado, ip)[0] || {}).dispositivo;
     var nombreDestino = destinoNombre ? (destinoNombre.nombre || destinoNombre.id) : ip;
     if (!red.exito) {
@@ -3262,7 +3308,6 @@ var Motor = (function () {
     var ipVista = ida.length ? ida[ida.length - 1].ipOrigen : ipCliente;
     agregar("Comprobar que la red llega a " + ip, "La red llega a " + nombreDestino + " (" + ip + ") y vuelve: el resto es de las capas de arriba." +
       (ipVista && ipVista !== ipCliente ? " Por el NAT, el servidor va a ver la conexión desde " + ipVista + "." : ""), true, 3);
-    var efimero = puertoEfimero(ipCliente || "0.0.0.0", puerto);
     var socket = { cliente: ipCliente + ":" + efimero, servidor: ip + ":" + puerto, vistoPorServidor: (ipVista || ipCliente) + ":" + efimero, protocolo: protocolo };
     function seg(deCliente, flags, seq, ack, datos) {
       segmentos.push({
@@ -5029,6 +5074,54 @@ var Motor = (function () {
         conectar(crearEstado(sinRuta), "pc1", "8.8.8.8", "tcp", 443).diagnostico.codigo, "D11");
     })();
 
+    // Filtrado por protocolo, puerto, entrada y política por defecto.
+    (function () {
+      function conServidor(reglas, opc) {
+        var topo = conFiltro(reglas);
+        topo.dispositivos.forEach(function (d) {
+          if (d.id === "s1") {
+            d.tipo = "servidor"; d.interfaces = [d.interfaces[0]];
+            d.servicios = { escuchando: [{ protocolo: "tcp", puerto: 80 }, { protocolo: "tcp", puerto: 22 }] };
+          }
+          if (d.id === "r1" && opc && opc.firewall) { d.modelo = "firewall"; }
+          if (d.id === "r1" && opc && opc.politica) { d.politica = opc.politica; }
+        });
+        return topo;
+      }
+      var sinSsh = conServidor([{ accion: "bloquear", origen: "10.0.1.0/24", destino: "0.0.0.0/0", protocolo: "tcp", puerto: 22 }]);
+      var ssh = conectar(crearEstado(sinSsh), "h1", "10.0.2.10", "tcp", 22);
+      comparar("filtro por puerto: SSH bloqueado (D27)", [ssh.diagnostico.codigo, /TCP 22/.test(ssh.diagnostico.explicacion)], ["D27", true]);
+      comparar("filtro por puerto: HTTP pasa", conectar(crearEstado(sinSsh), "h1", "10.0.2.10", "tcp", 80).exito, true);
+      comparar("filtro por puerto: el ping pasa", ping(crearEstado(sinSsh), "h1", "10.0.2.10").exito, true);
+
+      var porEntrada = conServidor([{ accion: "bloquear", origen: "0.0.0.0/0", destino: "0.0.0.0/0", entrada: "g0/0" }]);
+      var entra = ping(crearEstado(porEntrada), "h1", "10.0.2.10");
+      comparar("filtro por entrada: lo que entra por g0/0 se bloquea", [entra.diagnostico.codigo, /entra por g0\/0/.test(entra.diagnostico.explicacion)], ["D27", true]);
+      comparar("filtro por entrada: lo que entra por g0/1 pasa", ping(crearEstado(porEntrada), "s1", "10.0.3.10").exito, true);
+
+      var lista = [{ accion: "permitir", origen: "0.0.0.0/0", destino: "10.0.2.10/32", protocolo: "tcp", puerto: 80 }];
+      var fw = conServidor(lista, { firewall: true, politica: "bloquear" });
+      comparar("lista blanca en un firewall: HTTP pasa y la respuesta vuelve", conectar(crearEstado(fw), "h1", "10.0.2.10", "tcp", 80).exito, true);
+      var sshFw = conectar(crearEstado(fw), "h1", "10.0.2.10", "tcp", 22);
+      comparar("lista blanca: SSH lo frena la política por defecto",
+        [sshFw.diagnostico.codigo, /política por defecto es bloquear/.test(sshFw.diagnostico.explicacion)], ["D27", true]);
+      comparar("lista blanca: el ping también", ping(crearEstado(fw), "h1", "10.0.2.10").diagnostico.codigo, "D27");
+      var rt = conServidor(lista, { politica: "bloquear" });
+      var httpRt = conectar(crearEstado(rt), "h1", "10.0.2.10", "tcp", 80);
+      comparar("lista blanca en un router: la respuesta no vuelve",
+        [httpRt.diagnostico.codigo, /la respuesta/.test(httpRt.diagnostico.explicacion), /bloquea por defecto/.test(httpRt.diagnostico.explicacion)], ["D27", true, true]);
+
+      var porDefecto = [{ destino: "0.0.0.0", prefijo: 0, siguienteSalto: "200.45.7.1" }];
+      var sinDns = conInternet(porDefecto, "8.8.8.8");
+      sinDns.dispositivos.forEach(function (d) {
+        if (d.id === "r1") { d.reglas = [{ accion: "bloquear", origen: "0.0.0.0/0", destino: "0.0.0.0/0", protocolo: "udp", puerto: 53 }]; }
+      });
+      var nombreBloqueado = ping(crearEstado(sinDns), "pc1", "google.com");
+      comparar("filtro de UDP 53: el DNS no llega (D26 por la regla)",
+        [nombreBloqueado.diagnostico.codigo, /UDP 53/.test(nombreBloqueado.diagnostico.explicacion)], ["D26", true]);
+      comparar("filtro de UDP 53: el ping a una IP sigue andando", ping(crearEstado(sinDns), "pc1", "8.8.8.8").exito, true);
+    })();
+
     // 36. Un destino mal escrito no es un diagnóstico de red.
     (function () {
       var topo = fabTopo([fabPc("pc-admin", "10.45.7.66", 27, "10.45.7.65")], []);
@@ -5747,8 +5840,26 @@ var Escenarios = (function () {
             if (!regla || typeof regla.destino !== "string" || !parsearBloque(regla.destino)) {
               anotar(campoRegla, "La regla " + (g + 1) + " de \"" + d.id + "\" tiene un destino inválido: va una red como 10.45.7.0/24 (0.0.0.0/0 es cualquiera).");
             }
+            if (regla && regla.protocolo && ["icmp", "tcp", "udp"].indexOf(regla.protocolo) < 0) {
+              anotar(campoRegla + ".protocolo", "La regla " + (g + 1) + " de \"" + d.id + "\" tiene un protocolo que no existe: puede ser icmp, tcp o udp (o ninguno, para cualquiera).");
+            }
+            if (regla && regla.puerto !== undefined && regla.puerto !== null && regla.puerto !== "") {
+              var np = Number(regla.puerto);
+              if (regla.protocolo !== "tcp" && regla.protocolo !== "udp") {
+                anotar(campoRegla + ".puerto", "La regla " + (g + 1) + " de \"" + d.id + "\" tiene un puerto, pero los puertos son de TCP o UDP: elegí uno de esos protocolos.");
+              } else if (!(np >= 1 && np <= 65535) || Math.floor(np) !== np) {
+                anotar(campoRegla + ".puerto", "La regla " + (g + 1) + " de \"" + d.id + "\" tiene un puerto inválido: va de 1 a 65535.");
+              }
+            }
+            if (regla && regla.entrada && !buscarInterfaz(d, regla.entrada)) {
+              anotar(campoRegla + ".entrada", "La regla " + (g + 1) + " de \"" + d.id + "\" dice que el paquete entra por " + regla.entrada + ", pero ese puerto no existe.");
+            }
           }
         }
+      }
+
+      if (d.politica !== undefined && d.politica !== null && d.politica !== "permitir" && d.politica !== "bloquear") {
+        anotar(etiqueta + ".politica", "La política por defecto de \"" + d.id + "\" tiene que ser permitir o bloquear.");
       }
 
       // Servidor DHCP, cuando está configurado.
@@ -7315,6 +7426,14 @@ var Escenarios = (function () {
         validarTopologia(conPuertos).errores.some(function (e) { return /va de 1 a 65535/.test(e.mensaje); }), true);
       var dnsEnPc = clonar(ofi);
       buscarDispositivo(dnsEnPc, "pc1").servicios = { dns: { zona: "x.local", registros: [] } };
+      var conReglas = clonar(ofi);
+      var rb = buscarDispositivo(conReglas, "r1");
+      rb.politica = "bloquear";
+      rb.reglas = [{ accion: "permitir", origen: "0.0.0.0/0", destino: "192.168.10.53/32", protocolo: "tcp", puerto: 80, entrada: "g0/1" }];
+      comparar("regla con protocolo, puerto y entrada valida", validarTopologia(conReglas).ok, true);
+      rb.reglas.push({ accion: "bloquear", origen: "0.0.0.0/0", destino: "0.0.0.0/0", protocolo: "icmp", puerto: 7, entrada: "eth9" });
+      var errsR = validarTopologia(conReglas).errores.map(function (e) { return e.mensaje; }).join(" | ");
+      comparar("regla con puerto en ICMP y entrada inexistente no valida", /los puertos son de TCP o UDP/.test(errsR) && /ese puerto no existe/.test(errsR), true);
       comparar("servicio DNS en una PC no valida",
         validarTopologia(dnsEnPc).errores.some(function (e) { return /Sólo un servidor da el servicio de DNS/.test(e.mensaje); }), true);
       buscarDispositivo(conNube, "r1").interfaces[0].nat = true;
@@ -7845,6 +7964,9 @@ var UI = (function () {
     ".nuevoservicio{display:grid;grid-template-columns:minmax(0,1fr) 64px 72px auto;gap:4px;margin:4px 0;}",
     ".nuevoservicio input,.nuevoservicio select{min-width:0;width:100%;box-sizing:border-box;}",
     ".segmentos{font-family:ui-monospace,Consolas,monospace;font-size:12px;margin-top:4px;line-height:1.45;}",
+    ".reglaextra{display:flex;flex-wrap:wrap;gap:4px;margin:4px 0 10px;}",
+    ".reglaextra select,.reglaextra input{font-size:12px;min-width:0;}",
+    ".reglaextra input{width:76px;}",
     ".registrosdns{margin:6px 0;font-size:12px;}",
     ".registrosdns .fila{display:grid;grid-template-columns:78px minmax(0,1fr) auto;grid-template-areas:'n n n' 't v q';gap:3px 4px;align-items:center;padding:4px 0;border-bottom:1px dotted var(--sim-borde);}",
     ".registrosdns .fila .nombre{grid-area:n;}",
@@ -9424,6 +9546,9 @@ var UI = (function () {
       gateway: null, dns: null, rutas: [], dhcp: null
     };
     if (equipo.modelo) { nuevo.modelo = equipo.modelo; }
+    // Como un firewall real: lo que entra desde internet se bloquea, salvo
+    // las respuestas de lo que salió (estado).
+    if (equipo.modelo === "firewall") { nuevo.reglas = [{ accion: "bloquear", origen: "0.0.0.0/0", destino: "0.0.0.0/0", entrada: "wan" }]; }
     if (tipo === "servidor") { nuevo.servicios = { dns: { zona: "red.local", recursivo: true, registros: [] } }; }
     lista.push(nuevo);
     reconstruirEstado(); renderTodo();
@@ -10088,18 +10213,21 @@ var UI = (function () {
     if (!Array.isArray(d.reglas)) { d.reglas = []; }
     c.appendChild(el("p", "",
       "<span style='font-size:13px'>" + (Motor.esFirewall(d)
-        ? "El firewall revisa contra estas reglas los paquetes que reenvía, en orden: gana la primera que coincide con su origen y su destino. " +
+        ? "El firewall revisa contra estas reglas los paquetes que reenvía, en orden: gana la primera que coincide. " +
           "Además <b>recuerda las conversaciones</b>: la respuesta de un paquete que dejó pasar vuelve sin revisarse. "
-        : "El router revisa cada paquete que reenvía contra estas reglas, en orden: gana la primera que coincide con su origen y su destino. " +
+        : "El router revisa cada paquete que reenvía contra estas reglas, en orden: gana la primera que coincide. " +
           "No recuerda conversaciones: una regla puede frenar también la respuesta. ") +
-      "Lo que no coincide con ninguna pasa. Escribí redes como 10.45.7.0/26; 0.0.0.0/0 quiere decir cualquiera.</span>"));
+      "Una regla mira el origen y el destino (redes como 10.45.7.0/26; 0.0.0.0/0 es cualquiera) y, si se los indicás, el protocolo, " +
+      "el puerto de destino y por qué puerto entra el paquete. Lo que no coincide con ninguna lo decide la política por defecto.</span>"));
     if (d.reglas.length === 0) {
       c.appendChild(el("p", "", "Sin reglas: " + (Motor.esFirewall(d) ? "el firewall" : "el router") + " deja pasar todo lo que sabe enrutar."));
     }
     d.reglas.forEach(function (r, i) {
       var completa = esCidr(r.origen) && esCidr(r.destino);
       var texto = (i + 1) + ". " + (r.accion === "permitir" ? "Permitir" : "Bloquear") + " " +
-        (r.origen || "?") + " → " + (r.destino || "?") + (completa ? "" : " (incompleta: no se aplica)");
+        (r.protocolo ? r.protocolo.toUpperCase() + (r.puerto ? " " + r.puerto : "") + " " : "") +
+        (r.origen || "?") + " → " + (r.destino || "?") + (r.entrada ? " (entra por " + r.entrada + ")" : "") +
+        (completa ? "" : " (incompleta: no se aplica)");
       var fila = el("div", "filaif", "<span class='datos'>" + escapar(texto) + "</span>");
       if (i > 0) {
         var bSubir = boton("Subir");
@@ -10133,7 +10261,62 @@ var UI = (function () {
       campoTexto(c, "Regla " + (i + 1) + ": red de destino", r.destino, function (v) {
         empujarHistorialSuave(); r.destino = v.trim(); reconstruirEstado();
       }, esCidr, true);
+      // Protocolo, puerto de destino y puerto de entrada: opcionales.
+      var extra = el("div", "reglaextra");
+      var selProt = document.createElement("select");
+      [["", "Cualquier protocolo"], ["icmp", "ICMP (ping)"], ["tcp", "TCP"], ["udp", "UDP"]].forEach(function (op) {
+        var o = document.createElement("option"); o.value = op[0]; o.textContent = op[1]; selProt.appendChild(o);
+      });
+      selProt.value = r.protocolo || "";
+      selProt.setAttribute("aria-label", "Regla " + (i + 1) + ": protocolo");
+      selProt.addEventListener("change", function () {
+        empujarHistorial();
+        if (selProt.value) { r.protocolo = selProt.value; } else { delete r.protocolo; }
+        if (r.protocolo !== "tcp" && r.protocolo !== "udp") { delete r.puerto; }
+        reconstruirEstado(); renderPropiedades();
+      });
+      extra.appendChild(selProt);
+      if (r.protocolo === "tcp" || r.protocolo === "udp") {
+        var inPuerto = document.createElement("input");
+        inPuerto.type = "number"; inPuerto.min = "1"; inPuerto.max = "65535"; inPuerto.placeholder = "puerto";
+        inPuerto.value = r.puerto || "";
+        inPuerto.setAttribute("aria-label", "Regla " + (i + 1) + ": puerto de destino");
+        inPuerto.addEventListener("change", function () {
+          empujarHistorial();
+          var n = Number(inPuerto.value);
+          if (inPuerto.value === "") { delete r.puerto; } else if (n >= 1 && n <= 65535) { r.puerto = n; } else { avisar("El puerto va de 1 a 65535."); }
+          reconstruirEstado(); renderPropiedades();
+        });
+        extra.appendChild(inPuerto);
+      }
+      var selEnt = document.createElement("select");
+      var oCual = document.createElement("option"); oCual.value = ""; oCual.textContent = "Entra por cualquier puerto"; selEnt.appendChild(oCual);
+      (d.interfaces || []).forEach(function (f) {
+        var o = document.createElement("option"); o.value = f.id; o.textContent = "Entra por " + f.id; selEnt.appendChild(o);
+      });
+      selEnt.value = r.entrada || "";
+      selEnt.setAttribute("aria-label", "Regla " + (i + 1) + ": puerto por el que entra el paquete");
+      selEnt.addEventListener("change", function () {
+        empujarHistorial();
+        if (selEnt.value) { r.entrada = selEnt.value; } else { delete r.entrada; }
+        reconstruirEstado(); renderPropiedades();
+      });
+      extra.appendChild(selEnt);
+      c.appendChild(extra);
     });
+    var labPol = el("label", "", "Si ninguna regla coincide");
+    var selPol = document.createElement("select");
+    selPol.innerHTML = "<option value='permitir'>Permitir (política por defecto)</option><option value='bloquear'>Bloquear (política por defecto)</option>";
+    selPol.value = d.politica === "bloquear" ? "bloquear" : "permitir";
+    selPol.id = idCampo("politica"); labPol.htmlFor = selPol.id;
+    selPol.addEventListener("change", function () {
+      empujarHistorial();
+      if (selPol.value === "bloquear") { d.politica = "bloquear"; } else { delete d.politica; }
+      reconstruirEstado(); renderPropiedades();
+      registrar("filtrado", "Política por defecto de " + (d.nombre || d.id) + ": " + selPol.value + ".");
+    });
+    c.appendChild(labPol);
+    c.appendChild(selPol);
     var bAgregar = boton("Agregar regla");
     bAgregar.addEventListener("click", function () {
       empujarHistorial();
@@ -11320,7 +11503,8 @@ var UI = (function () {
       "<li>Las rutas se cargan a mano: no hay OSPF, BGP ni RIP. Tampoco STP, VLAN ni IPv6, y el NAT es sólo de salida (no hay redirección de puertos).</li>" +
       "<li>El ping tiene tiempos aproximados.</li>" +
       "<li>El wireless sólo mira la distancia: llega hasta " + alcance + " m.</li>" +
-      "<li>El router filtra <b>cada paquete por separado</b>; el firewall recuerda la conversación y deja volver la respuesta.</li>" +
+      "<li>El router filtra <b>cada paquete por separado</b>; el firewall recuerda la conversación y deja volver la respuesta. " +
+      "Las reglas miran redes, protocolo, puerto de destino y puerto de entrada (no el puerto de origen ni zonas). Un firewall nuevo bloquea lo que entra por wan.</li>" +
       "<li>Cada router reparte por DHCP un solo rango, sólo a su propia red.</li>" +
       "<li>La nube Internet responde por cualquier IP pública y trae armada la jerarquía del DNS (raíz, .com, .org, .ar, .google, .one) " +
       "con google.com, www.google.com, dns.google, one.one.one.one y wikipedia.org. Las IP de la raíz, de .com y de ns1.google.com son las reales; " +
@@ -11908,6 +12092,13 @@ var Autotest = (function () {
       esperado: "Por HTTP, el handshake de tres pasos (SYN, SYN-ACK, ACK), el pedido GET y su respuesta. Por SSH la red llega, " +
         "pero nadie escucha en el 22: el servidor responde RST y el diagnóstico es D31, no un problema de red."
     },
+    22: {
+      conError: true,
+      situacion: "En el complejo, R2 pasa a «denegar todo y permitir lo necesario»: política por defecto bloquear y una sola regla que " +
+        "permite TCP 80 hacia el Servidor. PC-Admin se conecta al Servidor por HTTP y por SSH; primero con R2 como router y después como firewall.",
+      esperado: "Con R2 como router, HTTP falla: el pedido pasa, pero la respuesta no coincide con ninguna regla y la política la bloquea (D27 en la vuelta). " +
+        "Como firewall, HTTP funciona porque recuerda la conversación y deja volver la respuesta. SSH falla en los dos casos por la política (D27)."
+    },
     12: {
       conError: true,
       situacion: "En el desafío VLSM, el sector Cámaras se arma con el router en 10.45.7.41/28, al lado del Wi-Fi " +
@@ -12157,6 +12348,34 @@ var Autotest = (function () {
         ". SSH: " + diagnosticoTexto(ssh) + ".");
     } catch (e) {
       return fila(21, nombre, false, "Excepción: " + e.message);
+    }
+  }
+
+  function complejoConListaBlanca(firewall) {
+    var t = clonar(ejemploPorId("complejo").topologia);
+    var srv = dispEn(t, "srv1");
+    srv.tipo = "servidor"; srv.interfaces = [srv.interfaces[0]];
+    srv.servicios = { escuchando: [{ protocolo: "tcp", puerto: 80, nombre: "HTTP" }, { protocolo: "tcp", puerto: 22, nombre: "SSH" }] };
+    var r2 = dispEn(t, "r2");
+    r2.politica = "bloquear";
+    r2.reglas = [{ accion: "permitir", origen: "0.0.0.0/0", destino: "10.45.7.122/32", protocolo: "tcp", puerto: 80 }];
+    if (firewall) { r2.modelo = "firewall"; }
+    return t;
+  }
+
+  function crit22() {
+    var nombre = "Lista blanca: el firewall deja volver la respuesta, el router no";
+    try {
+      var comoRouter = Motor.conectar(Motor.crearEstado(complejoConListaBlanca(false)), "pc-admin", "10.45.7.122", "tcp", 80);
+      var est = Motor.crearEstado(complejoConListaBlanca(true));
+      var comoFw = Motor.conectar(est, "pc-admin", "10.45.7.122", "tcp", 80);
+      var ssh = Motor.conectar(est, "pc-admin", "10.45.7.122", "tcp", 22);
+      var pasa = !comoRouter.exito && comoRouter.diagnostico.codigo === "D27" && /la respuesta/.test(comoRouter.diagnostico.explicacion) &&
+        comoFw.exito && ssh.diagnostico && ssh.diagnostico.codigo === "D27";
+      return fila(22, nombre, pasa, "Como router, HTTP: " + diagnosticoTexto(comoRouter) + ". Como firewall, HTTP: " +
+        (comoFw.exito ? "se conecta" : diagnosticoTexto(comoFw)) + "; SSH: " + diagnosticoTexto(ssh) + ".");
+    } catch (e) {
+      return fila(22, nombre, false, "Excepción: " + e.message);
     }
   }
 
@@ -12831,7 +13050,7 @@ var Autotest = (function () {
    * puede leer y discutir. Los criterios de la interfaz y del archivo, y las
    * pruebas internas de las capas, quedan para quien programa:
    * Autotest.correr({ tecnico: true }) desde la consola. */
-  var CRITERIOS_DIDACTICOS = [crit02, crit17, crit03, crit04, crit05, crit06, crit20, crit18, crit19, crit21, crit07, crit08, crit12];
+  var CRITERIOS_DIDACTICOS = [crit02, crit17, crit03, crit04, crit05, crit06, crit20, crit18, crit19, crit21, crit22, crit07, crit08, crit12];
   var CRITERIOS_TECNICOS = [crit01, crit09, crit10, crit11, crit13, crit14, crit15, crit16];
 
   function correr(opciones) {

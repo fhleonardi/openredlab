@@ -52,6 +52,8 @@ Un **servicio** es un programa que escucha en un **puerto** de un servidor (pest
 
 Si la red llega pero nadie atiende ese puerto, el resultado es **D31**: en TCP el servidor responde RST.
 
+Las reglas de **Filtrado** de un router o firewall pueden mirar el protocolo, el puerto y por dónde entra el paquete; lo que no coincide con ninguna lo decide la **política por defecto**. Si una regla te frena, el diagnóstico es **D27** y dice cuál.
+
 ## Hub, switch y router: los dominios
 
 Un **hub** (en la Configuración del switch, modelo *Hub de 8 puertos*) repite cada trama por todos sus puertos: la reciben todos y sólo el destino la acepta. Un **switch** la manda sólo por el puerto del destino, gracias a su tabla MAC. Un **router** no deja pasar los broadcast de una red a otra.
