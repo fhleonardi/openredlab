@@ -964,7 +964,10 @@ var Motor = (function () {
         ctx = ctx || {};
         return valor(ctx.origen, "El equipo") + " le pregunta por " + valor(ctx.nombre, "el nombre") + " a " + valor(ctx.dns, "?") +
           (ctx.equipo ? " (" + ctx.equipo + ")" : "") + ". Esa IP responde, pero no da el servicio de DNS: nadie contesta la consulta. " +
-          "En una red hogareña el router suele reenviar el DNS; acá ese papel lo cumple un servidor.";
+          (ctx.lejano
+            ? ctx.dns + " es la IP de " + ctx.lejano + ", pero la consulta terminó en " + valor(ctx.nube, "la nube de Internet") +
+              " y nunca llegó a ese equipo: en el simulador, la nube de Internet no reenvía paquetes hacia otros sitios del lienzo."
+            : "En una red hogareña el router suele reenviar el DNS; acá ese papel lo cumple un servidor.");
       },
       sugerencia: "En Configuración, poné como DNS la IP de un servidor con el servicio DNS, o un DNS público como 8.8.8.8."
     },
@@ -1004,6 +1007,27 @@ var Motor = (function () {
           "cada vez que un paquete cruza ese cable tiene un " + valor(ctx.perdida, "?") + " % de probabilidad de perderse, a la ida y otra vez a la vuelta.";
       },
       sugerencia: "Revisá la pérdida (%) de los cables del recorrido en sus propiedades, o mandá más paquetes para ver el porcentaje real."
+    },
+    D33: {
+      titulo: "Nadie atiende en esa IP de internet",
+      explicacion: function (ctx) {
+        ctx = ctx || {};
+        var prot = String(ctx.protocolo || "tcp").toUpperCase();
+        return "El paquete llega a internet" + (ctx.nube ? " por " + ctx.nube : "") + ", pero en " + valor(ctx.ip, "esa IP") +
+          " no hay ningún equipo que atienda " + prot + " " + valor(ctx.puerto, "?") + ". " + (prot === "TCP"
+            ? "El SYN no recibe respuesta, ni siquiera un RST, y el cliente abandona por tiempo agotado."
+            : "El datagrama se pierde sin respuesta, ni siquiera un ICMP.") +
+          (ctx.equipo
+            ? " " + ctx.ip + " es la IP de " + ctx.equipo + ", pero el paquete terminó en " + valor(ctx.nube, "la nube de Internet") +
+              " y nunca llegó a ese equipo: en el simulador, la nube de Internet no reenvía paquetes hacia otros sitios del lienzo."
+            : " (En el simulador, la nube contesta el ping a cualquier IP pública: que el ping responda no prueba que ahí haya un servidor.)");
+      },
+      sugerencia: function (ctx) {
+        ctx = ctx || {};
+        return ctx.equipo
+          ? "Para llegar a " + ctx.equipo + ", uní los dos sitios con routers, como en el ejemplo «Dos ISP: peering y tránsito»."
+          : "Revisá la IP de destino, o usá un nombre que el DNS resuelva (por ejemplo www.google.com).";
+      }
     },
     D23: {
       titulo: "El paquete quedó dando vueltas entre routers",
@@ -2447,7 +2471,7 @@ var Motor = (function () {
         }
       }
       respuestas.push({ ttl: ttlDeRespuesta(tramasNube || [], saltos), ms: Math.max(1, Math.round(msTotal)) });
-      return { exito: true, pasos: pasos, saltos: saltos, diagnostico: null, respuestas: respuestas };
+      return { exito: true, pasos: pasos, saltos: saltos, diagnostico: null, respuestas: respuestas, respondio: dispositivo.id };
     }
 
     // Cuando un router ya reenvió el paquete por una red conectada, la
@@ -2703,7 +2727,7 @@ var Motor = (function () {
           }
         }
         respuestas.push({ ttl: ttlDeRespuesta(tramasVuelta || [], saltos), ms: Math.max(1, Math.round(msTotal)) });
-        return { exito: true, pasos: pasos, saltos: saltos, diagnostico: null, respuestas: respuestas };
+        return { exito: true, pasos: pasos, saltos: saltos, diagnostico: null, respuestas: respuestas, respondio: destPar.dispositivo.id };
       }
 
       // Distinta red: pasos 6 a 9. Un router consulta su propia tabla de
@@ -3190,14 +3214,16 @@ var Motor = (function () {
         (dc ? ": " + dc.titulo.charAt(0).toLowerCase() + dc.titulo.slice(1) + "." : "."), false);
       return fallar("D26", { origen: nombreCliente, nombre: nombre, dns: dnsIp, causa: dc ? dc.explicacion : "" }, viaje.saltos);
     }
-    // ¿Quién atiende en esa IP?
-    var duenos = configuradosConIp(estado, dnsIp).filter(function (e) { return e.interfaz.habilitada; });
-    var servidor = duenos.length ? duenos[0].dispositivo : null;
+    // ¿Quién atiende en esa IP? El equipo al que llegó la consulta.
+    var servidor = atiendeEn(estado, viaje, dnsIp);
     var servicio = servidor && servidor.tipo === "servidor" && servidor.servicios && servidor.servicios.dns;
     var publico = !servidor && RESOLVERS_PUBLICOS[dnsIp];
     if (!servicio && !publico) {
       agregar(titulo, nombreCliente + " le pregunta a " + dnsIp + " por " + nombre + ". La IP responde, pero ahí no hay un servidor DNS.", false);
-      return fallar("D29", { origen: nombreCliente, nombre: nombre, dns: dnsIp, equipo: servidor ? (servidor.nombre || servidor.id) : null });
+      var lejano = !servidor && configuradosConIp(estado, dnsIp)[0];
+      var nube = buscarDispositivo(estado, viaje.respondio);
+      return fallar("D29", { origen: nombreCliente, nombre: nombre, dns: dnsIp, equipo: servidor ? (servidor.nombre || servidor.id) : null,
+        lejano: lejano ? (lejano.dispositivo.nombre || lejano.dispositivo.id) : null, nube: nube ? (nube.nombre || nube.id) : null });
     }
     var quien = servicio ? (servidor.nombre || servidor.id) : dnsIp + " (" + publico + ")";
     agregar(titulo, nombreCliente + " le pregunta a su servidor DNS, " + quien + ", por " + nombre + " (tipo " + tipo + "). " +
@@ -3307,18 +3333,27 @@ var Motor = (function () {
     "142.250.79.46": [["tcp", 80], ["tcp", 443]],
     "208.80.154.224": [["tcp", 80], ["tcp", 443]],
     "8.8.8.8": [["udp", 53], ["tcp", 53], ["tcp", 443]],
-    "1.1.1.1": [["udp", 53], ["tcp", 53], ["tcp", 443]]
+    "1.1.1.1": [["udp", 53], ["tcp", 53], ["tcp", 443]],
+    "142.250.0.27": [["tcp", 25]]
   };
 
   function servicioConocido(protocolo, puerto) {
     return SERVICIOS_CONOCIDOS.filter(function (x) { return x.protocolo === protocolo && x.puerto === puerto; })[0] || null;
   }
 
-  // ¿Quién atiende protocolo/puerto en esa IP? Devuelve el nombre del
-  // servicio o null si el puerto está cerrado.
-  function quienEscucha(estado, ip, protocolo, puerto) {
-    var duenos = configuradosConIp(estado, ip).filter(function (e) { return e.interfaz.habilitada; });
-    var dev = duenos.length ? duenos[0].dispositivo : null;
+  // El equipo que atiende en ip es el que respondió el ping. Si el ping
+  // terminó en una nube que no tiene esa IP, atiende internet (null).
+  function atiendeEn(estado, red, ip) {
+    var dev = buscarDispositivo(estado, red && red.respondio);
+    if (!dev) { return null; }
+    var propia = (dev.interfaces || []).some(function (f) { return f.ip === ip && f.habilitada; });
+    return esInternet(dev) && !propia ? null : dev;
+  }
+
+  // ¿Quién atiende protocolo/puerto en esa IP? dev es el equipo al que
+  // llegó el paquete (null: internet). Devuelve el nombre del servicio o
+  // null si el puerto está cerrado.
+  function quienEscucha(dev, ip, protocolo, puerto) {
     if (!dev) {
       var publicos = SERVICIOS_INTERNET[ip] || [];
       return publicos.some(function (p) { return p[0] === protocolo && p[1] === puerto; })
@@ -3386,8 +3421,9 @@ var Motor = (function () {
     var efimero = puertoEfimero((salida && salida.ip) || "0.0.0.0", puerto);
     red = ejecutarPing(estado, idCliente, ip, { registrar: false, profundidad: 0,
       paquete: { protocolo: protocolo, puertoOrigen: efimero, puertoDestino: puerto } });
-    var destinoNombre = (configuradosConIp(estado, ip)[0] || {}).dispositivo;
-    var nombreDestino = destinoNombre ? (destinoNombre.nombre || destinoNombre.id) : ip;
+    // Atiende el equipo al que llegó el paquete, no cualquiera con esa IP.
+    var atiende = red.exito ? atiendeEn(estado, red, ip) : null;
+    var nombreDestino = atiende ? (atiende.nombre || atiende.id) : ip;
     if (!red.exito) {
       agregar("Comprobar que la red llega a " + ip, "Antes de conectarse, el paquete tiene que poder ir y volver; " +
         (red.diagnostico ? red.diagnostico.titulo.charAt(0).toLowerCase() + red.diagnostico.titulo.slice(1) + "." : "no llega."), false, 3);
@@ -3406,13 +3442,31 @@ var Motor = (function () {
         flags: flags, seq: seq, ack: ack, datos: datos || null
       });
     }
-    var servicio = quienEscucha(estado, ip, protocolo, puerto);
+    var servicio = quienEscucha(atiende, ip, protocolo, puerto);
     var info = servicioConocido(protocolo, puerto);
     var etiqueta = protocolo.toUpperCase() + " " + puerto;
+    // El ping lo contestó la nube, pero en esa IP no hay nadie (D33): ni
+    // un RST ni un ICMP, el pedido se pierde.
+    var nadie = !atiende && !SERVICIOS_INTERNET[ip];
+    function sinRespuesta() {
+      var nube = buscarDispositivo(estado, red.respondio);
+      var otro = configuradosConIp(estado, ip)[0];
+      return fallo(diagnosticoDe("D33", {
+        ip: ip, puerto: puerto, protocolo: protocolo, nube: nube ? (nube.nombre || nube.id) : null,
+        equipo: otro ? (otro.dispositivo.nombre || otro.dispositivo.id) : null
+      }));
+    }
     if (protocolo === "tcp") {
       seg(true, "SYN", 1000, 0);
       agregar("Abrir la conexión (SYN)", nombreCliente + " elige el puerto efímero " + efimero + " y manda un SYN a " + ip + ":" + puerto +
         " (seq=1000): «quiero conectarme».", true, 4);
+      if (nadie) {
+        seg(true, "SYN", 1000, 0);
+        seg(true, "SYN", 1000, 0);
+        agregar("Esperar la respuesta al SYN", "Nadie responde: en " + ip + " no hay ningún equipo que atienda. " + nombreCliente +
+          " reenvía el SYN dos veces más, esperando cada vez el doble, y abandona: la conexión no se abre por tiempo agotado.", false, 4);
+        return sinRespuesta();
+      }
       if (!servicio) {
         seg(false, "RST-ACK", 0, 1001);
         agregar("Recibir la respuesta al SYN", nombreDestino + " no tiene ningún programa escuchando en " + etiqueta + ": responde RST («acá no hay nadie») y la conexión no se abre.", false, 4);
@@ -3439,6 +3493,10 @@ var Motor = (function () {
       seg(true, "", null, null, datos);
       agregar("Enviar el datagrama (UDP)", nombreCliente + " manda un datagrama a " + ip + ":" + puerto + " desde el puerto " + efimero +
         ". UDP no establece conexión ni confirma la entrega: si se pierde, la aplicación tiene que darse cuenta.", true, 4);
+      if (nadie) {
+        agregar("Recibir la respuesta", "Nadie responde: en " + ip + " no hay ningún equipo, así que tampoco llega un ICMP de «puerto inalcanzable». El datagrama se pierde en silencio.", false, 4);
+        return sinRespuesta();
+      }
       if (!servicio) {
         agregar("Recibir la respuesta", nombreDestino + " no tiene ningún programa escuchando en " + etiqueta + ": responde con un ICMP de «puerto inalcanzable».", false, 4);
         return fallo(diagnosticoDe("D31", { equipo: nombreDestino, puerto: puerto, protocolo: protocolo }));
@@ -5236,6 +5294,56 @@ var Motor = (function () {
       var sinRuta = conInternet([], "192.168.1.53");
       comparar("TCP: si la red no llega, el diagnóstico es el de la red",
         conectar(crearEstado(sinRuta), "pc1", "8.8.8.8", "tcp", 443).diagnostico.codigo, "D11");
+
+      // Atiende el equipo al que llegó el paquete (SRE-1030). Un segundo
+      // sitio, con su propia nube, tiene un servidor web público y otro con
+      // la misma IP privada que srv.
+      function conSitioB(abajo) {
+        var t = JSON.parse(JSON.stringify(topo));
+        var web = fabPc("web", "201.2.2.10", 24, "201.2.2.1");
+        web.tipo = "servidor"; web.interfaces = [web.interfaces[0]]; web.interfaces[0].mac = "02:00:00:00:0b:10";
+        web.servicios = { escuchando: [{ protocolo: "tcp", puerto: 80 }], dns: { zona: "sitio-b.local", recursivo: true, registros: [] } };
+        var gemelo = fabPc("gemelo", "192.168.1.53", 24, "192.168.1.1");
+        gemelo.tipo = "servidor"; gemelo.interfaces = [gemelo.interfaces[0]]; gemelo.interfaces[0].mac = "02:00:00:00:0b:53";
+        gemelo.servicios = { escuchando: [{ protocolo: "tcp", puerto: 8080 }] };
+        var rb = fabRouter("rb", [{ id: "g0/0", ip: "201.2.2.1", prefijo: 24 }, { id: "g0/1", ip: "200.9.9.2", prefijo: 30 }],
+          [{ destino: "0.0.0.0", prefijo: 0, siguienteSalto: "200.9.9.1" }]);
+        rb.interfaces[0].mac = "02:00:00:00:0b:01"; rb.interfaces[1].mac = "02:00:00:00:0b:02";
+        var nube2 = JSON.parse(JSON.stringify(t.dispositivos.filter(function (d) { return d.id === "nube"; })[0]));
+        nube2.id = "nube2"; nube2.nombre = "Internet 2"; nube2.interfaces[0].ip = "200.9.9.1"; nube2.interfaces[0].mac = "02:00:00:00:0b:09";
+        // El gemelo va primero: buscar la IP en toda la red lo encontraría a él.
+        t.dispositivos.unshift(gemelo);
+        t.dispositivos.push(web, rb, nube2, fabSwitch("swb"));
+        t.enlaces.push(fabEnlace("b1", "web", "eth0", "swb", "fa0/1", abajo ? { estado: "down" } : {}),
+          fabEnlace("b2", "rb", "g0/0", "swb", "fa0/2"), fabEnlace("b3", "rb", "g0/1", "nube2", "eth0", abajo ? { estado: "down" } : {}),
+          fabEnlace("b4", "gemelo", "eth0", "swb", "fa0/3"));
+        return t;
+      }
+      function cod(r) { return r.diagnostico ? r.diagnostico.codigo : null; }
+      function expl(r) { return r.diagnostico ? r.diagnostico.explicacion : ""; }
+      var lejos = conectar(crearEstado(conSitioB(true)), "pc1", "201.2.2.10", "tcp", 80);
+      comparar("TCP: con el otro sitio desconectado, no se conecta a su servidor (D33)",
+        [lejos.exito, cod(lejos), /es la IP de web/.test(expl(lejos))], [false, "D33", true]);
+      comparar("TCP: el otro sitio conectado tampoco se alcanza por la nube (D33)",
+        cod(conectar(crearEstado(conSitioB(false)), "pc1", "201.2.2.10", "tcp", 80)), "D33");
+      comparar("TCP: con la IP repetida en otro sitio, atiende el de su red",
+        [conectar(crearEstado(conSitioB(false)), "pc1", "192.168.1.53", "tcp", 80).exito,
+         cod(conectar(crearEstado(conSitioB(false)), "pc1", "192.168.1.53", "tcp", 8080))], [true, "D31"]);
+      comparar("ping: respondio es la nube o el equipo de destino",
+        [ping(crearEstado(topo), "pc1", "201.2.2.99").respondio, ping(crearEstado(topo), "pc1", "192.168.1.53").respondio], ["nube", "srv"]);
+      var nadie = conectar(crearEstado(topo), "pc1", "201.2.2.99", "tcp", 80);
+      comparar("TCP: IP pública sin nadie: el SYN se reintenta sin respuesta (D33)",
+        [cod(nadie), nadie.segmentos.map(function (x) { return x.flags; }), /ping/.test(expl(nadie))],
+        ["D33", ["SYN", "SYN", "SYN"], true]);
+      var nadieUdp = conectar(crearEstado(topo), "pc1", "201.2.2.99", "udp", 53);
+      comparar("UDP: IP pública sin nadie: no vuelve ni el ICMP (D33)", [cod(nadieUdp), nadieUdp.segmentos.length], ["D33", 1]);
+      comparar("TCP: un servidor de internet con el puerto cerrado da D31", cod(conectar(crearEstado(topo), "pc1", "8.8.8.8", "tcp", 80)), "D31");
+      comparar("TCP: SMTP de smtp.google.com", conectar(crearEstado(topo), "pc1", "smtp.google.com", "tcp", 25).exito, true);
+      var conDnsLejano = conSitioB(false);
+      conDnsLejano.dispositivos.forEach(function (d) { if (d.id === "pc1") { d.dns = "201.2.2.10"; } });
+      var dnsLejano = resolverNombre(crearEstado(conDnsLejano), "pc1", "google.com", "A");
+      comparar("DNS: el servidor DNS de otro sitio no atiende la consulta que terminó en la nube (D29)",
+        [cod(dnsLejano), /es la IP de web/.test(expl(dnsLejano))], ["D29", true]);
     })();
 
     // Filtrado por protocolo, puerto, entrada y política por defecto.
@@ -5403,7 +5511,7 @@ var Escenarios = (function () {
 
   // Versión de la app (semver). Cada PR que toca una capa la sube y suma su
   // entrada en CHANGELOG.md; el ensamblador controla que coincidan.
-  var VERSION_APP = "1.0.2";
+  var VERSION_APP = "1.0.3";
 
   // Versión del formato de archivo que escribe esta capa. Sube sólo si un
   // campo existente cambia o desaparece, y cada subida trae su migración.
