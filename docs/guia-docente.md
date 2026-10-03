@@ -171,3 +171,7 @@ Por ejemplo, para exigir que la intranet responda y que un nombre de afuera se r
 ```
 
 En `dispositivos`, un equipo se nombra por su `id` (se toma su primera interfaz con IP) y un puerto de router como `"id:puerto"`. Incluí siempre el puerto del router de cada sector: es la puerta de enlace, y el verificador lo usa como referencia para la alineación.
+
+---
+
+*OpenRedLab es un proyecto de Francisco Leonardi con [Open Tecnología](https://opentecnologia.ar). Se publica con licencia MIT.*

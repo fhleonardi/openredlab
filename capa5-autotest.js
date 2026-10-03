@@ -1438,7 +1438,7 @@ var Autotest = (function () {
       if (franja && getComputedStyle(franja).display !== "none" && ayuda) {
         ayuda.click();
         var linea = document.querySelector(".siminf .tabs .version");
-        if (!linea || linea.textContent !== "OpenRedLab " + v) { prob.push("la Ayuda no muestra «OpenRedLab " + v + "»"); }
+        if (!linea || linea.textContent.indexOf("OpenRedLab " + v) !== 0) { prob.push("la Ayuda no muestra «OpenRedLab " + v + "»"); }
         // La Ayuda entra justa: el número va en la fila de pestañas, no en el panel.
         else if (document.getElementById("sim-panel-inf").contains(linea)) { prob.push("la versión está dentro del panel y le suma alto"); }
         if (document.documentElement.scrollHeight > window.innerHeight + 1) { prob.push("la Ayuda deja scroll de página"); }

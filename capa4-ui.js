@@ -466,6 +466,8 @@ var UI = (function () {
     ".ayuda ul,.ayuda ol{margin:0;padding-left:18px;}",
     ".ayuda li{margin:0;}",
     ".siminf .tabs .version{font-size:12px;color:var(--sim-tenue);white-space:nowrap;margin-right:16px;padding-right:16px;border-right:1px solid var(--sim-borde);}",
+    ".siminf .tabs .version a{color:inherit;text-underline-offset:2px;}",
+    ".siminf .tabs .version a:hover,.siminf .tabs .version a:focus-visible{color:var(--sim-acento);}",
     ".ayuda .teclas{display:grid;grid-template-columns:auto 1fr;gap:1px 10px;align-items:baseline;}",
     ".ayuda .teclas span:nth-child(odd){white-space:nowrap;}",
     ".ayuda kbd{font-family:ui-monospace,Consolas,monospace;font-size:11px;background:var(--sim-panel);border:1px solid var(--sim-borde);border-bottom-width:2px;border-radius:4px;padding:0 4px;}",
@@ -3104,7 +3106,10 @@ var UI = (function () {
     barra.appendChild(lista);
     barra.appendChild(el("span", "espacio"));
     // La versión va en esta fila y no en el panel: la Ayuda entra justa, sin scroll.
-    if (S.pestañaInf === "ayuda") { barra.appendChild(el("span", "version", "OpenRedLab " + escapar(Escenarios.VERSION_APP))); }
+    if (S.pestañaInf === "ayuda") {
+      barra.appendChild(el("span", "version", "OpenRedLab " + escapar(Escenarios.VERSION_APP) +
+        " · <a href='https://opentecnologia.ar' target='_blank' rel='noopener'>Open Tecnología</a>"));
+    }
     var selV = document.createElement("select");
     selV.innerHTML = "<option value='lenta'>lenta</option><option value='normal'>normal</option><option value='rapida'>rápida</option>";
     selV.value = S.velocidad;

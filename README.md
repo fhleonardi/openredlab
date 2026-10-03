@@ -103,6 +103,10 @@ Es una herramienta para aprender, no un emulador: las rutas se cargan a mano (no
 
 Si algo no funciona como esperabas o un diagnóstico explica mal lo que pasó, abrí un [issue](https://github.com/fhleonardi/openredlab/issues) con la red exportada (*Exportar*) y los pasos para reproducirlo.
 
+## Quién lo hace
+
+OpenRedLab lo desarrolla Francisco Leonardi con [Open Tecnología](https://opentecnologia.ar), una empresa de servicios de IT de Gualeguaychú, Entre Ríos. Nació para la cátedra de redes y se publica como código abierto para que cualquier docente o alumno lo use y lo mejore.
+
 ## Licencia
 
 [MIT](LICENSE) © 2026 Francisco Leonardi

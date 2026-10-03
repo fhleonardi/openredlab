@@ -10,6 +10,10 @@ Los números siguen la forma MAYOR.MENOR.PARCHE:
 
 Los archivos de red llevan el número de su formato (`version`) y la versión del simulador que los exportó (`generador`). Un archivo de un formato anterior se actualiza solo al abrirlo.
 
+## 1.0.1 — 2026-10-03
+
+- Crédito de Open Tecnología, junto a la versión en la pestaña Ayuda, con un enlace a opentecnologia.ar.
+
 ## 1.0.0 — 2026-10-03
 
 Primera versión numerada: todo lo que el simulador ya hace.
