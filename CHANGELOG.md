@@ -10,6 +10,13 @@ Los números siguen la forma MAYOR.MENOR.PARCHE:
 
 Los archivos de red llevan el número de su formato (`version`) y la versión del simulador que los exportó (`generador`). Un archivo de un formato anterior se actualiza solo al abrirlo.
 
+## 1.0.2 — 2026-10-03
+
+- **Captura:** guarda los últimos 500 paquetes. La numeración sigue, y la pestaña avisa «se muestran los últimos 500». En una clase larga ya no se pone lenta.
+- **Textos de ejemplo:** los de los campos terminan en «…», para que no se confundan con un valor cargado.
+- **Títulos:** reparten mejor sus líneas.
+- **Movimiento reducido:** con esa opción del sistema, la interfaz no anima transiciones.
+
 ## 1.0.1 — 2026-10-03
 
 - Crédito de Open Tecnología, junto a la versión en la pestaña Ayuda, con un enlace a opentecnologia.ar.
