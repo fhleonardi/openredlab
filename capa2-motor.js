@@ -2777,6 +2777,11 @@ var Motor = (function () {
     "1.1.1.1": [["udp", 53], ["tcp", 53], ["tcp", 443]],
     "142.250.0.27": [["tcp", 25]]
   };
+  // Los servidores de la jerarquía DNS atienden en el 53.
+  [JERARQUIA.raiz].concat(
+    Object.keys(JERARQUIA.tld).map(function (k) { return JERARQUIA.tld[k]; }),
+    Object.keys(JERARQUIA.zonas).map(function (k) { return JERARQUIA.zonas[k]; })
+  ).forEach(function (s) { SERVICIOS_INTERNET[s.ip] = SERVICIOS_INTERNET[s.ip] || [["udp", 53], ["tcp", 53]]; });
 
   function servicioConocido(protocolo, puerto) {
     return SERVICIOS_CONOCIDOS.filter(function (x) { return x.protocolo === protocolo && x.puerto === puerto; })[0] || null;
@@ -4779,7 +4784,9 @@ var Motor = (function () {
       var nadieUdp = conectar(crearEstado(topo), "pc1", "201.2.2.99", "udp", 53);
       comparar("UDP: IP pública sin nadie: no vuelve ni el ICMP (D33)", [cod(nadieUdp), nadieUdp.segmentos.length], ["D33", 1]);
       comparar("TCP: un servidor de internet con el puerto cerrado da D31", cod(conectar(crearEstado(topo), "pc1", "8.8.8.8", "tcp", 80)), "D31");
-      comparar("TCP: SMTP de smtp.google.com", conectar(crearEstado(topo), "pc1", "smtp.google.com", "tcp", 25).exito, true);
+      comparar("UDP: la raíz y un autoritativo del DNS atienden en el 53",
+        [conectar(crearEstado(topo), "pc1", JERARQUIA.raiz.ip, "udp", 53).exito, conectar(crearEstado(topo), "pc1", "216.239.32.10", "udp", 53).exito], [true, true]);
+      comparar("TCP: SMTP de smtp.google.com",conectar(crearEstado(topo), "pc1", "smtp.google.com", "tcp", 25).exito, true);
       var conDnsLejano = conSitioB(false);
       conDnsLejano.dispositivos.forEach(function (d) { if (d.id === "pc1") { d.dns = "201.2.2.10"; } });
       var dnsLejano = resolverNombre(crearEstado(conDnsLejano), "pc1", "google.com", "A");
