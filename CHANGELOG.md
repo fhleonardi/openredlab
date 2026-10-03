@@ -10,6 +10,14 @@ Los números siguen la forma MAYOR.MENOR.PARCHE:
 
 Los archivos de red llevan el número de su formato (`version`) y la versión del simulador que los exportó (`generador`). Un archivo de un formato anterior se actualiza solo al abrirlo.
 
+## 1.0.3 — 2026-10-03
+
+- **Conectar ya no da éxito con un servidor al que el paquete no llega.** Antes, un servidor con IP pública detrás de otra nube de Internet «atendía» la conexión aunque estuviera desenchufado, porque la nube contesta el ping a cualquier IP pública. Ahora atiende sólo el equipo al que llegó el paquete, y un objetivo «conectar» de un laboratorio ya no puede dar «cumple» con el servidor desconectado.
+- **Diagnóstico nuevo D33, «Nadie atiende en esa IP de internet».** Al conectarse a una IP pública donde no hay ningún servidor, el SYN se reintenta sin respuesta, ni siquiera un RST, y la conexión se abandona por tiempo agotado. Antes daba D31 (puerto cerrado), como si ahí hubiera un equipo. Si la IP es de un equipo de otro sitio del lienzo, el diagnóstico lo explica: la nube de Internet todavía no reenvía hacia otros sitios.
+- **DNS:** un servidor DNS de otro sitio ya no contesta una consulta que terminó en la nube. Da D29 y explica por qué.
+- **smtp.google.com** atiende SMTP (TCP 25), y los servidores de la jerarquía DNS (raíz, TLD y autoritativos) atienden en el 53.
+- Con dos sitios que usan la misma IP privada, atiende el equipo de la propia red.
+
 ## 1.0.2 — 2026-10-03
 
 - **Captura:** guarda los últimos 500 paquetes. La numeración sigue, y la pestaña avisa «se muestran los últimos 500». En una clase larga ya no se pone lenta.

@@ -106,6 +106,7 @@ Los diagnósticos que más te van a aparecer:
 | **D30** | El servidor DNS no llega a internet | La salida a internet del servidor: puerta de enlace, rutas y NAT |
 | **D31** | Puerto cerrado: la red llega, pero nadie atiende ese servicio | Pestaña Servicios del servidor, y el puerto y protocolo elegidos |
 | **D32** | Se perdieron todos los paquetes | La pérdida (%) de los cables del recorrido |
+| **D33** | Nadie atiende en esa IP de internet | Que la IP de destino exista; un servidor de otro sitio se alcanza uniendo los sitios con routers |
 
 ## La pestaña Cálculo de subred
 
