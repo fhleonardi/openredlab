@@ -143,7 +143,42 @@ var Escenarios = (function () {
     return nombre === zona || nombre.slice(-(zona.length + 1)) === "." + zona;
   }
 
+  // Puertos en escucha de un servidor: { protocolo, puerto, nombre }.
+  function validarEscuchando(d, etiqueta, anotar) {
+    var lista = d.servicios && d.servicios.escuchando;
+    if (lista === undefined || lista === null) { return; }
+    var campo = etiqueta + ".servicios.escuchando";
+    if (d.tipo !== "servidor") {
+      anotar(campo, "Sólo un servidor atiende servicios en puertos, y \"" + d.id + "\" es " + d.tipo + ".");
+      return;
+    }
+    if (!Array.isArray(lista)) {
+      anotar(campo, "Los servicios del servidor \"" + d.id + "\" tienen que ser una lista.");
+      return;
+    }
+    var vistos = {};
+    lista.forEach(function (x, i) {
+      var c = campo + "[" + i + "]";
+      var quien = "El servicio " + (i + 1) + " del servidor \"" + d.id + "\"";
+      if (!x || (x.protocolo !== "tcp" && x.protocolo !== "udp")) {
+        anotar(c + ".protocolo", quien + " tiene que ser tcp o udp.");
+        return;
+      }
+      var n = Number(x.puerto);
+      if (!(n >= 1 && n <= 65535) || Math.floor(n) !== n) {
+        anotar(c + ".puerto", quien + " tiene el puerto " + JSON.stringify(x.puerto) + ": va de 1 a 65535.");
+        return;
+      }
+      var clave = x.protocolo + n;
+      if (vistos[clave]) {
+        anotar(c + ".puerto", quien + " repite " + x.protocolo.toUpperCase() + " " + n + ": un puerto lo atiende un solo servicio.");
+      }
+      vistos[clave] = true;
+    });
+  }
+
   function validarServiciosDns(d, etiqueta, anotar) {
+    validarEscuchando(d, etiqueta, anotar);
     var dns = d.servicios && d.servicios.dns;
     if (d.servicios === undefined || d.servicios === null || dns === undefined || dns === null) {
       return;
@@ -1742,7 +1777,7 @@ var Escenarios = (function () {
       id: "srv-dns", tipo: "servidor", nombre: "SRV-DNS", x: 540, y: 440, encendido: true,
       interfaces: [interfaz("eth0", "ethernet", "192.168.10.53", 24, true)],
       gateway: "192.168.10.1", dns: null, rutas: [], dhcp: null,
-      servicios: { dns: { zona: "oficina.local", recursivo: true, registros: [
+      servicios: { escuchando: [{ protocolo: "tcp", puerto: 80, nombre: "HTTP" }], dns: { zona: "oficina.local", recursivo: true, registros: [
         { nombre: "dns.oficina.local", tipo: "A", valor: "192.168.10.53" },
         { nombre: "oficina.local", tipo: "NS", valor: "dns.oficina.local" },
         { nombre: "www.oficina.local", tipo: "A", valor: "192.168.10.53" },
@@ -2199,6 +2234,12 @@ var Escenarios = (function () {
         /no pertenece a la zona oficina\.local/.test(conRegistro({ nombre: "www.otra.local", tipo: "A", valor: "10.0.0.1" })), true);
       comparar("tipo de registro inexistente no valida",
         /puede ser A, CNAME, MX, NS/.test(conRegistro({ nombre: "txt.oficina.local", tipo: "TXT", valor: "hola" })), true);
+      var conPuertos = clonar(ofi);
+      buscarDispositivo(conPuertos, "srv-dns").servicios.escuchando.push({ protocolo: "tcp", puerto: 8080, nombre: "Intranet" });
+      comparar("servicios: catálogo y puerto propio validan", validarTopologia(conPuertos).ok, true);
+      buscarDispositivo(conPuertos, "srv-dns").servicios.escuchando.push({ protocolo: "tcp", puerto: 70000 });
+      comparar("servicios: puerto fuera de rango no valida",
+        validarTopologia(conPuertos).errores.some(function (e) { return /va de 1 a 65535/.test(e.mensaje); }), true);
       var dnsEnPc = clonar(ofi);
       buscarDispositivo(dnsEnPc, "pc1").servicios = { dns: { zona: "x.local", registros: [] } };
       comparar("servicio DNS en una PC no valida",
