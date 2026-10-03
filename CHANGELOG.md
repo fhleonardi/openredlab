@@ -10,6 +10,10 @@ Los números siguen la forma MAYOR.MENOR.PARCHE:
 
 Los archivos de red llevan el número de su formato (`version`) y la versión del simulador que los exportó (`generador`). Un archivo de un formato anterior se actualiza solo al abrirlo.
 
+## 1.2.1 — 2026-10-03
+
+- **La consola tiene su propia columna.** Cuando el ping, la consulta DNS o la conexión salen bien, el panel de abajo muestra tres columnas: el recorrido, el resultado y la consola. Antes la consola quedaba debajo del resultado y, con una conexión TCP, no se veía. Si algo falla, la consola sigue plegada debajo del diagnóstico.
+
 ## 1.2.0 — 2026-10-03
 
 - **Redirección de puertos (NAT de destino).** Un router o firewall puede publicar un servidor con IP privada. Lo que llega a la IP de su puerto con NAT por un protocolo y un puerto (por ejemplo TCP 80) se reenvía a un equipo de adentro, en el puerto que se elija. En el recorrido aparece el paso «Redirigir el puerto (NAT de destino)». En las tramas y en la captura se ve el puerto público afuera y el interno adentro, y la respuesta vuelve con el origen público del router. El ping a esa IP lo sigue respondiendo el router.
