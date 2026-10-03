@@ -774,6 +774,7 @@ var Motor = (function () {
     var duenos = configuradosConIp(estado, ip).filter(function (e) { return !esInternet(e.dispositivo); });
     if (!duenos.length) { return null; }
     var enlaces = estado.topologia.enlaces || [];
+    var sinVecino = null;
     for (var i = 0; i < duenos.length; i++) {
       var dueno = duenos[i].dispositivo;
       var dist = {};
@@ -808,10 +809,14 @@ var Motor = (function () {
             }
           });
         });
-        return { dueno: dueno, nube: nubes[n], ifNube: ifNube, vecino: vecino };
+        var opcion = { dueno: dueno, nube: nubes[n], ifNube: ifNube, vecino: vecino };
+        // Una nube sin vecino en el sitio no sirve si hay otra que sí.
+        if (vecino) { return opcion; }
+        sinVecino = sinVecino || opcion;
       }
     }
-    return { dueno: duenos[0].dispositivo, nube: null };
+    // Ninguna nube tiene vecino: la primera, para que D34 diga por qué.
+    return sinVecino || { dueno: duenos[0].dispositivo, nube: null };
   }
 
   function destinoEnInternet(dispositivo, ip) {
@@ -4942,6 +4947,15 @@ var Motor = (function () {
       misma.dispositivos.push(fabSwitch("swi"));
       misma.enlaces = misma.enlaces.filter(function (e) { return e.id !== "l3" && e.id !== "b3"; });
       misma.enlaces.push(fabEnlace("i1", "nube", "eth0", "swi", "fa0/1"), fabEnlace("i2", "r1", "g0/1", "swi", "fa0/2"), fabEnlace("i3", "rb", "g0/1", "swi", "fa0/3"));
+      // Una nube del sitio sin vecino en su red, cableada primero: se usa la
+      // otra, que sí llega al servidor.
+      var dosNubes = conSitioB(false);
+      var nube3 = JSON.parse(JSON.stringify(dosNubes.dispositivos.filter(function (d) { return d.id === "nube2"; })[0]));
+      nube3.id = "nube3"; nube3.interfaces[0].ip = "200.77.7.1"; nube3.interfaces[0].mac = "02:00:00:00:0c:09";
+      dosNubes.dispositivos.push(nube3);
+      dosNubes.enlaces.unshift(fabEnlace("b0", "swb", "fa0/5", "nube3", "eth0"));
+      var porLaOtra = ping(crearEstado(dosNubes), "pc1", "201.2.2.10");
+      comparar("internet: si una nube del sitio no tiene vecino, usa otra que sí", [porLaOtra.exito, porLaOtra.respondio], [true, "web"]);
       var enMisma = ping(crearEstado(misma), "pc1", "201.2.2.10");
       comparar("internet: con los dos sitios en la misma nube, no cruza a otra",
         [enMisma.exito, enMisma.respondio, enMisma.tramas.some(function (t) { return t.medio === "internet"; })], [true, "web", false]);
