@@ -1193,9 +1193,10 @@ var Autotest = (function () {
       return null;
     }
     try {
-      // En el celular la franja inferior está oculta: no hay foco que medir ahí.
-      if (window.matchMedia && window.matchMedia("(max-width:640px)").matches) {
-        return fila(25, nombre, true, "No aplica en pantallas de 640 px o menos, donde la franja inferior está oculta. Correr el Autotest en una pantalla más ancha.");
+      // En el diseño de celular la franja inferior está oculta: no hay foco que medir ahí.
+      var franja = document.querySelector(".siminf");
+      if (!franja || getComputedStyle(franja).display === "none") {
+        return fila(25, nombre, true, "No aplica con el diseño de celular, donde la franja inferior está oculta. Correr el Autotest en una pantalla más grande.");
       }
       var prob = [];
       UI.setModo("topologia");
@@ -1339,7 +1340,87 @@ var Autotest = (function () {
     }
   }
 
-  var CRITERIOS_TECNICOS = [crit01, crit09, crit10, crit11, crit13, crit14, crit15, crit16, crit24, crit25];
+  /* Tema y layout (SRE-1027): el tema arranca con el del sistema y, al
+   * alternarlo, cambia también lo de afuera de la raíz; el primer Tab lleva
+   * al lienzo; hay un <main>; el nombre del botón de zoom contiene su texto. */
+  function crit26() {
+    var nombre = "El tema sigue al sistema y llega a la barra del navegador; se puede saltar al lienzo";
+    var bTema = null;
+    try {
+      var prob = [];
+      var raiz = document.querySelector(".simraiz");
+      var html = document.documentElement;
+      var meta = document.querySelector("meta[name=theme-color]");
+      document.querySelectorAll(".simbarra button").forEach(function (b) {
+        if (/^Tema (claro|oscuro)$/.test(b.textContent)) { bTema = b; }
+      });
+      var oscuroInicial = raiz.classList.contains("oscuro");
+      function estado() {
+        return [raiz.classList.contains("oscuro"), meta ? meta.getAttribute("content") : "", html.style.colorScheme, html.style.background].join("|");
+      }
+      // Contraste WCAG entre el texto y el fondo de un elemento (colores rgb opacos).
+      function luminancia(rgb) {
+        var c = rgb.match(/\d+(\.\d+)?/g).slice(0, 3).map(function (v) {
+          v = Number(v) / 255;
+          return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+        });
+        return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+      }
+      function contraste(n) {
+        var cs = getComputedStyle(n);
+        var a = luminancia(cs.color), b = luminancia(cs.backgroundColor);
+        return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+      }
+      var primario = document.querySelector(".simraiz button.primario");
+      function revisarContraste() {
+        if (primario && contraste(primario) < 4.5) {
+          prob.push("el texto del botón primario no llega a 4.5:1 en tema " + (raiz.classList.contains("oscuro") ? "oscuro" : "claro") +
+            " (" + contraste(primario).toFixed(2) + ":1)");
+        }
+      }
+      if (!primario) { prob.push("no hay un botón primario para medir el contraste"); }
+      revisarContraste();
+      // Sólo se compara con el sistema si nadie tocó el botón todavía.
+      if (bTema && bTema.getAttribute("data-elegido") !== "1") {
+        var sistemaOscuro = window.matchMedia("(prefers-color-scheme: dark)").matches;
+        if (oscuroInicial !== sistemaOscuro) { prob.push("el tema inicial no sigue al sistema"); }
+      }
+      if (!bTema) { prob.push("no está el botón de tema"); }
+      else {
+        var antes = estado();
+        bTema.click();
+        var medio = estado();
+        var oscuro = raiz.classList.contains("oscuro");
+        if (oscuro === oscuroInicial) { prob.push("el botón no cambia el tema"); }
+        if (!meta || meta.getAttribute("content") !== (oscuro ? "#0e1a2b" : "#13355e")) { prob.push("el theme-color no acompaña al tema"); }
+        if (html.style.colorScheme !== (oscuro ? "dark" : "light")) { prob.push("el color-scheme de <html> no acompaña al tema"); }
+        if (!html.style.background) { prob.push("<html> no tiene fondo"); }
+        revisarContraste();
+        bTema.click();
+        if (estado() !== antes || medio === antes) { prob.push("alternar dos veces no vuelve al estado inicial"); }
+      }
+      var saltar = document.querySelector(".simraiz > a.saltar");
+      if (!saltar || saltar !== document.querySelector(".simraiz a, .simraiz button, .simraiz [tabindex]")) {
+        prob.push("«Saltar al lienzo» no es lo primero que se recorre");
+      } else {
+        saltar.click();
+        if (document.activeElement !== document.querySelector("svg.lienzo")) { prob.push("«Saltar al lienzo» no deja el foco en el lienzo"); }
+      }
+      if (!document.querySelector("main.simcuerpo")) { prob.push("no hay un <main>"); }
+      var bZoom = document.querySelector(".simtools button[data-h=porc]");
+      if (!bZoom || (bZoom.getAttribute("aria-label") || "").indexOf(bZoom.textContent) < 0) {
+        prob.push("el nombre del botón de zoom no contiene su texto");
+      }
+      if (prob.length === 0) {
+        return fila(26, nombre, true, "Tema inicial del sistema; alternar cambia raíz, theme-color, color-scheme y fondo; botón primario con 4.5:1 o más en los dos temas; «Saltar al lienzo» primero; <main>; zoom «" + bZoom.getAttribute("aria-label") + "».");
+      }
+      return fila(26, nombre, false, "Falla: " + prob.join("; ") + ".");
+    } catch (e) {
+      return fila(26, nombre, false, "Excepción: " + e.message);
+    }
+  }
+
+  var CRITERIOS_TECNICOS = [crit01, crit09, crit10, crit11, crit13, crit14, crit15, crit16, crit24, crit25, crit26];
 
   function correr(opciones) {
     var tecnico = !!(opciones && opciones.tecnico);
