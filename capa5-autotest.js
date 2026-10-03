@@ -160,6 +160,13 @@ var Autotest = (function () {
       esperado: "Con todo conectado, el paquete sale por el NAT de R-Casa, cruza de Internet (casa) a Internet (oficina), que son la misma internet, " +
         "y R-Oficina se lo entrega al servidor: la conexión se abre. Con el cable caído, internet no llega hasta el servidor: D34, y falla también el ping."
     },
+    31: {
+      conError: true,
+      situacion: "En «Servidor publicado con redirección de puertos», SRV-Web tiene IP privada (192.168.50.10). PC-Casa se conecta por HTTP a la IP pública " +
+        "de R-Oficina (200.51.3.2). Después se le quita a R-Oficina la redirección del TCP 80.",
+      esperado: "Con la redirección, R-Oficina cambia el destino por 192.168.50.10:80 y la conexión la atiende SRV-Web; la respuesta vuelve con el origen " +
+        "público del router. Sin la redirección, el pedido lo recibe el router, que no da servicios: D31."
+    },
     12: {
       conError: true,
       situacion: "En el desafío VLSM, el sector Cámaras se arma con el router en 10.45.7.41/28, al lado del Wi-Fi " +
@@ -1153,7 +1160,26 @@ var Autotest = (function () {
     }
   }
 
-  var CRITERIOS_DIDACTICOS = [crit02, crit17, crit03, crit04, crit05, crit06, crit20, crit18, crit19, crit21, crit22, crit23, crit29, crit07, crit08, crit12];
+  // Redirección de puertos (SRE-1021): el servidor privado se publica en la
+  // IP del router; sin la redirección, D31.
+  function crit31() {
+    var nombre = "Redirección de puertos: el servidor con IP privada se alcanza por la IP pública del router (D31 sin la regla)";
+    try {
+      var t = clonar(ejemploPorId("servidor-publicado").topologia);
+      var con = Motor.conectar(Motor.crearEstado(t), "pc-casa", "200.51.3.2", "tcp", 80);
+      t.dispositivos.forEach(function (d) {
+        if (d.id === "r-oficina") { d.redirecciones = d.redirecciones.filter(function (r) { return Number(r.puerto) !== 80; }); }
+      });
+      var sin = Motor.conectar(Motor.crearEstado(t), "pc-casa", "200.51.3.2", "tcp", 80);
+      var pasa = con.exito && con.socket.redirigidoA === "192.168.50.10:80" && sin.diagnostico && sin.diagnostico.codigo === "D31";
+      return fila(31, nombre, pasa, "Con la redirección: " + (con.exito ? "la atiende " + con.socket.redirigidoA : diagnosticoTexto(con)) +
+        ". Sin la redirección: " + diagnosticoTexto(sin) + ".");
+    } catch (e) {
+      return fila(31, nombre, false, "Excepción: " + e.message);
+    }
+  }
+
+  var CRITERIOS_DIDACTICOS = [crit02, crit17, crit03, crit04, crit05, crit06, crit20, crit18, crit19, crit21, crit22, crit23, crit29, crit31, crit07, crit08, crit12];
   // La pestaña Laboratorio: sólo en modo Docente, con sus cuatro secciones
   // y sin scroll de página. correr() restaura la red del usuario.
   function crit24() {
@@ -1645,7 +1671,37 @@ var Autotest = (function () {
     }
   }
 
-  var CRITERIOS_TECNICOS = [crit01, crit09, crit10, crit11, crit13, crit14, crit15, crit16, crit24, crit25, crit26, crit27, crit28, crit30];
+  // La pestaña NAT del router (SRE-1021): muestra los puertos con NAT y las
+  // redirecciones, y la fila de pestañas no tiene scroll.
+  function crit32() {
+    var nombre = "La pestaña NAT del router muestra el NAT de origen y las redirecciones, sin scroll en la fila de pestañas";
+    var previo = modoActualDom();
+    try {
+      var prob = [];
+      UI.setModo("topologia");
+      UI.cargarTopologia(clonar(ejemploPorId("servidor-publicado").topologia));
+      UI.seleccionar("r-oficina");
+      var tab = document.getElementById("sim-tab-prop-nat");
+      if (!tab) { return fila(32, nombre, false, "Falla: el router no tiene la pestaña NAT."); }
+      tab.click();
+      var panel = document.querySelector("[role=tabpanel][aria-labelledby='sim-tab-prop-nat']") || tab.closest(".simprop, .props, aside") || document.body;
+      var texto = panel.textContent;
+      if (texto.indexOf("Hacen NAT: g0/1") < 0) { prob.push("no dice qué puerto hace NAT"); }
+      if (texto.indexOf("TCP 80 → 192.168.50.10:80") < 0) { prob.push("no lista la redirección del TCP 80"); }
+      var fila32 = tab.parentNode;
+      if (fila32.scrollWidth > fila32.clientWidth + 1) { prob.push("la fila de pestañas tiene scroll (" + fila32.scrollWidth + " > " + fila32.clientWidth + ")"); }
+      UI.seleccionar("pc-casa");
+      if (document.getElementById("sim-tab-prop-nat")) { prob.push("una PC también tiene la pestaña NAT"); }
+      if (prob.length === 0) { return fila(32, nombre, true, "Pestaña NAT con «Hacen NAT: g0/1» y las dos redirecciones; sin scroll; las PC no la tienen."); }
+      return fila(32, nombre, false, "Falla: " + prob.join("; ") + ".");
+    } catch (e) {
+      return fila(32, nombre, false, "Excepción: " + e.message);
+    } finally {
+      try { UI.setModo(previo); } catch (e2) { /* se sigue igual */ }
+    }
+  }
+
+  var CRITERIOS_TECNICOS = [crit01, crit09, crit10, crit11, crit13, crit14, crit15, crit16, crit24, crit25, crit26, crit27, crit28, crit30, crit32];
 
   function correr(opciones) {
     var tecnico = !!(opciones && opciones.tecnico);
