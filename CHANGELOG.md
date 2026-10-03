@@ -1,0 +1,42 @@
+# Cambios
+
+Cada versión de OpenRedLab tiene su entrada, de la más nueva a la más vieja. La versión se ve en la pestaña **Ayuda** del simulador.
+
+Los números siguen la forma MAYOR.MENOR.PARCHE:
+
+- **MAYOR:** cambia el formato de los archivos de red, o un laboratorio hecho con la versión anterior hay que rehacerlo.
+- **MENOR:** algo nuevo para usar en clase, como un tema de la materia, un tipo de falla, una pestaña o un ejemplo.
+- **PARCHE:** arreglos.
+
+Los archivos de red llevan el número de su formato (`version`) y la versión del simulador que los exportó (`generador`). Un archivo de un formato anterior se actualiza solo al abrirlo.
+
+## 1.0.0 — 2026-10-03
+
+Primera versión numerada: todo lo que el simulador ya hace.
+
+**Armar y configurar la red**
+- PC, servidores, routers (estándar o tipo MikroTik), firewalls, switches de 8, 24 o 48 puertos, hubs, cámaras, IoT, puntos de acceso y una nube Internet. Se conectan por cobre, fibra o inalámbrico.
+- Direccionamiento estático o por DHCP, rutas a mano, NAT de salida y reglas de filtrado por red, protocolo, puerto y puerto de entrada.
+- Servidores con servicios TCP y UDP, y un DNS propio con su zona (A, CNAME, MX y NS).
+
+**Ver cómo viaja el paquete**
+- Ping paso a paso: la decisión con IP «AND» máscara, la puerta de enlace, ARP, las tablas de rutas y la vuelta.
+- Capas OSI y TCP/IP en cada paso, y las tramas de cada tramo con su encapsulamiento.
+- *Conectar* muestra el socket, el handshake de TCP, el pedido y la respuesta, y el cierre.
+- *Consultar DNS* muestra la resolución recursiva e iterativa por la jerarquía, como `nslookup`.
+- Captura por cable, al estilo Wireshark, con filtro y detalle por capas.
+- Calidad del enlace (latencia, jitter y pérdida) y ping de varios paquetes con estadísticas.
+- Dominios de colisión y de broadcast pintados sobre el lienzo.
+- Diagnósticos D01 a D32, que explican cada falla en lenguaje de la materia.
+
+**Para la clase**
+- Cálculo de subred en binario y verificación de diseños VLSM.
+- Animación de DHCP (DORA).
+- Ejemplos de topologías (estrella, bus, malla, WAN, dos ISP con peering y tránsito).
+- Laboratorios de diagnóstico con fallas y objetivos. En modo Docente, la pestaña *Laboratorio* los arma en pantalla, y *Exportar para el alumno* genera la versión que se reparte.
+- Modo presentación, tema claro y oscuro, deshacer y rehacer, y autoguardado.
+
+**Accesibilidad y celular**
+- Se usa entero con el teclado: el foco no se pierde, las pestañas se recorren con flechas y el primer Tab lleva al lienzo.
+- El tema arranca como el del sistema, con buen contraste en los dos.
+- Diseño de celular en vertical y en horizontal, con la barra Agregar, Configurar y Ping siempre a la vista.

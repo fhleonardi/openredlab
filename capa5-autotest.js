@@ -653,8 +653,11 @@ var Autotest = (function () {
       if (!res.ok) {
         return fila(9, nombre, false, "La reimportación falló: " + res.errores.map(function (x) { return x.mensaje; }).join(" | "));
       }
-      if (JSON.stringify(res.topologia) === JSON.stringify(ej.topologia)) {
-        return fila(9, nombre, true, "El JSON exportado e importado es idéntico al original.");
+      // Vuelve igual al original, más la anotación de con qué versión se exportó.
+      var esperado = clonar(ej.topologia);
+      esperado.generador = "OpenRedLab " + Escenarios.VERSION_APP;
+      if (JSON.stringify(res.topologia) === JSON.stringify(esperado)) {
+        return fila(9, nombre, true, "El JSON exportado e importado es idéntico al original, más «generador».");
       }
       return fila(9, nombre, false, "El objeto importado difiere del original en la comparación profunda.");
     } catch (e) {
@@ -1068,13 +1071,14 @@ var Autotest = (function () {
       caja.style.fontFamily = "system-ui, Arial, sans-serif";
       caja.style.fontSize = "13px";
       var titulo = document.createElement("div");
-      titulo.innerHTML = salida.tecnico
+      var version = "<div style='font-size:12px;color:#4a5866'>OpenRedLab " + escaparHtml(Escenarios.VERSION_APP) + "</div>";
+      titulo.innerHTML = version + (salida.tecnico
         ? "<b>Autotest técnico: " + salida.pasadas + "/" + salida.total + "</b> <span>(" + salida.fallos + " fallos, primero)</span>" +
           "<br><span>" + String(salida.detalleCapas).replace(/&/g, "&amp;").replace(/</g, "&lt;") + "</span>"
         : "<b>El simulador resuelve bien " + salida.pasadas + " de " + salida.total + " casos de redes</b>" +
           (salida.fallos ? " <span>(los que fallan, primero)</span>" : "") +
           "<div style='font-size:12px;color:#4a5866;margin-top:2px'>Varios casos rompen la red a propósito: " +
-          "ahí el resultado es correcto si el simulador detecta el error.</div>";
+          "ahí el resultado es correcto si el simulador detecta el error.</div>");
       caja.appendChild(titulo);
       var lista = document.createElement("div");
       salida.resultados.forEach(function (r) {
@@ -1420,7 +1424,48 @@ var Autotest = (function () {
     }
   }
 
-  var CRITERIOS_TECNICOS = [crit01, crit09, crit10, crit11, crit13, crit14, crit15, crit16, crit24, crit25, crit26];
+  /* Versionado (SRE-1033): el número es semver y se ve en la Ayuda; el
+   * archivo exportado anota formato y generador; un formato del futuro se
+   * rechaza diciendo qué hacer. */
+  function crit27() {
+    var nombre = "La versión se ve en la Ayuda y los archivos anotan con qué versión se hicieron";
+    try {
+      var prob = [];
+      var v = Escenarios.VERSION_APP;
+      if (!/^\d+\.\d+\.\d+$/.test(String(v))) { prob.push("la versión «" + v + "» no es MAYOR.MENOR.PARCHE"); }
+      var franja = document.querySelector(".siminf");
+      var ayuda = document.getElementById("sim-tab-inf-ayuda");
+      if (franja && getComputedStyle(franja).display !== "none" && ayuda) {
+        ayuda.click();
+        var linea = document.querySelector(".siminf .tabs .version");
+        if (!linea || linea.textContent !== "OpenRedLab " + v) { prob.push("la Ayuda no muestra «OpenRedLab " + v + "»"); }
+        // La Ayuda entra justa: el número va en la fila de pestañas, no en el panel.
+        else if (document.getElementById("sim-panel-inf").contains(linea)) { prob.push("la versión está dentro del panel y le suma alto"); }
+        if (document.documentElement.scrollHeight > window.innerHeight + 1) { prob.push("la Ayuda deja scroll de página"); }
+        document.getElementById("sim-tab-inf-simulacion").click();
+      }
+      var red = clonar(ejemploPorId("basica").topologia);
+      var exp = JSON.parse(Escenarios.exportar(red));
+      if (exp.version !== Escenarios.VERSION_FORMATO || exp.generador !== "OpenRedLab " + v) {
+        prob.push("el archivo exportado no anota formato y generador");
+      }
+      var futuro = clonar(red);
+      futuro.version = Escenarios.VERSION_FORMATO + 1;
+      futuro.generador = "OpenRedLab 99.0.0";
+      var imp = Escenarios.importar(JSON.stringify(futuro));
+      if (imp.ok || !imp.errores.length || imp.errores[0].mensaje.indexOf("más nuevo") < 0) {
+        prob.push("un archivo de un formato más nuevo no se rechaza con un mensaje que diga qué hacer");
+      }
+      if (prob.length === 0) {
+        return fila(27, nombre, true, "OpenRedLab " + v + " en la Ayuda; exportar anota formato " + exp.version + " y «" + exp.generador + "»; formato " + futuro.version + " rechazado: «" + imp.errores[0].mensaje + "»");
+      }
+      return fila(27, nombre, false, "Falla: " + prob.join("; ") + ".");
+    } catch (e) {
+      return fila(27, nombre, false, "Excepción: " + e.message);
+    }
+  }
+
+  var CRITERIOS_TECNICOS = [crit01, crit09, crit10, crit11, crit13, crit14, crit15, crit16, crit24, crit25, crit26, crit27];
 
   function correr(opciones) {
     var tecnico = !!(opciones && opciones.tecnico);
