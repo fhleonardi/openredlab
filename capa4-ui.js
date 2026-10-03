@@ -3930,8 +3930,9 @@ var UI = (function () {
     return S.topologia.escenario;
   }
 
+  // Sin crear: dibujar la pestaña no debe tocar la red.
   function sectoresLab(crear) {
-    var esc = escenarioLab();
+    var esc = crear ? escenarioLab() : (S.topologia.escenario || {});
     if (Array.isArray(esc.requerimientos)) { return esc.requerimientos; }
     if (Array.isArray(esc.sectores)) { return esc.sectores; }
     if (crear) { esc.requerimientos = []; return esc.requerimientos; }
@@ -4076,9 +4077,16 @@ var UI = (function () {
     });
     selTipo.addEventListener("change", function () {
       empujarHistorial();
-      // Otro tipo: el equipo y el origen se conservan si siguen valiendo.
+      // Otro tipo: se conservan el equipo, el origen, el destino y la
+      // descripción, sólo si el tipo nuevo los usa.
       var nuevo = { tipo: selTipo.value };
-      ["dispositivo", "origen", "destino", "descripcion"].forEach(function (k) { if (it[k] !== undefined) { nuevo[k] = it[k]; } });
+      var usa = [];
+      catalogo.forEach(function (t) {
+        if (t.tipo === selTipo.value) { t.campos.forEach(function (c) { usa.push(c.clave); }); }
+      });
+      ["dispositivo", "origen", "destino", "descripcion"].forEach(function (k) {
+        if (it[k] !== undefined && usa.indexOf(k) >= 0) { nuevo[k] = it[k]; }
+      });
       var arr = escenarioLab()[palabra === "falla" ? "fallas" : "objetivos"];
       var base = palabra === "falla" ? Escenarios.nuevaFalla(S.topologia, selTipo.value) : Escenarios.nuevoObjetivo(S.topologia, selTipo.value);
       Object.keys(nuevo).forEach(function (k) { base[k] = nuevo[k]; });
@@ -4233,7 +4241,6 @@ var UI = (function () {
       fila.appendChild(inHosts);
       fila.appendChild(el("span", "tenue", "hosts"));
       var miembros = s.dispositivos || s.equipos || [];
-      if (!s.dispositivos) { s.dispositivos = miembros; }
       miembros.forEach(function (m, k) {
         var ficha = boton(textoMiembro(m) + " ✕", "ficha");
         ficha.setAttribute("aria-label", "Sacar " + textoMiembro(m) + " del sector " + (i + 1));
@@ -4249,7 +4256,10 @@ var UI = (function () {
       });
       selM.addEventListener("change", function () {
         if (!selM.value) { return; }
-        empujarHistorial(); miembros.push(selM.value); cambioLab();
+        empujarHistorial();
+        if (!s.dispositivos && !s.equipos) { s.dispositivos = miembros; }
+        miembros.push(selM.value);
+        cambioLab();
       });
       fila.appendChild(selM);
       var bQ = boton("✕");
@@ -4288,7 +4298,7 @@ var UI = (function () {
 
   function celdaResultado(r) {
     if (!r) { return "<td>—</td>"; }
-    return "<td class='" + (r.cumple ? "ok" : "mal") + "'" + (r.titulo ? " title='" + escapar(r.titulo) + "'" : "") + ">" +
+    return "<td class='" + (r.cumple ? "ok" : "mal") + "'" + (r.titulo ? " title=\"" + escapar(r.titulo) + "\"" : "") + ">" +
       (r.cumple ? "✓ cumple" : "✗ " + escapar(r.codigo && r.codigo !== "VALOR" ? r.codigo : (r.codigo === "VALOR" ? "otro valor" : "no cumple"))) + "</td>";
   }
 

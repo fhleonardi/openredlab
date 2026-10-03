@@ -1897,16 +1897,28 @@ var Escenarios = (function () {
   function revisarEscenario(topologia) {
     var esc = (topologia && topologia.escenario) || {};
     var informe = { fallas: [], objetivos: [], sectores: [], bloque: null };
+    // Un campo en null equivale a no tenerlo: «sin DNS» es lo mismo.
+    function sinNulos(clave, valor) { return valor === null ? undefined : valor; }
+    var redValida = validarTopologia(topologia).ok;
     (esc.fallas || []).forEach(function (f) {
       var p = problemasItem(topologia, f, TIPOS_FALLA, "falla");
-      // Una falla bien armada que no cambia nada (el puerto ya estaba
-      // deshabilitado, el gateway ya era ése) no le plantea nada al alumno.
       if (!p.length) {
         var sola = clonar(topologia);
         sola.escenario = { fallas: [f] };
         var antes = clonar(topologia);
         antes.escenario = sola.escenario;
-        if (JSON.stringify(aplicarFallas(sola)) === JSON.stringify(antes)) { p.push("La falla no cambiaría nada en la red."); }
+        var aplicada = aplicarFallas(sola);
+        // Una falla bien armada que no cambia nada (el puerto ya estaba
+        // deshabilitado, el gateway ya era ése) no le plantea nada al alumno.
+        if (JSON.stringify(aplicada, sinNulos) === JSON.stringify(antes, sinNulos)) {
+          p.push("La falla no cambiaría nada en la red.");
+        } else if (redValida) {
+          // Y una que deja la red inválida da un archivo del alumno que no
+          // se puede importar (por ejemplo, una regla ICMP con puerto).
+          validarTopologia(aplicada).errores.forEach(function (e) {
+            p.push("Con esta falla el archivo del alumno no se podría abrir: " + e.mensaje);
+          });
+        }
       }
       informe.fallas.push(p);
     });
@@ -3112,6 +3124,15 @@ var Escenarios = (function () {
       comparar("revisión: equipo borrado, puerto sin NAT, falla sin efecto, puerto inválido", [rev.fallas[0], rev.fallas[1][0], rev.fallas[2], rev.objetivos[0]], [
         ["El equipo «pc9» no está en la red."], "El puerto g0/0 de R-Borde no tiene NAT: la falla no cambiaría nada.",
         ["La falla no cambiaría nada en la red."], ["El puerto va de 1 a 65535."]]);
+      var reglaRara = clonar(ofi);
+      reglaRara.escenario = { fallas: [{ tipo: "regla-agregada", dispositivo: "r1",
+        regla: { accion: "bloquear", origen: "0.0.0.0/0", destino: "0.0.0.0/0", protocolo: "icmp", puerto: 80 } }] };
+      comparar("revisión: una falla que deja la red inválida se marca",
+        /no se podría abrir: .*los puertos son de TCP o UDP/.test(revisarEscenario(reglaRara).fallas[0].join(" ")), true);
+      var sinDns = clonar(ofi);
+      delete buscarDispositivo(sinDns, "pc1").dns;
+      sinDns.escenario = { fallas: [{ tipo: "dns-incorrecto", dispositivo: "pc1" }] };
+      comparar("revisión: quitar un DNS que no había no cambia nada", revisarEscenario(sinDns).fallas[0], ["La falla no cambiaría nada en la red."]);
       var sinTipo = clonar(ofi);
       sinTipo.escenario = { objetivos: [{ tipo: "resolver", origen: "pc1", nombre: "google.com", esperado: "exito" }] };
       comparar("revisión: resolver sin tipo de registro usa A", revisarEscenario(sinTipo).objetivos[0], []);
