@@ -1848,6 +1848,104 @@ var Escenarios = (function () {
     };
   }
 
+  /* ---------------- Topologías físicas y de alcance ----------------
+   * Ejemplos para la unidad 7: estrella, bus (medio compartido con un hub),
+   * malla entre routers, y dos LAN unidas por una WAN. */
+  function routerConPuertos(id, nombre, x, y, puertos, rutas) {
+    return {
+      id: id, tipo: "router", nombre: nombre, x: x, y: y, encendido: true,
+      interfaces: puertos.map(function (p) { return interfaz(p[0], p[1], p[2] || null, p[3] || 24, true); }),
+      gateway: null, dns: null, rutas: rutas || [], dhcp: null
+    };
+  }
+
+  function topologiaEstrella() {
+    var pcs = [
+      armarPc("pc1", "PC-1", 400, 60, "192.168.1.11", 24, null),
+      armarPc("pc2", "PC-2", 680, 250, "192.168.1.12", 24, null),
+      armarPc("pc3", "PC-3", 400, 450, "192.168.1.13", 24, null),
+      armarPc("pc4", "PC-4", 120, 250, "192.168.1.14", 24, null)
+    ];
+    return {
+      version: 1, nombre: "Topología en estrella",
+      dispositivos: [armarSwitch("sw", "SW-Centro", 400, 250)].concat(pcs),
+      enlaces: pcs.map(function (pc, i) { return armarEnlace("l" + (i + 1), pc.id, "eth0", "sw", "fa0/" + (i + 1), "ethernet"); }),
+      escenario: null
+    };
+  }
+
+  function topologiaBus() {
+    var hub = armarSwitch("hub", "HUB-Bus", 400, 280);
+    hub.modelo = "hub";
+    hub.interfaces = hub.interfaces.filter(function (f) { return f.medio === "ethernet"; });
+    var pcs = [
+      armarPc("pc1", "PC-1", 130, 80, "192.168.2.11", 24, null),
+      armarPc("pc2", "PC-2", 310, 80, "192.168.2.12", 24, null),
+      armarPc("pc3", "PC-3", 490, 80, "192.168.2.13", 24, null),
+      armarPc("pc4", "PC-4", 670, 80, "192.168.2.14", 24, null)
+    ];
+    return {
+      version: 1, nombre: "Bus: medio compartido con un hub",
+      dispositivos: [hub].concat(pcs),
+      enlaces: pcs.map(function (pc, i) { return armarEnlace("l" + (i + 1), pc.id, "eth0", "hub", "fa0/" + (i + 1), "ethernet"); }),
+      escenario: null
+    };
+  }
+
+  function topologiaMalla() {
+    // Tres routers unidos todos con todos: cada uno llega a los otros por
+    // un enlace directo.
+    var ra = routerConPuertos("ra", "R-A", 400, 170, [["g0/0", "ethernet", "192.168.10.1"], ["g0/1", "ethernet", "10.0.12.1", 30], ["g0/2", "ethernet", "10.0.13.1", 30]],
+      [{ destino: "192.168.20.0", prefijo: 24, siguienteSalto: "10.0.12.2" }, { destino: "192.168.30.0", prefijo: 24, siguienteSalto: "10.0.13.2" }]);
+    var rb = routerConPuertos("rb", "R-B", 200, 400, [["g0/0", "ethernet", "192.168.20.1"], ["g0/1", "ethernet", "10.0.12.2", 30], ["g0/2", "ethernet", "10.0.23.1", 30]],
+      [{ destino: "192.168.10.0", prefijo: 24, siguienteSalto: "10.0.12.1" }, { destino: "192.168.30.0", prefijo: 24, siguienteSalto: "10.0.23.2" }]);
+    var rc = routerConPuertos("rc", "R-C", 600, 400, [["g0/0", "ethernet", "192.168.30.1"], ["g0/1", "ethernet", "10.0.13.2", 30], ["g0/2", "ethernet", "10.0.23.2", 30]],
+      [{ destino: "192.168.10.0", prefijo: 24, siguienteSalto: "10.0.13.1" }, { destino: "192.168.20.0", prefijo: 24, siguienteSalto: "10.0.23.1" }]);
+    return {
+      version: 1, nombre: "Malla entre tres routers",
+      dispositivos: [ra, rb, rc,
+        armarPc("pca", "PC-A", 400, 20, "192.168.10.10", 24, "192.168.10.1"),
+        armarPc("pcb", "PC-B", 40, 520, "192.168.20.10", 24, "192.168.20.1"),
+        armarPc("pcc", "PC-C", 760, 520, "192.168.30.10", 24, "192.168.30.1")],
+      enlaces: [
+        armarEnlace("l-ab", "ra", "g0/1", "rb", "g0/1", "ethernet"),
+        armarEnlace("l-ac", "ra", "g0/2", "rc", "g0/1", "ethernet"),
+        armarEnlace("l-bc", "rb", "g0/2", "rc", "g0/2", "ethernet"),
+        armarEnlace("l-pca", "pca", "eth0", "ra", "g0/0", "ethernet"),
+        armarEnlace("l-pcb", "pcb", "eth0", "rb", "g0/0", "ethernet"),
+        armarEnlace("l-pcc", "pcc", "eth0", "rc", "g0/0", "ethernet")
+      ],
+      escenario: null
+    };
+  }
+
+  function topologiaLanWan() {
+    // Dos sedes (dos LAN) unidas por un enlace WAN de fibra entre routers.
+    var rc = routerConPuertos("r-centro", "R-Centro", 240, 160, [["g0/0", "ethernet", "192.168.100.1"], ["fib0", "fibra", "10.255.0.1", 30]],
+      [{ destino: "192.168.200.0", prefijo: 24, siguienteSalto: "10.255.0.2" }]);
+    var rn = routerConPuertos("r-norte", "R-Norte", 700, 160, [["g0/0", "ethernet", "192.168.200.1"], ["fib0", "fibra", "10.255.0.2", 30]],
+      [{ destino: "192.168.100.0", prefijo: 24, siguienteSalto: "10.255.0.1" }]);
+    return {
+      version: 1, nombre: "Dos LAN unidas por una WAN",
+      dispositivos: [rc, rn,
+        armarSwitch("sw-centro", "SW-Centro", 240, 310), armarSwitch("sw-norte", "SW-Norte", 700, 310),
+        armarPc("pc-c1", "PC-Centro1", 100, 460, "192.168.100.11", 24, "192.168.100.1"),
+        armarPc("pc-c2", "PC-Centro2", 360, 460, "192.168.100.12", 24, "192.168.100.1"),
+        armarPc("pc-n1", "PC-Norte1", 580, 460, "192.168.200.11", 24, "192.168.200.1"),
+        armarPc("pc-n2", "PC-Norte2", 840, 460, "192.168.200.12", 24, "192.168.200.1")],
+      enlaces: [
+        armarEnlace("l-wan", "r-centro", "fib0", "r-norte", "fib0", "fibra"),
+        armarEnlace("l-rc", "r-centro", "g0/0", "sw-centro", "fa0/1", "ethernet"),
+        armarEnlace("l-rn", "r-norte", "g0/0", "sw-norte", "fa0/1", "ethernet"),
+        armarEnlace("l-c1", "pc-c1", "eth0", "sw-centro", "fa0/2", "ethernet"),
+        armarEnlace("l-c2", "pc-c2", "eth0", "sw-centro", "fa0/3", "ethernet"),
+        armarEnlace("l-n1", "pc-n1", "eth0", "sw-norte", "fa0/2", "ethernet"),
+        armarEnlace("l-n2", "pc-n2", "eth0", "sw-norte", "fa0/3", "ethernet")
+      ],
+      escenario: null
+    };
+  }
+
   // Oficina con su propio servidor DNS (zona oficina.local), que además
   // resuelve los nombres de internet preguntándole a la jerarquía.
   function topologiaOficinaDns() {
@@ -1938,6 +2036,30 @@ var Escenarios = (function () {
       nombre: "Oficina con DNS propio",
       descripcion: "Un servidor DNS con la zona oficina.local, que también resuelve los nombres de internet consultando la jerarquía.",
       topologia: topologiaOficinaDns()
+    },
+    {
+      id: "estrella",
+      nombre: "Topología en estrella",
+      descripcion: "Una LAN en estrella: cuatro PC conectadas a un switch central. Si se corta un cable, se cae sólo ese equipo.",
+      topologia: topologiaEstrella()
+    },
+    {
+      id: "bus-hub",
+      nombre: "Bus (medio compartido con un hub)",
+      descripcion: "Cuatro PC que comparten el medio a través de un hub, como en un bus: un solo dominio de colisión.",
+      topologia: topologiaBus()
+    },
+    {
+      id: "malla",
+      nombre: "Malla entre tres routers",
+      descripcion: "Tres routers unidos todos con todos, cada uno con su LAN: cada red llega a las otras por un enlace directo.",
+      topologia: topologiaMalla()
+    },
+    {
+      id: "lan-wan",
+      nombre: "Dos LAN unidas por una WAN",
+      descripcion: "Dos sedes, cada una con su LAN, unidas por un enlace WAN de fibra entre sus routers.",
+      topologia: topologiaLanWan()
     }
   ];
 
@@ -2322,6 +2444,18 @@ var Escenarios = (function () {
       buscarDispositivo(conPuertos, "srv-dns").servicios.escuchando.push({ protocolo: "tcp", puerto: 70000 });
       comparar("servicios: puerto fuera de rango no valida",
         validarTopologia(conPuertos).errores.some(function (e) { return /va de 1 a 65535/.test(e.mensaje); }), true);
+      // Topologías de la unidad 7.
+      ["estrella", "bus-hub", "malla", "lan-wan"].forEach(function (id) {
+        comparar("topología " + id + " valida", validarTopologia(ejemploPorId(id).topologia).ok, true);
+      });
+      comparar("estrella: PC-1 llega a PC-3", Motor.ping(Motor.crearEstado(topologiaEstrella()), "pc1", "192.168.1.13").exito, true);
+      var domBus = Motor.dominios(Motor.crearEstado(topologiaBus()));
+      comparar("bus con hub: un dominio de colisión y uno de broadcast", [domBus.colision.length, domBus.broadcast.length], [1, 1]);
+      var malla = Motor.ping(Motor.crearEstado(topologiaMalla()), "pcb", "192.168.30.10");
+      comparar("malla: PC-B llega a PC-C por el enlace directo", [malla.exito, malla.tramas.filter(function (t) { return t.sentido === "ida"; }).length], [true, 3]);
+      var wan = Motor.ping(Motor.crearEstado(topologiaLanWan()), "pc-c1", "192.168.200.12");
+      comparar("LAN y WAN: una sede llega a la otra", wan.exito, true);
+      comparar("LAN y WAN: tres dominios de broadcast", Motor.dominios(Motor.crearEstado(topologiaLanWan())).broadcast.length, 3);
       var dnsEnPc = clonar(ofi);
       buscarDispositivo(dnsEnPc, "pc1").servicios = { dns: { zona: "x.local", registros: [] } };
       var conReglas = clonar(ofi);

@@ -413,8 +413,8 @@ var UI = (function () {
     ".simbarra h1 .logo{width:28px;height:28px;vertical-align:-7px;margin-right:8px;}",
     ".simbarra h1 .subtitulo{font-weight:400;font-size:.72em;opacity:.8;margin-left:6px;}",
     "@media (max-width:640px){.simbarra h1 .subtitulo{display:none;}}",
-    ".ayuda{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:8px;padding:2px 0;font-size:12px;line-height:1.35;}",
-    ".ayuda section{background:var(--sim-fondo);border:1px solid var(--sim-borde);border-radius:10px;padding:6px 10px;min-width:0;}",
+    ".ayuda{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:8px;padding:2px 0;font-size:12px;line-height:1.3;}",
+    ".ayuda section{background:var(--sim-fondo);border:1px solid var(--sim-borde);border-radius:10px;padding:4px 10px;min-width:0;}",
     ".ayuda h3{margin:0 0 3px;font-size:12.5px;color:var(--sim-acento);}",
     ".ayuda ul,.ayuda ol{margin:0;padding-left:18px;}",
     ".ayuda li{margin:0;}",
@@ -4060,48 +4060,46 @@ var UI = (function () {
     var caja = el("div", "ayuda");
     caja.appendChild(el("section", "",
       "<h3>Cómo empezar</h3><ol>" +
-      "<li>Arrastrá equipos desde la paleta, o abrí una red con <i>Ejemplos…</i> o <i>Importar</i>.</li>" +
-      "<li>Elegí <i>Conectar con un cable</i> y hacé clic en dos puertos.</li>" +
-      "<li>Seleccioná cada equipo y cargá su IP, máscara y puerta de enlace en <i>Propiedades</i>.</li>" +
-      "<li>Probá la conexión con <i>Ping</i>. Si falla, el recorrido muestra en qué paso se cortó y por qué.</li>" +
-      "<li>Comprobá tu diseño con <i>Verificar</i>, en esta misma franja; si la red trae objetivos o es un desafío, también los revisa.</li></ol>"));
+      "<li>Arrastrá equipos desde la paleta, o abrí <i>Ejemplos…</i> o <i>Importar</i>.</li>" +
+      "<li><i>Conectar con un cable</i> y clic en dos puertos.</li>" +
+      "<li>Seleccioná cada equipo y cargá IP, máscara y puerta de enlace.</li>" +
+      "<li>Probá con <i>Ping</i>: si falla, el recorrido dice dónde y por qué.</li>" +
+      "<li><i>Verificar</i> revisa tu diseño y los objetivos del ejercicio.</li></ol>"));
     caja.appendChild(el("section", "",
       "<h3>Ideas clave</h3><ul>" +
-      "<li>Antes de enviar, el equipo aplica el operador lógico <b>«AND»</b> entre su máscara y cada IP, la suya y la del destino. " +
-      "Si dan la misma red, lo entrega directo; si no, se lo pasa a la puerta de enlace.</li>" +
-      "<li>La puerta de enlace tiene que estar <b>en la misma red</b> que el equipo.</li>" +
-      "<li>El switch no mira direcciones IP ni enruta: para pasar de una subred a otra hace falta un router.</li>" +
-      "<li>El ping va y vuelve: la <b>respuesta</b> también necesita una ruta.</li>" +
-      "<li>El prefijo y la máscara dicen lo mismo: /24 es 255.255.255.0.</li></ul>"));
+      "<li>Cada equipo hace <b>«AND»</b> entre su máscara y las dos IP: misma red, entrega directa; si no, a la puerta de enlace.</li>" +
+      "<li>La puerta de enlace va <b>en la misma red</b> que el equipo.</li>" +
+      "<li>El switch no enruta: entre subredes hace falta un router.</li>" +
+      "<li>El ping va y vuelve: la <b>respuesta</b> también necesita ruta.</li>" +
+      "<li>/24 es 255.255.255.0: prefijo y máscara dicen lo mismo.</li></ul>"));
+    caja.appendChild(el("section", "",
+      "<h3>Topologías y alcance</h3><ul>" +
+      "<li><b>Estrella:</b> todo pasa por un switch central.</li>" +
+      "<li><b>Bus:</b> un medio compartido (acá, un hub).</li>" +
+      "<li><b>Malla:</b> varios caminos entre nodos.</li>" +
+      "<li><b>Anillo</b> y <b>árbol</b>: con los mismos equipos.</li>" +
+      "<li>Alcance: <b>PAN</b>, <b>LAN</b>, <b>MAN</b>, <b>WAN</b>.</li></ul>" +
+      "<p style='margin:2px 0 0'>Hay ejemplos de cada una en <i>Ejemplos…</i>.</p>"));
     caja.appendChild(el("section", "",
       "<h3>Teclado y mouse</h3><div class='teclas'>" +
       "<span><kbd>Ctrl</kbd>+<kbd>Z</kbd> · <kbd>Ctrl</kbd>+<kbd>Y</kbd></span><span>deshacer · rehacer</span>" +
-      "<span><kbd>Supr</kbd></span><span>borra el equipo o cable seleccionado</span>" +
-      "<span><kbd>Esc</kbd></span><span>cancela lo que estés haciendo</span>" +
-      "<span><kbd>F</kbd></span><span>entra y sale del modo presentación</span>" +
-      "<span>Arrastrar el fondo</span><span>mueve la vista; <kbd>+</kbd> <kbd>−</kbd> acercan y alejan</span>" +
-      "<span><kbd>Tab</kbd> y flechas</span><span>elegí un equipo con Tab; las flechas lo mueven</span>" +
-      "<span><kbd>Enter</kbd> en la paleta</span><span>agrega ese equipo en el centro</span>" +
-      "<span>Cambiar un cable de puerto</span><span>seleccionalo, clic en el círculo de la punta y en el puerto nuevo</span>" +
+      "<span><kbd>Supr</kbd></span><span>borra lo seleccionado</span>" +
+      "<span><kbd>Esc</kbd></span><span>cancela</span>" +
+      "<span><kbd>F</kbd></span><span>modo presentación</span>" +
+      "<span>Fondo · <kbd>+</kbd> <kbd>−</kbd></span><span>mover la vista · zoom</span>" +
+      "<span><kbd>Tab</kbd> y flechas</span><span>elegir y mover equipos</span>" +
+      "<span><kbd>Enter</kbd> en la paleta</span><span>agregar al centro</span>" +
+      "<span>Punta del cable</span><span>clic en ella y en el puerto nuevo</span>" +
       "</div>"));
     var alcance = (Motor && Motor.UMBRAL_WIRELESS) || 250;
     caja.appendChild(el("section", "",
       "<h3>Qué simplifica el simulador</h3><ul>" +
-      "<li>Las rutas se cargan a mano: no hay OSPF, BGP ni RIP. Tampoco STP, VLAN ni IPv6, y el NAT es sólo de salida (no hay redirección de puertos).</li>" +
-      "<li>El ping tiene tiempos aproximados.</li>" +
-      "<li>El wireless sólo mira la distancia: llega hasta " + alcance + " m.</li>" +
-      "<li>El router filtra <b>cada paquete por separado</b>; el firewall recuerda la conversación y deja volver la respuesta. " +
-      "Las reglas miran redes, protocolo, puerto de destino y puerto de entrada (no el puerto de origen ni zonas). Un firewall nuevo bloquea lo que entra por wan.</li>" +
-      "<li>Cada router reparte por DHCP un solo rango, sólo a su propia red.</li>" +
-      "<li>La nube Internet responde por cualquier IP pública y trae armada la jerarquía del DNS (raíz, .com, .org, .ar, .google, .one) " +
-      "con google.com, www.google.com, dns.google, one.one.one.one y wikipedia.org. Las IP de la raíz, de .com y de ns1.google.com son las reales; " +
-      "las demás, ilustrativas.</li>" +
-      "<li>La pestaña <i>Captura</i> muestra lo que pasa por un cable, como Wireshark: ICMP, DNS, TCP y UDP. No incluye ARP ni DHCP.</li>" +
-      "<li><i>Conectar</i> muestra una conexión TCP completa (handshake, un pedido y su respuesta, cierre) o el intercambio UDP. " +
-      "No se simulan retransmisiones, ventana ni control de congestión, ni el contenido cifrado de TLS.</li>" +
-      "<li>El hub es un modelo del switch: repite cada trama por todos sus puertos y no tiene tabla MAC. No se simulan colisiones: " +
-      "los dominios de colisión y de broadcast se ven con el selector <i>Dominios</i> del lienzo.</li>" +
-      "<li>Un servidor DNS es autoritativo de una sola zona. Su caché dura el TTL de cada registro (300 s si no se indica) y se vacía al cambiar la red.</li></ul>"));
+      "<li>Rutas a mano (sin OSPF, BGP ni RIP); sin STP, VLAN ni IPv6.</li>" +
+      "<li>NAT de salida; DHCP, un rango por router; wireless, sólo distancia (" + alcance + " m).</li>" +
+      "<li>Reglas: red, protocolo, puerto y entrada.</li>" +
+      "<li>TCP sin retransmisiones ni congestión.</li>" +
+      "<li>Sin colisiones en el hub; la captura no muestra ARP ni DHCP.</li>" +
+      "<li>Internet: jerarquía DNS y algunos sitios (IP ilustrativas).</li></ul>"));
     c.appendChild(caja);
   }
 
