@@ -674,8 +674,26 @@ var Escenarios = (function () {
             if (!regla || typeof regla.destino !== "string" || !parsearBloque(regla.destino)) {
               anotar(campoRegla, "La regla " + (g + 1) + " de \"" + d.id + "\" tiene un destino inválido: va una red como 10.45.7.0/24 (0.0.0.0/0 es cualquiera).");
             }
+            if (regla && regla.protocolo && ["icmp", "tcp", "udp"].indexOf(regla.protocolo) < 0) {
+              anotar(campoRegla + ".protocolo", "La regla " + (g + 1) + " de \"" + d.id + "\" tiene un protocolo que no existe: puede ser icmp, tcp o udp (o ninguno, para cualquiera).");
+            }
+            if (regla && regla.puerto !== undefined && regla.puerto !== null && regla.puerto !== "") {
+              var np = Number(regla.puerto);
+              if (regla.protocolo !== "tcp" && regla.protocolo !== "udp") {
+                anotar(campoRegla + ".puerto", "La regla " + (g + 1) + " de \"" + d.id + "\" tiene un puerto, pero los puertos son de TCP o UDP: elegí uno de esos protocolos.");
+              } else if (!(np >= 1 && np <= 65535) || Math.floor(np) !== np) {
+                anotar(campoRegla + ".puerto", "La regla " + (g + 1) + " de \"" + d.id + "\" tiene un puerto inválido: va de 1 a 65535.");
+              }
+            }
+            if (regla && regla.entrada && !buscarInterfaz(d, regla.entrada)) {
+              anotar(campoRegla + ".entrada", "La regla " + (g + 1) + " de \"" + d.id + "\" dice que el paquete entra por " + regla.entrada + ", pero ese puerto no existe.");
+            }
           }
         }
+      }
+
+      if (d.politica !== undefined && d.politica !== null && d.politica !== "permitir" && d.politica !== "bloquear") {
+        anotar(etiqueta + ".politica", "La política por defecto de \"" + d.id + "\" tiene que ser permitir o bloquear.");
       }
 
       // Servidor DHCP, cuando está configurado.
@@ -2242,6 +2260,14 @@ var Escenarios = (function () {
         validarTopologia(conPuertos).errores.some(function (e) { return /va de 1 a 65535/.test(e.mensaje); }), true);
       var dnsEnPc = clonar(ofi);
       buscarDispositivo(dnsEnPc, "pc1").servicios = { dns: { zona: "x.local", registros: [] } };
+      var conReglas = clonar(ofi);
+      var rb = buscarDispositivo(conReglas, "r1");
+      rb.politica = "bloquear";
+      rb.reglas = [{ accion: "permitir", origen: "0.0.0.0/0", destino: "192.168.10.53/32", protocolo: "tcp", puerto: 80, entrada: "g0/1" }];
+      comparar("regla con protocolo, puerto y entrada valida", validarTopologia(conReglas).ok, true);
+      rb.reglas.push({ accion: "bloquear", origen: "0.0.0.0/0", destino: "0.0.0.0/0", protocolo: "icmp", puerto: 7, entrada: "eth9" });
+      var errsR = validarTopologia(conReglas).errores.map(function (e) { return e.mensaje; }).join(" | ");
+      comparar("regla con puerto en ICMP y entrada inexistente no valida", /los puertos son de TCP o UDP/.test(errsR) && /ese puerto no existe/.test(errsR), true);
       comparar("servicio DNS en una PC no valida",
         validarTopologia(dnsEnPc).errores.some(function (e) { return /Sólo un servidor da el servicio de DNS/.test(e.mensaje); }), true);
       buscarDispositivo(conNube, "r1").interfaces[0].nat = true;

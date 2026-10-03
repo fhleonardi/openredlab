@@ -140,6 +140,13 @@ var Autotest = (function () {
       esperado: "Por HTTP, el handshake de tres pasos (SYN, SYN-ACK, ACK), el pedido GET y su respuesta. Por SSH la red llega, " +
         "pero nadie escucha en el 22: el servidor responde RST y el diagnóstico es D31, no un problema de red."
     },
+    22: {
+      conError: true,
+      situacion: "En el complejo, R2 pasa a «denegar todo y permitir lo necesario»: política por defecto bloquear y una sola regla que " +
+        "permite TCP 80 hacia el Servidor. PC-Admin se conecta al Servidor por HTTP y por SSH; primero con R2 como router y después como firewall.",
+      esperado: "Con R2 como router, HTTP falla: el pedido pasa, pero la respuesta no coincide con ninguna regla y la política la bloquea (D27 en la vuelta). " +
+        "Como firewall, HTTP funciona porque recuerda la conversación y deja volver la respuesta. SSH falla en los dos casos por la política (D27)."
+    },
     12: {
       conError: true,
       situacion: "En el desafío VLSM, el sector Cámaras se arma con el router en 10.45.7.41/28, al lado del Wi-Fi " +
@@ -389,6 +396,34 @@ var Autotest = (function () {
         ". SSH: " + diagnosticoTexto(ssh) + ".");
     } catch (e) {
       return fila(21, nombre, false, "Excepción: " + e.message);
+    }
+  }
+
+  function complejoConListaBlanca(firewall) {
+    var t = clonar(ejemploPorId("complejo").topologia);
+    var srv = dispEn(t, "srv1");
+    srv.tipo = "servidor"; srv.interfaces = [srv.interfaces[0]];
+    srv.servicios = { escuchando: [{ protocolo: "tcp", puerto: 80, nombre: "HTTP" }, { protocolo: "tcp", puerto: 22, nombre: "SSH" }] };
+    var r2 = dispEn(t, "r2");
+    r2.politica = "bloquear";
+    r2.reglas = [{ accion: "permitir", origen: "0.0.0.0/0", destino: "10.45.7.122/32", protocolo: "tcp", puerto: 80 }];
+    if (firewall) { r2.modelo = "firewall"; }
+    return t;
+  }
+
+  function crit22() {
+    var nombre = "Lista blanca: el firewall deja volver la respuesta, el router no";
+    try {
+      var comoRouter = Motor.conectar(Motor.crearEstado(complejoConListaBlanca(false)), "pc-admin", "10.45.7.122", "tcp", 80);
+      var est = Motor.crearEstado(complejoConListaBlanca(true));
+      var comoFw = Motor.conectar(est, "pc-admin", "10.45.7.122", "tcp", 80);
+      var ssh = Motor.conectar(est, "pc-admin", "10.45.7.122", "tcp", 22);
+      var pasa = !comoRouter.exito && comoRouter.diagnostico.codigo === "D27" && /la respuesta/.test(comoRouter.diagnostico.explicacion) &&
+        comoFw.exito && ssh.diagnostico && ssh.diagnostico.codigo === "D27";
+      return fila(22, nombre, pasa, "Como router, HTTP: " + diagnosticoTexto(comoRouter) + ". Como firewall, HTTP: " +
+        (comoFw.exito ? "se conecta" : diagnosticoTexto(comoFw)) + "; SSH: " + diagnosticoTexto(ssh) + ".");
+    } catch (e) {
+      return fila(22, nombre, false, "Excepción: " + e.message);
     }
   }
 
@@ -1063,7 +1098,7 @@ var Autotest = (function () {
    * puede leer y discutir. Los criterios de la interfaz y del archivo, y las
    * pruebas internas de las capas, quedan para quien programa:
    * Autotest.correr({ tecnico: true }) desde la consola. */
-  var CRITERIOS_DIDACTICOS = [crit02, crit17, crit03, crit04, crit05, crit06, crit20, crit18, crit19, crit21, crit07, crit08, crit12];
+  var CRITERIOS_DIDACTICOS = [crit02, crit17, crit03, crit04, crit05, crit06, crit20, crit18, crit19, crit21, crit22, crit07, crit08, crit12];
   var CRITERIOS_TECNICOS = [crit01, crit09, crit10, crit11, crit13, crit14, crit15, crit16];
 
   function correr(opciones) {
