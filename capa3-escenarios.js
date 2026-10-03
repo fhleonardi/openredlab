@@ -2332,6 +2332,10 @@ var Escenarios = (function () {
       rb.reglas.push({ accion: "bloquear", origen: "0.0.0.0/0", destino: "0.0.0.0/0", protocolo: "icmp", puerto: 7, entrada: "eth9" });
       var errsR = validarTopologia(conReglas).errores.map(function (e) { return e.mensaje; }).join(" | ");
       comparar("regla con puerto en ICMP y entrada inexistente no valida", /los puertos son de TCP o UDP/.test(errsR) && /ese puerto no existe/.test(errsR), true);
+      // Captura: las consultas iterativas salen con la IP de cada servidor.
+      var iter = Motor.consultarDns(Motor.crearEstado(ofi), "pc1", "wikipedia.org", "A").tramas || [];
+      comparar("captura: consultas iterativas a la raíz, a .org y al autoritativo",
+        ["198.41.0.4", "199.19.56.1", "208.80.154.238"].every(function (ip) { return iter.some(function (t) { return t.ipDestino === ip && t.protocolo === "DNS"; }); }), true);
       // Fallas y objetivos de servicios sobre la oficina.
       function conFalla(falla) {
         var t = clonar(ofi);

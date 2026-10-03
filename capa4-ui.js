@@ -61,6 +61,9 @@ var UI = (function () {
     panelRes: "ping",
     verTodos: false,
     verTramas: false,
+    // Captura al estilo Wireshark: se inicia en un cable (o en todos) y
+    // acumula lo que pasa por ahí, numerado, hasta detenerla o limpiarla.
+    captura: { activa: false, enlace: "", paquetes: [], filtro: "", sel: null, n: 0 },
     verEncabezados: false,
     consolaAbierta: false,
     lineasConsola: [],
@@ -422,6 +425,18 @@ var UI = (function () {
     ".modosim{display:inline-flex;border:1px solid var(--sim-borde);border-radius:6px;overflow:hidden;}",
     ".modosim button{border:0;border-radius:0;margin:0;}",
     ".simctrl input.puerto{width:72px;}",
+    ".simctrl input.filtrocap{flex:1;min-width:180px;font-family:ui-monospace,Consolas,monospace;font-size:12px;}",
+    ".tablacap{width:100%;border-collapse:collapse;font-family:ui-monospace,Consolas,monospace;font-size:12px;}",
+    ".tablacap th{text-align:left;position:sticky;top:0;background:var(--sim-panel);border-bottom:1px solid var(--sim-borde);padding:2px 6px;}",
+    ".tablacap td{padding:1px 6px;white-space:nowrap;}",
+    ".tablacap td:nth-child(5){white-space:normal;}",
+    ".tablacap tr{cursor:pointer;}",
+    ".tablacap tr.p-icmp{background:rgba(252,224,255,.35);}",
+    ".tablacap tr.p-tcp{background:rgba(231,230,255,.45);}",
+    ".tablacap tr.p-udp{background:rgba(218,238,255,.45);}",
+    ".tablacap tr.sel,.tablacap tr:focus{background:var(--sim-acento);color:#fff;outline:none;}",
+    ".detallecap{border:1px solid var(--sim-borde);border-radius:8px;padding:8px 10px;font-size:12px;line-height:1.6;overflow:auto;}",
+    ".detallecap b{color:var(--sim-acento);}",
     ".modosim button.activo{background:var(--sim-acento);color:#fff;}",
     ".simctrl{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;}",
     ".simctrl label{font-size:12px;color:var(--sim-tenue);}",
@@ -2817,7 +2832,7 @@ var UI = (function () {
     lista.setAttribute("aria-label", "Paneles de la franja inferior");
     lista.style.display = "flex";
     lista.style.gap = "4px";
-    [["simulacion", "Simulación"], ["dhcp", "DHCP"], ["calculo", "Cálculo de subred"], ["ayuda", "Ayuda"]].forEach(function (p) {
+    [["simulacion", "Simulación"], ["captura", "Captura"], ["dhcp", "DHCP"], ["calculo", "Cálculo de subred"], ["ayuda", "Ayuda"]].forEach(function (p) {
       var activa = p[0] === S.pestañaInf;
       var b = boton(p[1], activa ? "activo" : "");
       b.setAttribute("role", "tab");
@@ -2847,6 +2862,7 @@ var UI = (function () {
     var cuerpo = el("div", "cuerpoinf");
     c.appendChild(cuerpo);
     if (S.pestañaInf === "simulacion") { panelSimulacion(cuerpo); }
+    else if (S.pestañaInf === "captura") { panelCaptura(cuerpo); }
     else if (S.pestañaInf === "dhcp") { panelDhcpInf(cuerpo); }
     else if (S.pestañaInf === "calculo") { panelCalculo(cuerpo); }
     else { panelAyuda(cuerpo); }
@@ -3044,6 +3060,7 @@ var UI = (function () {
       try { res = Motor.consultarDns(S.estado, selO.value, selD.value.trim(), selTipoDns.value); }
       catch (e) { registrar("error", "La consulta DNS falló por un error interno: " + e.message); return; }
       S.ultimo = { origen: selO.value, destino: selD.value.trim(), res: res, dns: true, tipo: selTipoDns.value };
+      capturarTramas(res.tramas);
       S.panelRes = "ping";
       S.verTodos = true;
       S.verTramas = false;
@@ -3070,6 +3087,7 @@ var UI = (function () {
       try { res = Motor.conectar(S.estado, selO.value, selD.value.trim(), prot, puerto); }
       catch (e) { registrar("error", "La conexión falló por un error interno: " + e.message); return; }
       S.ultimo = { origen: selO.value, destino: selD.value.trim(), res: res, conexion: true, protocolo: prot, puerto: puerto };
+      capturarTramas(res.tramas);
       S.panelRes = "ping";
       S.verTodos = true;
       S.verTramas = false;
@@ -3127,6 +3145,153 @@ var UI = (function () {
       S.enfocarPing = false;
       try { bPing.focus(); } catch (e) { /* sin foco: se sigue igual */ }
     }
+  }
+
+  /* ---------------- Captura (al estilo Wireshark) ---------------- */
+
+  var PROTOS_TCP = ["TCP", "HTTP", "HTTPS", "SSH", "FTP", "SMTP"];
+
+  function transporteDe(t) {
+    if (t.protocolo === "ICMP") { return "ICMP"; }
+    if (PROTOS_TCP.indexOf(t.protocolo) >= 0) { return "TCP"; }
+    return "UDP";
+  }
+
+  // Filtro: palabras separadas por espacios (todas tienen que cumplirse):
+  // icmp, tcp, udp, dns, http…, ip.addr==, ip.src==, ip.dst==, tcp.port==,
+  // udp.port==. Devuelve null si alguna no se entiende.
+  function armarFiltro(texto) {
+    var partes = String(texto || "").toLowerCase().replace(/&&|\band\b/g, " ").split(/\s+/).filter(Boolean);
+    var pruebas = [];
+    for (var i = 0; i < partes.length; i++) {
+      var x = partes[i];
+      var m = /^(ip\.addr|ip\.src|ip\.dst|tcp\.port|udp\.port|port)==(.+)$/.exec(x);
+      if (m) {
+        var v = m[2];
+        if (m[1] === "ip.addr") { pruebas.push(function (v) { return function (t) { return t.ipOrigen === v || t.ipDestino === v; }; }(v)); }
+        else if (m[1] === "ip.src") { pruebas.push(function (v) { return function (t) { return t.ipOrigen === v; }; }(v)); }
+        else if (m[1] === "ip.dst") { pruebas.push(function (v) { return function (t) { return t.ipDestino === v; }; }(v)); }
+        else {
+          var pr = m[1] === "port" ? null : m[1].split(".")[0].toUpperCase();
+          pruebas.push(function (v, pr) { return function (t) {
+            return (!pr || transporteDe(t) === pr) && (String(t.puertoOrigen) === v || String(t.puertoDestino) === v);
+          }; }(v, pr));
+        }
+      } else if (["icmp", "tcp", "udp"].indexOf(x) >= 0) {
+        pruebas.push(function (x) { return function (t) { return transporteDe(t) === x.toUpperCase(); }; }(x));
+      } else if (["dns", "http", "https", "ssh", "ftp", "smtp"].indexOf(x) >= 0) {
+        pruebas.push(function (x) { return function (t) { return t.protocolo === x.toUpperCase(); }; }(x));
+      } else {
+        return null;
+      }
+    }
+    return function (t) { return pruebas.every(function (f) { return f(t); }); };
+  }
+
+  function detalleCapas(t) {
+    var cap = [];
+    cap.push("<b>Trama (capa 2)</b> MAC " + escapar(t.macOrigen || "?") + " → " + escapar(t.macDestino || "?") +
+      " · de " + escapar(nombreDe(t.de.dispositivo)) + " a " + escapar(nombreDe(t.a.dispositivo)) +
+      (t.atraviesa && t.atraviesa.length ? " (cruza " + t.atraviesa.map(function (id) { return escapar(nombreDe(id)); }).join(", ") + ")" : ""));
+    cap.push("<b>Paquete IP (capa 3)</b> " + escapar(t.ipOrigen) + " → " + escapar(t.ipDestino) + " · TTL " + t.ttl);
+    var tr = transporteDe(t);
+    if (tr === "ICMP") {
+      cap.push("<b>ICMP</b> " + escapar(t.info || t.mensaje || ""));
+    } else if (tr === "TCP") {
+      cap.push("<b>Segmento TCP (capa 4)</b> puerto " + t.puertoOrigen + " → " + t.puertoDestino +
+        (t.flags ? " · [" + escapar(t.flags) + "]" : "") + (t.seq !== undefined && t.seq !== null ? " · Seq=" + t.seq : "") + (t.ack ? " · Ack=" + t.ack : ""));
+    } else {
+      cap.push("<b>Datagrama UDP (capa 4)</b> puerto " + t.puertoOrigen + " → " + t.puertoDestino);
+    }
+    if (t.protocolo !== "ICMP" && t.protocolo !== "TCP" && t.protocolo !== "UDP") {
+      cap.push("<b>" + escapar(t.protocolo) + " (capa 7)</b> " + escapar(t.datos || t.info || ""));
+    } else if (t.datos) {
+      cap.push("<b>Datos</b> " + escapar(t.datos));
+    }
+    return cap.map(function (x) { return "<div>" + x + "</div>"; }).join("");
+  }
+
+  function panelCaptura(c) {
+    c.classList.add("captura");
+    var cap = S.captura;
+    if (cap.enlace && !buscarEnlace(cap.enlace)) { cap.enlace = ""; }
+    var ctrl = el("div", "simctrl");
+    var selE = document.createElement("select");
+    var oT = document.createElement("option"); oT.value = ""; oT.textContent = "Todos los cables"; selE.appendChild(oT);
+    (S.topologia.enlaces || []).forEach(function (e) {
+      var o = document.createElement("option"); o.value = e.id;
+      o.textContent = nombreDe(e.a.dispositivo) + " ↔ " + nombreDe(e.b.dispositivo) + " (" + e.id + ")";
+      selE.appendChild(o);
+    });
+    if (!cap.activa && !cap.paquetes.length && S.enlaceSel && buscarEnlace(S.enlaceSel)) { cap.enlace = S.enlaceSel; }
+    selE.value = cap.enlace;
+    selE.disabled = cap.activa;
+    selE.addEventListener("change", function () { cap.enlace = selE.value; });
+    ctrl.appendChild(etiqueta("Cable", selE)); ctrl.appendChild(selE);
+    var bIni = boton(cap.activa ? "Detener" : "Iniciar captura", cap.activa ? "" : "primario");
+    bIni.addEventListener("click", function () {
+      cap.activa = !cap.activa;
+      registrar("captura", cap.activa ? "Captura iniciada en " + (cap.enlace || "todos los cables") + "." : "Captura detenida.");
+      renderInferior();
+    });
+    ctrl.appendChild(bIni);
+    var bLim = boton("Limpiar");
+    bLim.disabled = !cap.paquetes.length;
+    bLim.addEventListener("click", function () { cap.paquetes = []; cap.n = 0; cap.sel = null; renderInferior(); });
+    ctrl.appendChild(bLim);
+    var inF = document.createElement("input");
+    inF.type = "text"; inF.value = cap.filtro; inF.className = "filtrocap";
+    inF.placeholder = "Filtro: icmp, tcp, dns, ip.addr==10.0.0.1, tcp.port==80";
+    inF.setAttribute("autocomplete", "off");
+    ctrl.appendChild(etiqueta("Filtro", inF)); ctrl.appendChild(inF);
+    var filtro = armarFiltro(cap.filtro);
+    inF.classList.toggle("invalido", !filtro);
+    inF.addEventListener("change", function () { cap.filtro = inF.value; cap.sel = null; renderInferior(); });
+    var visibles = filtro ? cap.paquetes.filter(function (p) { return filtro(p.t); }) : [];
+    ctrl.appendChild(el("span", "tenue", cap.paquetes.length + (cap.paquetes.length === 1 ? " paquete" : " paquetes") +
+      (cap.filtro && filtro ? " · " + visibles.length + " con el filtro" : "") + (cap.activa ? " · capturando…" : "")));
+    c.appendChild(ctrl);
+
+    var cuerpo = el("div", "simres");
+    var lista = el("div", "recorrido");
+    lista.appendChild(el("div", "cab", "<span>Paquetes" + (cap.enlace ? " en " + escapar(cap.enlace) : " en todos los cables") + "</span>"));
+    var cont = el("div", "pasos");
+    if (!filtro) {
+      cont.appendChild(el("p", "", "El filtro no se entiende. Usá palabras como icmp, tcp, udp, dns o http, y expresiones como ip.addr==10.45.7.66 o tcp.port==80, separadas por espacios."));
+    } else if (!cap.paquetes.length) {
+      cont.appendChild(el("p", "", cap.activa
+        ? "Capturando. Hacé un ping, una consulta DNS o una conexión en la pestaña Simulación: lo que pase por " + (cap.enlace ? "este cable" : "los cables") + " aparece acá."
+        : "Elegí un cable (o todos) y apretá <b>Iniciar captura</b>. Después hacé pings, consultas DNS y conexiones en Simulación."));
+    } else {
+      var tabla = el("table", "tablacap");
+      tabla.innerHTML = "<thead><tr><th>N.º</th><th>Origen</th><th>Destino</th><th>Protocolo</th><th>Info</th>" +
+        (cap.enlace ? "" : "<th>Tramo</th>") + "</tr></thead>";
+      var tb = document.createElement("tbody");
+      visibles.forEach(function (p) {
+        var t = p.t;
+        var tr = document.createElement("tr");
+        tr.className = (p.n === cap.sel ? "sel " : "") + "p-" + transporteDe(t).toLowerCase();
+        tr.tabIndex = 0;
+        tr.innerHTML = "<td>" + p.n + "</td><td>" + escapar(t.ipOrigen) + "</td><td>" + escapar(t.ipDestino) + "</td><td>" +
+          escapar(t.protocolo || "ICMP") + "</td><td>" + escapar(t.info || t.mensaje || "") + "</td>" +
+          (cap.enlace ? "" : "<td>" + escapar(nombreDe(t.de.dispositivo) + " → " + nombreDe(t.a.dispositivo)) + "</td>");
+        function elegir() { cap.sel = p.n; renderInferior(); resaltarTrama(t); }
+        tr.addEventListener("click", elegir);
+        tr.addEventListener("keydown", function (ev) { if (ev.key === "Enter") { elegir(); } });
+        tb.appendChild(tr);
+      });
+      tabla.appendChild(tb);
+      cont.appendChild(tabla);
+    }
+    lista.appendChild(cont);
+    cuerpo.appendChild(lista);
+    var lado = el("div", "lado");
+    var elegido = cap.paquetes.filter(function (p) { return p.n === cap.sel; })[0];
+    lado.appendChild(el("div", "detallecap", elegido
+      ? "<b>Paquete " + elegido.n + "</b>" + detalleCapas(elegido.t)
+      : "<span class='tenue'>Tocá un paquete para ver sus capas: la trama, el paquete IP, el segmento y los datos de la aplicación.</span>"));
+    cuerpo.appendChild(lado);
+    c.appendChild(cuerpo);
   }
 
   // Si el portapapeles no está disponible, el texto queda seleccionado en
@@ -3565,7 +3730,18 @@ var UI = (function () {
     return cont;
   }
 
+  function capturarTramas(lista) {
+    var cap = S.captura;
+    if (!cap.activa) { return; }
+    (lista || []).forEach(function (t) {
+      if (cap.enlace && (t.enlaces || []).indexOf(cap.enlace) < 0) { return; }
+      cap.n += 1;
+      cap.paquetes.push({ n: cap.n, t: t });
+    });
+  }
+
   function pintarPing(origen, destino, res) {
+    capturarTramas((res.tramasPrevias || []).concat(res.tramas || []));
     S.ultimo = { origen: origen, destino: destino, res: res };
     S.panelRes = "ping";
     S.verTodos = false;
@@ -3920,6 +4096,7 @@ var UI = (function () {
       "<li>La nube Internet responde por cualquier IP pública y trae armada la jerarquía del DNS (raíz, .com, .org, .ar, .google, .one) " +
       "con google.com, www.google.com, dns.google, one.one.one.one y wikipedia.org. Las IP de la raíz, de .com y de ns1.google.com son las reales; " +
       "las demás, ilustrativas.</li>" +
+      "<li>La pestaña <i>Captura</i> muestra lo que pasa por un cable, como Wireshark: ICMP, DNS, TCP y UDP. No incluye ARP ni DHCP.</li>" +
       "<li><i>Conectar</i> muestra una conexión TCP completa (handshake, un pedido y su respuesta, cierre) o el intercambio UDP. " +
       "No se simulan retransmisiones, ventana ni control de congestión, ni el contenido cifrado de TLS.</li>" +
       "<li>El hub es un modelo del switch: repite cada trama por todos sus puertos y no tiene tabla MAC. No se simulan colisiones: " +

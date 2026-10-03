@@ -1302,10 +1302,28 @@ var Motor = (function () {
       var copia = {};
       for (var k in t) { copia[k] = t[k]; }
       copia.sentido = "vuelta";
-      copia.mensaje = "ICMP echo reply";
+      if (!copia.protocolo || copia.protocolo === "ICMP") {
+        copia.mensaje = "ICMP echo reply";
+        copia.info = "Echo (ping) reply";
+      }
       return copia;
     });
   }
+
+  // Las tramas de un camino ya recorrido, con otro contenido: un segmento
+  // TCP, una consulta DNS. Viajan por los mismos cables, con las mismas
+  // MAC e IP (y el mismo NAT).
+  function tramasCon(base, campos) {
+    return (base || []).map(function (t) {
+      var copia = {};
+      for (var k in t) { copia[k] = t[k]; }
+      for (var c in campos) { copia[c] = campos[c]; }
+      return copia;
+    });
+  }
+
+  function idaDe(res) { return ((res && res.tramas) || []).filter(function (t) { return t.sentido === "ida"; }); }
+  function vueltaDe(res) { return ((res && res.tramas) || []).filter(function (t) { return t.sentido === "vuelta"; }); }
 
   // TTL con el que llega la respuesta: el de la última trama de vuelta. Sin
   // vuelta recorrida (ping a sí mismo), la cuenta de antes.
@@ -1361,7 +1379,12 @@ var Motor = (function () {
         ipOrigen: ipOrigen,
         ipDestino: destinoIp,
         ttl: ttlTrama,
-        mensaje: "ICMP echo request",
+        mensaje: paquete.protocolo === "icmp" ? "ICMP echo request"
+          : paquete.protocolo.toUpperCase() + " " + paquete.puertoOrigen + " → " + paquete.puertoDestino,
+        protocolo: paquete.protocolo.toUpperCase(),
+        puertoOrigen: paquete.puertoOrigen || null,
+        puertoDestino: paquete.puertoDestino || null,
+        info: paquete.protocolo === "icmp" ? "Echo (ping) request" : paquete.puertoOrigen + " → " + paquete.puertoDestino,
         atraviesa: tramo.atraviesa,
         enlaces: tramo.enlaces
       });
@@ -2514,28 +2537,28 @@ var Motor = (function () {
     var raiz = JERARQUIA.raiz;
     if (!datosTld) {
       agregar("Preguntar a la raíz (consulta iterativa)", quien + " le pregunta a " + raiz.nombre + " (" + raiz.ip + "), un servidor raíz, por " +
-        nombre + ". La raíz responde que ." + tld + " no existe en internet.", false);
+        nombre + ". La raíz responde que ." + tld + " no existe en internet.", false, raiz.ip);
       return { fallo: { tld: tld } };
     }
     agregar("Preguntar a la raíz (consulta iterativa)", quien + " le pregunta a " + raiz.nombre + " (" + raiz.ip + "), un servidor raíz, por " +
-      nombre + ". La raíz no sabe la respuesta, pero sabe quién atiende ." + tld + ": " + datosTld.nombre + " (" + datosTld.ip + ").", true);
+      nombre + ". La raíz no sabe la respuesta, pero sabe quién atiende ." + tld + ": " + datosTld.nombre + " (" + datosTld.ip + ").", true, raiz.ip);
     var zona = zonaPublicaDe(nombre);
     if (!zona) {
       agregar("Preguntar al servidor de ." + tld + " (consulta iterativa)", quien + " le pregunta a " + datosTld.nombre + " por " + nombre +
-        ", y responde que ese nombre no está registrado en ." + tld + ".", false);
+        ", y responde que ese nombre no está registrado en ." + tld + ".", false, datosTld.ip);
       return { fallo: { quien: datosTld.nombre + ", el servidor de ." + tld } };
     }
     var auth = JERARQUIA.zonas[zona];
     agregar("Preguntar al servidor de ." + tld + " (consulta iterativa)", quien + " le pregunta a " + datosTld.nombre + " por " + nombre +
-      ". Tampoco sabe la respuesta, pero sabe cuál es el servidor autoritativo de " + zona + ": " + auth.ns + " (" + auth.ip + ").", true);
+      ". Tampoco sabe la respuesta, pero sabe cuál es el servidor autoritativo de " + zona + ": " + auth.ns + " (" + auth.ip + ").", true, datosTld.ip);
     var hallado = buscarRegistros(auth.registros, nombre, tipo);
     if (!hallado || (!hallado.registros.length && !hallado.pendiente)) {
       agregar("Preguntar al autoritativo de " + zona + " (consulta iterativa)", quien + " le pregunta a " + auth.ns +
-        ", el servidor autoritativo de " + zona + ", y responde que " + nombre + " no tiene registros " + tipo + ".", false);
+        ", el servidor autoritativo de " + zona + ", y responde que " + nombre + " no tiene registros " + tipo + ".", false, auth.ip);
       return { fallo: { quien: auth.ns, zona: zona } };
     }
     agregar("Preguntar al autoritativo de " + zona + " (consulta iterativa)", quien + " le pregunta a " + auth.ns +
-      ", el servidor autoritativo de " + zona + ", que responde: " + hallado.registros.map(textoRegistro).join("; ") + ".", true);
+      ", el servidor autoritativo de " + zona + ", que responde: " + hallado.registros.map(textoRegistro).join("; ") + ".", true, auth.ip);
     if (hallado.pendiente && (profundidad || 0) < 3) {
       // El CNAME apunta a otra zona: se resuelve el nombre nuevo.
       var resto = iterarJerarquia(hallado.pendiente, tipo, quien, agregar, (profundidad || 0) + 1);
@@ -2567,8 +2590,18 @@ var Motor = (function () {
     function agregar(titulo, detalle, ok) {
       pasos.push({ n: pasos.length + 1, titulo: titulo, detalle: detalle, ok: !!ok, capa: 7 });
     }
+    var tramasDns = [];
+    var viaje = null;
+    var consultaInfo = "Consulta estándar " + tipo + " " + nombre;
+    function dnsUdp(po, pd, info, datos) {
+      return { protocolo: "DNS", puertoOrigen: po, puertoDestino: pd, info: info, mensaje: "DNS " + info, datos: datos || null };
+    }
     function fallar(codigo, ctx, saltos) {
-      return { exito: false, pasos: pasos, respuesta: null, diagnostico: diagnosticoDe(codigo, ctx), saltos: saltos || [] };
+      // Si el servidor recibió la consulta, contesta con el error.
+      if (viaje && viaje.exito && codigo !== "D29") {
+        Array.prototype.push.apply(tramasDns, tramasCon(vueltaDe(viaje), dnsUdp(53, puertoDns, "Respuesta estándar: " + nombre + " no existe")));
+      }
+      return { exito: false, pasos: pasos, respuesta: null, diagnostico: diagnosticoDe(codigo, ctx), saltos: saltos || [], tramas: tramasDns };
     }
     var cliente = buscarDispositivo(estado, idCliente);
     var nombreCliente = cliente ? (cliente.nombre || cliente.id) : idCliente;
@@ -2578,8 +2611,10 @@ var Motor = (function () {
       agregar(titulo, nombreCliente + " necesita la IP de " + nombre + ", pero no tiene servidor DNS configurado.", false);
       return fallar("D24", { origen: nombreCliente, nombre: nombre });
     }
-    var viaje = ejecutarPing(estado, idCliente, dnsIp, { registrar: false, profundidad: 0,
-      paquete: { protocolo: "udp", puertoOrigen: puertoEfimero(dnsIp, 53), puertoDestino: 53 } });
+    var puertoDns = puertoEfimero(dnsIp, 53);
+    viaje = ejecutarPing(estado, idCliente, dnsIp, { registrar: false, profundidad: 0,
+      paquete: { protocolo: "udp", puertoOrigen: puertoDns, puertoDestino: 53 } });
+    Array.prototype.push.apply(tramasDns, tramasCon(idaDe(viaje), dnsUdp(puertoDns, 53, consultaInfo)));
     if (!viaje.exito) {
       var dc = viaje.diagnostico;
       agregar(titulo, nombreCliente + " le pregunta al servidor DNS " + dnsIp + " por " + nombre + " y la consulta no llega" +
@@ -2600,8 +2635,11 @@ var Motor = (function () {
       "Es una consulta recursiva: le pide la respuesta final.", true);
 
     function responder(registros, autoritativa, desdeCache) {
+      var textoResp = registros.map(function (x) { return x.tipo + " " + x.valor; }).join(", ");
+      Array.prototype.push.apply(tramasDns, tramasCon(vueltaDe(viaje),
+        dnsUdp(53, puertoDns, "Respuesta estándar " + tipo + " " + nombre + ": " + textoResp, textoResp)));
       return {
-        exito: true, pasos: pasos, diagnostico: null, saltos: viaje.saltos,
+        exito: true, pasos: pasos, diagnostico: null, saltos: viaje.saltos, tramas: tramasDns,
         respuesta: { registros: registros, servidor: quien, autoritativa: autoritativa, desdeCache: desdeCache }
       };
     }
@@ -2639,8 +2677,9 @@ var Motor = (function () {
     }
 
     // Un servidor propio necesita llegar a internet para recursar.
+    var aRaiz = null;
     if (servicio) {
-      var aRaiz = ejecutarPing(estado, servidor.id, JERARQUIA.raiz.ip, { registrar: false, profundidad: 0,
+      aRaiz = ejecutarPing(estado, servidor.id, JERARQUIA.raiz.ip, { registrar: false, profundidad: 0,
         paquete: { protocolo: "udp", puertoOrigen: puertoEfimero(JERARQUIA.raiz.ip, 53), puertoDestino: 53 } });
       if (!aRaiz.exito) {
         var dr = aRaiz.diagnostico;
@@ -2649,7 +2688,28 @@ var Motor = (function () {
         return fallar("D30", { servidor: quien, nombre: nombre, causa: dr ? dr.explicacion : "" });
       }
     }
-    var resultado = iterarJerarquia(nombre, tipo, quien, agregar, 0);
+    var pasosAntes = pasos.length;
+    var ipsIterativas = [];
+    var resultado = iterarJerarquia(nombre, tipo, quien, function (t, d, ok, ipServidor) {
+      ipsIterativas.push(ipServidor);
+      agregar(t, d, ok);
+    }, 0);
+    // Las consultas iterativas del servidor propio salen por su camino a
+    // internet: una pregunta y su respuesta por cada servidor consultado.
+    if (servicio && aRaiz && aRaiz.exito) {
+      pasos.slice(pasosAntes).forEach(function (p, k) {
+        var aQuien = p.titulo.replace(" (consulta iterativa)", "").replace("Preguntar ", "");
+        var ipServ = ipsIterativas[k] || JERARQUIA.raiz.ip;
+        var po = puertoEfimero(ipServ, 53);
+        // El camino es el mismo hasta internet; cambia la IP del servidor.
+        var consulta = dnsUdp(po, 53, consultaInfo + " (" + aQuien + ")");
+        consulta.ipDestino = ipServ;
+        var resp = dnsUdp(53, po, "Respuesta " + aQuien.replace(/^a la /, "de la ").replace(/^al /, "del ") + (p.ok ? "" : ": no existe"));
+        resp.ipOrigen = ipServ;
+        Array.prototype.push.apply(tramasDns, tramasCon(idaDe(aRaiz), consulta));
+        Array.prototype.push.apply(tramasDns, tramasCon(vueltaDe(aRaiz), resp));
+      });
+    }
     if (resultado.fallo) {
       var ctxFallo = resultado.fallo;
       ctxFallo.nombre = nombre;
@@ -2715,7 +2775,24 @@ var Motor = (function () {
     var pasos = [];
     var segmentos = [];
     function agregar(titulo, detalle, ok, capa) { pasos.push({ n: pasos.length + 1, titulo: titulo, detalle: detalle, ok: !!ok, capa: capa }); }
-    function fallo(diag) { return { exito: false, pasos: pasos, segmentos: segmentos, socket: null, diagnostico: diag }; }
+    function fallo(diag) { return { exito: false, pasos: pasos, segmentos: segmentos, socket: null, diagnostico: diag, tramas: tramasDeSegmentos() }; }
+    var red = null;
+    // Cada segmento viaja por el camino de la red: los del cliente por la
+    // ida, los del servidor por la vuelta.
+    function tramasDeSegmentos() {
+      var lista = tramasConexion.slice();
+      segmentos.forEach(function (x) {
+        var base = x.de === "cliente" ? idaDe(red) : vueltaDe(red);
+        var nombreProt = x.datos && protocolo === "tcp" ? ((servicioConocido("tcp", puerto) || {}).nombre || "TCP") : protocolo.toUpperCase();
+        var info = x.puertoOrigen + " → " + x.puertoDestino + (x.flags ? " [" + x.flags.replace("-", ", ") + "]" : "") +
+          (protocolo === "tcp" ? " Seq=" + x.seq + (x.ack ? " Ack=" + x.ack : "") : "") + (x.datos ? " «" + x.datos + "»" : "");
+        Array.prototype.push.apply(lista, tramasCon(base, {
+          protocolo: nombreProt, puertoOrigen: x.puertoOrigen, puertoDestino: x.puertoDestino,
+          flags: x.flags || null, seq: x.seq, ack: x.ack, datos: x.datos, info: info, mensaje: protocolo.toUpperCase() + " " + info
+        }));
+      });
+      return lista;
+    }
     var cliente = buscarDispositivo(estado, idCliente);
     var nombreCliente = cliente ? (cliente.nombre || cliente.id) : idCliente;
     if (!(puerto >= 1 && puerto <= 65535)) {
@@ -2723,12 +2800,14 @@ var Motor = (function () {
     }
     var texto = String(destino === undefined || destino === null ? "" : destino).trim().toLowerCase();
     var ip = texto;
+    var tramasConexion = [];
     if (!Red.esIpValida(texto)) {
       if (!pareceNombre(texto)) {
         return fallo({ codigo: "ENTRADA", titulo: "El destino no es válido", explicacion: "\"" + texto + "\" no es una IP ni un nombre.", sugerencia: "Escribí una IP o un nombre como www.google.com." });
       }
       var resuelto = resolverNombre(estado, idCliente, texto, "A");
       Array.prototype.push.apply(pasos, resuelto.pasos);
+      Array.prototype.push.apply(tramasConexion, resuelto.tramas || []);
       if (!resuelto.exito) { return fallo(resuelto.diagnostico); }
       var as = resuelto.respuesta.registros.filter(function (x) { return x.tipo === "A"; });
       ip = as[as.length - 1].valor;
@@ -2736,7 +2815,7 @@ var Motor = (function () {
     // La red tiene que llegar, de ida y de vuelta: lo dice el ping.
     var salida = cliente ? elegirInterfazOrigen(estado, cliente, ip) : null;
     var efimero = puertoEfimero((salida && salida.ip) || "0.0.0.0", puerto);
-    var red = ejecutarPing(estado, idCliente, ip, { registrar: false, profundidad: 0,
+    red = ejecutarPing(estado, idCliente, ip, { registrar: false, profundidad: 0,
       paquete: { protocolo: protocolo, puertoOrigen: efimero, puertoDestino: puerto } });
     var destinoNombre = (configuradosConIp(estado, ip)[0] || {}).dispositivo;
     var nombreDestino = destinoNombre ? (destinoNombre.nombre || destinoNombre.id) : ip;
@@ -2799,7 +2878,7 @@ var Motor = (function () {
       seg(false, "", null, null, resp);
       agregar("Recibir la respuesta", servicio + " responde con otro datagrama («" + resp + "»).", true, 7);
     }
-    return { exito: true, pasos: pasos, segmentos: segmentos, socket: socket, diagnostico: null, servicio: servicio };
+    return { exito: true, pasos: pasos, segmentos: segmentos, socket: socket, diagnostico: null, servicio: servicio, tramas: tramasDeSegmentos() };
   }
 
   // Herramienta tipo nslookup.
@@ -2836,7 +2915,7 @@ var Motor = (function () {
     if (!resuelto.exito) {
       return {
         exito: false, pasos: resuelto.pasos, saltos: resuelto.saltos && resuelto.saltos.length ? resuelto.saltos : [{ dispositivo: origen.id, interfaz: "" }],
-        diagnostico: resuelto.diagnostico, respuestas: [], tramas: []
+        diagnostico: resuelto.diagnostico, respuestas: [], tramas: [], tramasPrevias: resuelto.tramas || []
       };
     }
     var as = resuelto.respuesta.registros.filter(function (x) { return x.tipo === "A"; });
@@ -2848,6 +2927,7 @@ var Motor = (function () {
     }));
     res.nombre = texto;
     res.ipResuelta = ip;
+    res.tramasPrevias = resuelto.tramas || [];
     return res;
   }
 
@@ -4562,6 +4642,24 @@ var Motor = (function () {
       comparar("filtro de UDP 53: el DNS no llega (D26 por la regla)",
         [nombreBloqueado.diagnostico.codigo, /UDP 53/.test(nombreBloqueado.diagnostico.explicacion)], ["D26", true]);
       comparar("filtro de UDP 53: el ping a una IP sigue andando", ping(crearEstado(sinDns), "pc1", "8.8.8.8").exito, true);
+    })();
+
+    // Tramas para la captura: DNS, TCP y el ping con su protocolo.
+    (function () {
+      var porDefecto = [{ destino: "0.0.0.0", prefijo: 0, siguienteSalto: "200.45.7.1" }];
+      var est = crearEstado(conInternet(porDefecto, "8.8.8.8"));
+      var p = ping(est, "pc1", "8.8.8.8");
+      comparar("captura: las tramas del ping son ICMP", p.tramas.every(function (t) { return t.protocolo === "ICMP"; }), true);
+      var g = ping(crearEstado(conInternet(porDefecto, "8.8.8.8")), "pc1", "google.com");
+      comparar("captura: el ping a un nombre trae la consulta y la respuesta DNS aparte",
+        [g.tramasPrevias.length > 0, g.tramasPrevias.every(function (t) { return t.protocolo === "DNS"; }),
+          g.tramasPrevias[0].puertoDestino, /Consulta estándar A google.com/.test(g.tramasPrevias[0].info)], [true, true, 53, true]);
+      var c = conectar(crearEstado(conInternet(porDefecto, "8.8.8.8")), "pc1", "8.8.8.8", "tcp", 443);
+      var tcp = c.tramas.filter(function (t) { return t.protocolo !== "DNS"; });
+      comparar("captura: cada segmento TCP viaja por el camino de la red",
+        [tcp.length, tcp[0].flags, tcp[0].puertoDestino, /\[SYN\] Seq=1000/.test(tcp[0].info)], [8 * 2, "SYN", 443, true]);
+      comparar("captura: la respuesta del servidor va por la vuelta con los puertos invertidos",
+        [tcp[2].sentido, tcp[2].puertoOrigen], ["vuelta", 443]);
     })();
 
     // 36. Un destino mal escrito no es un diagnóstico de red.
