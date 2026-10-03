@@ -13,7 +13,7 @@ Esta guía explica cómo usar OpenRedLab en clase, cómo armar laboratorios de d
 | **Topología** | El modo normal: armar, configurar y probar. |
 | **Subredes** | Abre directamente la pestaña Cálculo de subred, para trabajar el binario y el «AND». |
 | **Desafío** | Abre la pestaña Simulación, donde está *Verificar diseño VLSM*. |
-| **Docente** | Oculta los avisos de configuración y muestra el botón **Exportar para el alumno**. |
+| **Docente** | Oculta los avisos de configuración, suma la pestaña **Laboratorio** (fallas, objetivos y sectores) y muestra el botón **Exportar para el alumno**. |
 
 **Para proyectar.** La tecla **F** (o *Presentación*) oculta la paleta y las propiedades, agranda los rótulos y deja la franja de abajo en una línea. *Tema oscuro* ayuda con algunos proyectores. Al abrir un ejemplo o un archivo, la red aparece entera en pantalla.
 
@@ -43,19 +43,19 @@ Esta guía explica cómo usar OpenRedLab en clase, cómo armar laboratorios de d
 
 ## 2. Armar un laboratorio de diagnóstico
 
-Un laboratorio es una red **sana** a la que se le plantan **fallas**, con **objetivos** que el alumno tiene que cumplir (por ejemplo, «la cámara llega al servidor»). Se arma en dos archivos: la versión **docente** (red sana + lista de fallas + objetivos), que guardás vos, y la versión del **alumno** (fallas aplicadas, sin la lista), que repartís.
-
-> Hoy las fallas y los objetivos se cargan editando el archivo `.json` con un editor de texto. Está previsto agregar editores en pantalla para hacerlo sin tocar el archivo.
+Un laboratorio es una red **sana** a la que se le plantan **fallas**, con **objetivos** que el alumno tiene que cumplir (por ejemplo, «la cámara llega al servidor»). Se arma en dos archivos: la versión **docente** (red sana + lista de fallas + objetivos), que guardás vos, y la versión del **alumno** (fallas aplicadas, sin la lista), que repartís. Todo se arma en pantalla, en la pestaña **Laboratorio** del modo Docente; no hace falta tocar el archivo.
 
 **Paso a paso:**
 
 1. **Partí de una red que funcione.** La más cómoda es el ejemplo **Complejo roto (docente)**, que ya trae tres fallas y dos objetivos como modelo. También podés armar una red propia; comprobá con varios pings que todo llegue.
-2. **Exportala** con el botón *Exportar*. Vas a obtener `topologia.json`.
-3. **Editá el archivo**: en la sección `"escenario"`, escribí las fallas y los objetivos (el formato está en la [sección 4](#4-formato-de-los-archivos)). Cambiá también el `"nombre"` de la red: se usa para nombrar el archivo del alumno.
-4. **Importalo** y apretá **Verificar**. Con la red sana, **todos los objetivos se tienen que cumplir**: si alguno falla, el problema es de la red de partida, no de las fallas.
-5. **Pasá a modo Docente** y apretá **Exportar para el alumno**. Se descarga `<nombre-de-la-red>-ALUMNO.json`, con las fallas ya aplicadas y sin la lista.
-6. **Comprobá la versión del alumno:** importala y apretá Verificar. Ahora los objetivos tienen que **fallar**, cada uno con el diagnóstico que esperabas.
-7. **Repartí el archivo del alumno** y guardá el docente: es la solución.
+2. **Pasá a modo Docente** y abrí la pestaña **Laboratorio**, abajo.
+3. **Cargá las fallas** (sección *Fallas*): elegí el tipo en *+ Agregar falla…* y, a la derecha, el equipo, el puerto, el cable, la ruta, el registro o el servicio, de listas armadas con tu red. La red que ves **sigue sana**: las fallas se aplican recién al exportar para el alumno.
+4. **Cargá los objetivos** (sección *Objetivos*): ping, conectar a un servicio o resolver un nombre; si se espera que funcione o que falle (y, si falla, por qué causa); y una descripción para el alumno.
+5. **Verificá el laboratorio** (sección *Verificar*): cada objetivo aparece en dos columnas, **Sana** (tu solución) y **Alumno** (con las fallas aplicadas), y debajo qué objetivos rompe cada falla. Un buen laboratorio da todo ✓ en la sana y algún ✗ en la del alumno; si no, la sección te avisa (un objetivo que no se cumple en tu solución, una falla que no rompe nada, fallas sin objetivos).
+6. **Cambiá el nombre de la red** (se usa para nombrar el archivo del alumno), **exportá la versión docente** con *Exportar* y guardala: es la solución.
+7. **Apretá Exportar para el alumno.** Se descarga `<nombre-de-la-red>-ALUMNO.json`, con las fallas ya aplicadas y sin la lista. Repartí ese.
+
+Si borrás o renombrás un equipo que una falla u objetivo usaba, el ítem queda marcado con ⚠ y la explicación («el equipo pc9 no está en la red»): corregilo o quitalo antes de exportar. Una falla que no cambiaría nada (quitar el NAT de un puerto que no lo tiene, un gateway igual al que ya está) también se marca. Todo se deshace con Ctrl+Z.
 
 **Recomendaciones:**
 
@@ -72,10 +72,13 @@ En un desafío, el alumno recibe una red **sin direccionar**, un **bloque** para
 
 **Paso a paso:**
 
-1. Armá la red (o usá el ejemplo **Desafío VLSM (complejo)** como modelo) y **dejá los equipos sin IP**.
-2. Exportala y, en `"escenario"`, escribí `"modo": "desafio"`, el `"bloqueBase"` y los `"requerimientos"`: un sector por red, con su nombre, los hosts que necesita y los equipos y puertos de router que le pertenecen (formato en la [sección 4](#4-formato-de-los-archivos)).
-3. Importala y apretá **Verificar diseño VLSM**: con la red vacía, todos los sectores tienen que decir «Ningún equipo de este sector tiene IP todavía».
-4. Repartí ese mismo archivo. Un desafío no lleva soluciones adentro.
+1. **Armá la red con tu solución**: direccionada y funcionando (o partí del ejemplo **Complejo turístico**).
+2. En modo Docente, pestaña **Laboratorio**, sección **Desafío VLSM**: apretá **Armar desde la red** (un sector por cada puerto de router con lo que cuelga de él), poné un nombre a cada sector y los **hosts** que necesita, y cargá el **bloque a repartir**. Los equipos y puertos de cada sector se agregan o se sacan con las fichas.
+3. En **Verificar**, tu solución tiene que cumplir el diseño VLSM.
+4. **Exportá la versión docente** (es la solución) y después **Exportar para el alumno**: el archivo del alumno sale **sin direccionar** (se borran IP, máscaras, gateways, rutas, DHCP y DNS; la nube de Internet queda como está), con los sectores y el bloque.
+5. Comprobá la versión del alumno: importala y apretá **Verificar diseño VLSM**; todos los sectores tienen que decir «Ningún equipo de este sector tiene IP todavía».
+
+Un desafío puede llevar también objetivos (por ejemplo, «el huésped llega al servidor»): el alumno los cumple cuando termina de direccionar.
 
 **Qué controla el verificador**, sector por sector, sin decir nunca cuál sería la dirección correcta:
 
