@@ -42,6 +42,12 @@ Después de un ping, el botón **Cómo viaja el paquete** cambia los pasos por l
 
 Los switches y puntos de acceso aparecen como «pasa por… sin cambiar la trama»: trabajan con la MAC y no la modifican. **Ver los encabezados** muestra cada trama con lo que lleva adentro: la trama (MAC), el paquete IP (IP y TTL) y el mensaje ICMP del ping, con lo que cambió resaltado. Al pasar el mouse por una línea se resalta su cable en el lienzo.
 
+## Hub, switch y router: los dominios
+
+Un **hub** (en la Configuración del switch, modelo *Hub de 8 puertos*) repite cada trama por todos sus puertos: la reciben todos y sólo el destino la acepta. Un **switch** la manda sólo por el puerto del destino, gracias a su tabla MAC. Un **router** no deja pasar los broadcast de una red a otra.
+
+El selector **Dominios** de la barra del lienzo pinta y cuenta los **dominios de colisión** (los equipos que comparten el medio: todo lo que cuelga de un hub, o una celda inalámbrica; cada puerto de switch es uno) y los **dominios de broadcast** (hasta dónde llega un broadcast: los corta el router).
+
 ## DNS: de un nombre a una IP
 
 Cuando hacés ping a un nombre, primero se averigua su IP, y eso se ve en el recorrido (pasos de **Capa 7 · Aplicación**):

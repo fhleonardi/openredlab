@@ -1096,6 +1096,12 @@ var Motor = (function () {
     return !!dispositivo && (dispositivo.tipo === "switch-l2" || dispositivo.tipo === "ap");
   }
 
+  // Un hub es un conmutador que no aprende MAC: repite cada trama por todos
+  // sus puertos.
+  function esHub(dispositivo) {
+    return !!dispositivo && dispositivo.tipo === "switch-l2" && dispositivo.modelo === "hub";
+  }
+
   // Modo de radio efectivo de una interfaz wireless. Si no está declarado se
   // usa el valor inicial por tipo: ap en puntos de acceso y routers, cliente
   // en el resto. En cobre y fibra no hay modo de radio.
@@ -1519,13 +1525,63 @@ var Motor = (function () {
       var partes = claves[i].split(":");
       var dev = buscarDispositivo(estado, partes[0]);
       if (esConmutador(dev) && dev.encendido) {
-        aprenderMac(estado, dev.id, macOrigen, partes.slice(1).join(":"), registrar);
+        if (!esHub(dev)) { aprenderMac(estado, dev.id, macOrigen, partes.slice(1).join(":"), registrar); }
         if (tocados.indexOf(dev.id) < 0) {
           tocados.push(dev.id);
         }
       }
     }
     return tocados;
+  }
+
+  /* ---------------- Dominios de colisión y de broadcast ----------------
+   * Unión de conjuntos sobre los enlaces. Colisión: comparten el medio los
+   * enlaces de un mismo hub y los de una misma celda inalámbrica (un puerto
+   * en modo ap). Broadcast: llega a todo lo unido por switches, hubs y
+   * puntos de acceso; los routers y los equipos finales lo cortan. */
+  function dominios(estado) {
+    var enlaces = (estado.topologia && estado.topologia.enlaces) || [];
+    var padre = {};
+    enlaces.forEach(function (e) { padre[e.id] = e.id; });
+    function raiz(x) { while (padre[x] !== x) { padre[x] = padre[padre[x]]; x = padre[x]; } return x; }
+    function unir(ids) { for (var i = 1; i < ids.length; i++) { padre[raiz(ids[i])] = raiz(ids[0]); } }
+    function idsDe(dev, iface) { return enlacesDe(estado, dev.id, iface.id).map(function (e) { return e.id; }); }
+    function grupos() {
+      var porRaiz = {};
+      var orden = [];
+      enlaces.forEach(function (e) {
+        var r = raiz(e.id);
+        if (!porRaiz[r]) { porRaiz[r] = { enlaces: [], dispositivos: [] }; orden.push(r); }
+        porRaiz[r].enlaces.push(e.id);
+        [e.a.dispositivo, e.b.dispositivo].forEach(function (d) {
+          if (porRaiz[r].dispositivos.indexOf(d) < 0) { porRaiz[r].dispositivos.push(d); }
+        });
+      });
+      return orden.map(function (r) { return porRaiz[r]; });
+    }
+    var devs = Object.keys(estado.porDispositivo).map(function (id) { return estado.porDispositivo[id]; });
+    devs.forEach(function (dev) {
+      if (esHub(dev)) {
+        var todos = [];
+        dev.interfaces.forEach(function (f) { todos = todos.concat(idsDe(dev, f)); });
+        unir(todos);
+      }
+      dev.interfaces.forEach(function (f) {
+        if (f.medio === "wireless" && modoRadioDe(dev, f) === "ap") { unir(idsDe(dev, f)); }
+      });
+    });
+    var colision = grupos();
+    enlaces.forEach(function (e) { padre[e.id] = e.id; });
+    devs.forEach(function (dev) {
+      if (esConmutador(dev)) {
+        var todos = [];
+        dev.interfaces.forEach(function (f) { todos = todos.concat(idsDe(dev, f)); });
+        unir(todos);
+      } else {
+        dev.interfaces.forEach(function (f) { unir(idsDe(dev, f)); });
+      }
+    });
+    return { colision: colision, broadcast: grupos() };
   }
 
   /* ---------------- Estado ---------------- */
@@ -1551,7 +1607,7 @@ var Motor = (function () {
         }
       }
       estado.arp[dev.id] = [];
-      if (esConmutador(dev)) {
+      if (esConmutador(dev) && !esHub(dev)) {
         estado.mac[dev.id] = [];
       }
     }
@@ -2471,8 +2527,13 @@ var Motor = (function () {
         if (destPar.dispositivo.id !== actualId) {
           anotarTrama(actualId, actualIface, destPar.dispositivo.id, destPar.interfaz, ttl);
         }
+        var hubsCruzados = tramoL2(estado, actualId, actualIface.id, destPar.dispositivo.id, destPar.interfaz.id).atraviesa
+          .filter(function (id) { return esHub(buscarDispositivo(estado, id)); });
         var textoSwitch = nom(actualId) + " averigua la MAC de " + destinoIp + " (ARP) y " + ((conmutadores.length > 0 || hayAp)
-          ? (hayAp
+          ? (hubsCruzados.length
+            ? "el hub " + hubsCruzados.map(nom).join(" y el hub ") + " repite la trama por todos sus puertos: la reciben todos los equipos " +
+              "conectados y sólo " + nombreDestinoFinal + " la acepta, porque la MAC de destino es la suya."
+            : hayAp
             ? "el punto de acceso le hace llegar la trama a " + nombreDestinoFinal + ": se guía por direcciones MAC, no por IP."
             : "el switch reenvía la trama por el puerto donde está " + nombreDestinoFinal + ": un switch se guía por direcciones MAC, no por IP.")
           : "el paquete llega directo a " + nombreDestinoFinal + " por el cable.");
@@ -4752,6 +4813,30 @@ var Motor = (function () {
       comparar("DNS: tipos de registro", TIPOS_REGISTRO, ["A", "CNAME", "MX", "NS"]);
     })();
 
+    // Hub y dominios: pc1 — sw1 — r1 === r2 — sw2 — pc2.
+    (function () {
+      var rutas1 = [{ destino: "192.168.2.0", prefijo: 24, siguienteSalto: "10.0.0.2" }];
+      var rutas2 = [{ destino: "192.168.1.0", prefijo: 24, siguienteSalto: "10.0.0.1" }];
+      var conSwitch = dominios(crearEstado(dosRouters(rutas1, rutas2)));
+      comparar("dominios con switches: 5 de colisión y 3 de broadcast", [conSwitch.colision.length, conSwitch.broadcast.length], [5, 3]);
+      var topoHub = dosRouters(rutas1, rutas2);
+      routerDe(topoHub, "sw1").modelo = "hub";
+      var conHub = dominios(crearEstado(topoHub));
+      comparar("dominios con un hub: 4 de colisión y 3 de broadcast", [conHub.colision.length, conHub.broadcast.length], [4, 3]);
+      comparar("el hub junta sus cables en un dominio de colisión",
+        conHub.colision.some(function (d) { return d.enlaces.join(",") === "l1,l2"; }), true);
+      var est = crearEstado(topoHub);
+      var res = ping(est, "pc1", "192.168.2.10");
+      comparar("ping a través de un hub", res.exito, true);
+      var pc2Local = fabPc("pc3", "192.168.1.20", 24, "192.168.1.1");
+      topoHub.dispositivos.push(pc2Local);
+      topoHub.enlaces.push(fabEnlace("l6", "pc3", "eth0", "sw1", "fa0/3"));
+      var local = ping(crearEstado(topoHub), "pc1", "192.168.1.20");
+      comparar("el hub repite la trama por todos sus puertos",
+        local.pasos.some(function (p) { return /repite la trama por todos sus puertos/.test(p.detalle); }), true);
+      comparar("un hub no tiene tabla MAC", est.mac.sw1, undefined);
+    })();
+
     // 36. Un destino mal escrito no es un diagnóstico de red.
     (function () {
       var topo = fabTopo([fabPc("pc-admin", "10.45.7.66", 27, "10.45.7.65")], []);
@@ -4772,6 +4857,8 @@ var Motor = (function () {
     avisosDhcp: avisosServidorDhcp,
     esFirewall: esFirewall,
     CAPAS: CAPAS,
+    dominios: dominios,
+    esHub: esHub,
     TIPOS_REGISTRO: TIPOS_REGISTRO,
     JERARQUIA_DNS: JERARQUIA,
     consultarDns: consultarDns,
@@ -4912,7 +4999,13 @@ var Escenarios = (function () {
     lista.push({ id: "fib0", medio: "fibra" });
     return lista;
   }
-  var MODELOS_SWITCH = { "24-puertos": puertosSwitch(24), "48-puertos": puertosSwitch(48) };
+  // El hub repite todo por todos sus puertos: 8 de cobre, sin fibra.
+  function puertosHub() {
+    var lista = [];
+    for (var i = 1; i <= 8; i++) { lista.push({ id: "fa0/" + i, medio: "ethernet" }); }
+    return lista;
+  }
+  var MODELOS_SWITCH = { "24-puertos": puertosSwitch(24), "48-puertos": puertosSwitch(48), hub: puertosHub() };
 
   /* ---------------- Servidor DNS ----------------
    * servicios.dns = { zona, recursivo, registros: [{ nombre, tipo, valor,
@@ -5294,7 +5387,7 @@ var Escenarios = (function () {
         } else if (d.tipo === "router" && !MODELOS_ROUTER[d.modelo]) {
           anotar(etiqueta + ".modelo", "El router \"" + d.id + "\" tiene un modelo que no existe: puede ser el estándar (sin modelo), \"8-puertos\" o \"firewall\".");
         } else if (d.tipo === "switch-l2" && !MODELOS_SWITCH[d.modelo]) {
-          anotar(etiqueta + ".modelo", "El switch \"" + d.id + "\" tiene un modelo que no existe: puede ser el estándar (sin modelo), \"24-puertos\" o \"48-puertos\".");
+          anotar(etiqueta + ".modelo", "El switch \"" + d.id + "\" tiene un modelo que no existe: puede ser el estándar (sin modelo), \"24-puertos\", \"48-puertos\" o \"hub\".");
         }
       }
       var esperadas = interfacesEsperadas(d);
@@ -7038,6 +7131,9 @@ var Escenarios = (function () {
 
     (function () {
       var topo = topologiaComplejo();
+      var conHub = clonar(topo);
+      comparar("switch a hub sigue los cables y valida", cambiarModelo(conHub, "sw-admin", "hub").ok &&
+        validarTopologia(conHub).ok && buscarDispositivo(conHub, "sw-admin").interfaces.length, 8);
       comparar("switch a 24 puertos", cambiarModelo(topo, "sw-admin", "24-puertos").ok &&
         buscarDispositivo(topo, "sw-admin").interfaces.length, 25);
       comparar("switch de 24 puertos valida", validarTopologia(topo).ok, true);
@@ -7320,13 +7416,14 @@ var UI = (function () {
     return lineas;
   }
 
-  var NOMBRES_TIPO = { servidor: "servidor", pc: "PC", router: "router", "router-8": "router de 8 puertos", firewall: "firewall", internet: "internet", "switch-l2": "switch", camara: "cámara", iot: "IoT", ap: "punto de acceso" };
+  var NOMBRES_TIPO = { hub: "hub", servidor: "servidor", pc: "PC", router: "router", "router-8": "router de 8 puertos", firewall: "firewall", internet: "internet", "switch-l2": "switch", camara: "cámara", iot: "IoT", ap: "punto de acceso" };
 
   // Clave de paleta e ícono: el tipo, salvo el router de 8 puertos y el
   // firewall, que son tipo "router" con modelo "8-puertos" o "firewall".
   function claveDe(d) {
     if (d && d.tipo === "router" && d.modelo === "8-puertos") { return "router-8"; }
     if (d && d.tipo === "router" && d.modelo === "firewall") { return "firewall"; }
+    if (d && d.tipo === "switch-l2" && d.modelo === "hub") { return "hub"; }
     return d ? d.tipo : "";
   }
 
@@ -7492,6 +7589,9 @@ var UI = (function () {
     ".simpaleta .palgrid + h2{margin-top:8px;}",
     ".simlienzo{flex:1;position:relative;min-width:0;background:var(--sim-fondo);}",
     ".simlienzo svg.lienzo{width:100%;height:100%;display:block;touch-action:none;}",
+    ".simtools select{font-size:12px;}",
+    ".simtools .cuentadom{align-self:center;font-size:12px;font-weight:600;padding:0 4px;color:var(--sim-texto);}",
+    ".simtools .cuentadom:empty{display:none;}",
     ".simtools{position:absolute;top:8px;left:8px;display:flex;gap:4px;background:var(--sim-panel);border:1px solid var(--sim-borde);border-radius:8px;padding:4px;}",
     ".simtools button{padding:2px 8px;}",
     ".leyenda-lienzo{display:none;position:absolute;right:12px;bottom:12px;background:var(--sim-panel);border:1px solid var(--sim-borde);border-radius:8px;padding:8px 12px;font-size:13px;line-height:1.6;}",
@@ -7711,6 +7811,10 @@ var UI = (function () {
       return "<rect x='-26' y='-11' width='52' height='22' rx='4' fill='#f6d186' stroke='#8a5a00' stroke-width='2'/>" +
         "<path d='M-9 -5 L9 5 M-9 5 L9 -5' stroke='#8a5a00' stroke-width='2'/>" +
         "<circle cx='0' cy='0' r='2.5' fill='#8a5a00'/>";
+    }
+    if (tipo === "hub") {
+      return "<rect x='-20' y='-10' width='40' height='20' rx='4' fill='#e0e0e0' stroke='#555' stroke-width='2'/>" +
+        "<text x='0' y='4' text-anchor='middle' font-size='10' font-weight='700' fill='#444' font-family='system-ui,sans-serif'>HUB</text>";
     }
     if (tipo === "servidor") {
       return "<rect x='-12' y='-16' width='24' height='32' rx='2' fill='#c5cae9' stroke='#283593' stroke-width='2'/>" +
@@ -7963,6 +8067,22 @@ var UI = (function () {
       b.addEventListener("click", function () { accionLienzo(par[0]); });
       tools.appendChild(b);
     });
+    // Dominios de colisión y de broadcast pintados sobre los cables.
+    var selDom = document.createElement("select");
+    selDom.setAttribute("aria-label", "Mostrar dominios");
+    [["", "Dominios: no mostrar"], ["colision", "Dominios de colisión"], ["broadcast", "Dominios de broadcast"]].forEach(function (o) {
+      var op = document.createElement("option"); op.value = o[0]; op.textContent = o[1]; selDom.appendChild(op);
+    });
+    selDom.title = "Colisión: lo cortan los switches (cada puerto es uno); un hub y una celda inalámbrica lo comparten. Broadcast: lo cortan los routers.";
+    selDom.addEventListener("change", function () {
+      S.verDominios = selDom.value || null;
+      registrar("dominios", S.verDominios ? "Se muestran los dominios de " + (S.verDominios === "colision" ? "colisión." : "broadcast.") : "Se ocultan los dominios.");
+      renderLienzo();
+    });
+    tools.appendChild(selDom);
+    var cuentaDom = el("span", "cuentadom");
+    tools.appendChild(cuentaDom);
+    S.cuentaDominios = cuentaDom;
     zona.appendChild(tools);
     zona.appendChild(el("div", "leyenda-lienzo",
       "<div><svg width='26' height='8' aria-hidden='true'><line x1='1' y1='4' x2='25' y2='4' stroke='#1e7a34' stroke-width='3'/></svg> cobre</div>" +
@@ -8170,6 +8290,34 @@ var UI = (function () {
     while (S.capaNodos.firstChild) { S.capaNodos.removeChild(S.capaNodos.firstChild); }
     var porId = {};
     (S.topologia.dispositivos || []).forEach(function (d) { porId[d.id] = d; });
+
+    // Dominios: una franja ancha y translúcida debajo de cada cable, con el
+    // color de su dominio.
+    if (S.cuentaDominios) { S.cuentaDominios.textContent = ""; }
+    if (S.verDominios && S.estado && Motor.dominios) {
+      var COLORES_DOM = ["#e6194b", "#3cb44b", "#4363d8", "#f58231", "#911eb4", "#42d4f4", "#f032e6", "#9a6324"];
+      var doms = [];
+      try { doms = Motor.dominios(S.estado)[S.verDominios] || []; } catch (e) { doms = []; }
+      var palabra = S.verDominios === "colision" ? "colisión" : "broadcast";
+      doms.forEach(function (dom, k) {
+        dom.enlaces.forEach(function (idE) {
+          var en = buscarEnlace(idE);
+          var tr = en && tramoEnlace(en, en.a.dispositivo);
+          if (!tr) { return; }
+          var franja = document.createElementNS(svgNS, "line");
+          franja.setAttribute("x1", tr.de.x); franja.setAttribute("y1", tr.de.y);
+          franja.setAttribute("x2", tr.a.x); franja.setAttribute("y2", tr.a.y);
+          franja.setAttribute("stroke", COLORES_DOM[k % COLORES_DOM.length]);
+          franja.setAttribute("stroke-width", "14"); franja.setAttribute("stroke-linecap", "round");
+          franja.setAttribute("opacity", "0.35");
+          var tt = document.createElementNS(svgNS, "title");
+          tt.textContent = "Dominio de " + palabra + " " + (k + 1) + ": " + dom.dispositivos.map(nombreDe).join(", ");
+          franja.appendChild(tt);
+          S.capaEnlaces.appendChild(franja);
+        });
+      });
+      if (S.cuentaDominios) { S.cuentaDominios.textContent = doms.length + (doms.length === 1 ? " dominio" : " dominios"); }
+    }
 
     (S.topologia.enlaces || []).forEach(function (e) {
       var a = porId[e.a.dispositivo], b = porId[e.b.dispositivo];
@@ -9258,7 +9406,7 @@ var UI = (function () {
 
   var MODELOS_UI = {
     router: [["", "Router estándar (g0/0, fib0…)"], ["8-puertos", "Router tipo MikroTik (ether1, sfp1…)"], ["firewall", "Firewall (wan, lan, dmz)"]],
-    "switch-l2": [["", "Switch de 8 puertos"], ["24-puertos", "Switch de 24 puertos"], ["48-puertos", "Switch de 48 puertos"]]
+    "switch-l2": [["", "Switch de 8 puertos"], ["24-puertos", "Switch de 24 puertos"], ["48-puertos", "Switch de 48 puertos"], ["hub", "Hub de 8 puertos"]]
   };
 
   function panelConfig(c, d) {
@@ -9744,7 +9892,9 @@ var UI = (function () {
       var arp = [];
       try { arp = Motor.tablaArp(S.estado, d.id) || []; } catch (e) { arp = []; }
       c.appendChild(el("p", "", "<b>Tabla ARP:</b><br>" + (arp.length ? escapar(arp.map(function (x) { return x.ip + " → " + x.mac; }).join(", ")) : "vacía")));
-      if (d.tipo === "switch-l2") {
+      if (d.tipo === "switch-l2" && d.modelo === "hub") {
+        c.appendChild(el("p", "", "<b>Tabla MAC:</b> un hub no tiene. Repite cada trama por todos sus puertos, sin mirar la MAC."));
+      } else if (d.tipo === "switch-l2") {
         var mac = [];
         try { mac = Motor.tablaMac(S.estado, d.id) || []; } catch (e) { mac = []; }
         c.appendChild(el("p", "", "<b>Tabla MAC:</b><br>" + (mac.length ? escapar(mac.map(function (x) { return x.mac + " → " + x.puerto; }).join(", ")) : "vacía")));
@@ -10180,8 +10330,10 @@ var UI = (function () {
       var partes = [escapar(nombreDe(t.de.dispositivo)) + " → " + escapar(nombreDe(t.a.dispositivo))];
       if (t.medio) { partes.push("por " + (PALABRA_MEDIO[t.medio] || escapar(t.medio))); }
       if (t.atraviesa && t.atraviesa.length) {
+        var hubs = t.atraviesa.filter(function (id) { var x = buscarDisp(id); return x && x.tipo === "switch-l2" && x.modelo === "hub"; });
         partes.push("pasa por " + t.atraviesa.map(function (id) { return escapar(nombreDe(id)); }).join(" y ") +
-          (t.atraviesa.length > 1 ? ", que no cambian" : ", que no cambia") + " la trama");
+          (t.atraviesa.length > 1 ? ", que no cambian" : ", que no cambia") + " la trama" +
+          (hubs.length ? " (" + (hubs.length > 1 ? "los hubs la repiten" : "el hub la repite") + " por todos sus puertos)" : ""));
       }
       if (prev) {
         var cambia = [], queda = [];
@@ -10797,6 +10949,8 @@ var UI = (function () {
       "<li>La nube Internet responde por cualquier IP pública y trae armada la jerarquía del DNS (raíz, .com, .org, .ar, .google, .one) " +
       "con google.com, www.google.com, dns.google, one.one.one.one y wikipedia.org. Las IP de la raíz, de .com y de ns1.google.com son las reales; " +
       "las demás, ilustrativas.</li>" +
+      "<li>El hub es un modelo del switch: repite cada trama por todos sus puertos y no tiene tabla MAC. No se simulan colisiones: " +
+      "los dominios de colisión y de broadcast se ven con el selector <i>Dominios</i> del lienzo.</li>" +
       "<li>Un servidor DNS es autoritativo de una sola zona. Su caché dura el TTL de cada registro (300 s si no se indica) y se vacía al cambiar la red.</li></ul>"));
     c.appendChild(caja);
   }
@@ -11364,6 +11518,12 @@ var Autotest = (function () {
       esperado: "SRV-DNS responde intranet.oficina.local con autoridad. Para google.com consulta la raíz, el servidor de .com y el " +
         "autoritativo de google.com (consultas iterativas), responde sin autoridad y la guarda en su caché: la segunda vez contesta desde ahí."
     },
+    20: {
+      conError: false,
+      situacion: "Tres PC conectadas a un mismo equipo: primero un hub y después un switch.",
+      esperado: "Con el hub, las tres comparten el medio: 1 dominio de colisión. Con el switch, cada puerto es su propio dominio: 3. " +
+        "En los dos casos es 1 solo dominio de broadcast, porque ni el hub ni el switch lo cortan (lo corta un router)."
+    },
     12: {
       conError: true,
       situacion: "En el desafío VLSM, el sector Cámaras se arma con el router en 10.45.7.41/28, al lado del Wi-Fi " +
@@ -11573,6 +11733,31 @@ var Autotest = (function () {
         (otraVez.respuesta && otraVez.respuesta.desdeCache ? "; la segunda vez, desde la caché." : "."));
     } catch (e) {
       return fila(19, nombre, false, "Excepción: " + e.message);
+    }
+  }
+
+  function tresPcEn(modelo) {
+    var t = clonar(ejemploPorId("basica").topologia);
+    var sw = t.dispositivos.filter(function (d) { return d.tipo === "switch-l2"; })[0];
+    if (modelo) { sw.modelo = modelo; sw.interfaces = sw.interfaces.filter(function (f) { return f.medio === "ethernet"; }); }
+    var pc = clonar(t.dispositivos.filter(function (d) { return d.tipo === "pc"; })[0]);
+    pc.id = "pc-3"; pc.nombre = "PC-3"; pc.y += 120; pc.interfaces[0].ip = "192.168.1.30";
+    t.dispositivos.push(pc);
+    t.enlaces.push({ id: "l-pc3", tipo: "ethernet", estado: "up", a: { dispositivo: "pc-3", interfaz: "eth0" }, b: { dispositivo: sw.id, interfaz: "fa0/8" } });
+    return t;
+  }
+
+  function crit20() {
+    var nombre = "Un hub es un solo dominio de colisión; un switch separa uno por puerto";
+    try {
+      var conHub = Motor.dominios(Motor.crearEstado(tresPcEn("hub")));
+      var conSwitch = Motor.dominios(Motor.crearEstado(tresPcEn(null)));
+      var pasa = conHub.colision.length === 1 && conSwitch.colision.length === 3 &&
+        conHub.broadcast.length === 1 && conSwitch.broadcast.length === 1;
+      return fila(20, nombre, pasa, "Con hub: " + conHub.colision.length + " de colisión y " + conHub.broadcast.length +
+        " de broadcast. Con switch: " + conSwitch.colision.length + " de colisión y " + conSwitch.broadcast.length + " de broadcast.");
+    } catch (e) {
+      return fila(20, nombre, false, "Excepción: " + e.message);
     }
   }
 
@@ -12247,7 +12432,7 @@ var Autotest = (function () {
    * puede leer y discutir. Los criterios de la interfaz y del archivo, y las
    * pruebas internas de las capas, quedan para quien programa:
    * Autotest.correr({ tecnico: true }) desde la consola. */
-  var CRITERIOS_DIDACTICOS = [crit02, crit17, crit03, crit04, crit05, crit06, crit18, crit19, crit07, crit08, crit12];
+  var CRITERIOS_DIDACTICOS = [crit02, crit17, crit03, crit04, crit05, crit06, crit20, crit18, crit19, crit07, crit08, crit12];
   var CRITERIOS_TECNICOS = [crit01, crit09, crit10, crit11, crit13, crit14, crit15, crit16];
 
   function correr(opciones) {
