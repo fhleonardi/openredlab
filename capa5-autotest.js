@@ -147,6 +147,12 @@ var Autotest = (function () {
       esperado: "Con R2 como router, HTTP falla: el pedido pasa, pero la respuesta no coincide con ninguna regla y la política la bloquea (D27 en la vuelta). " +
         "Como firewall, HTTP funciona porque recuerda la conversación y deja volver la respuesta. SSH falla en los dos casos por la política (D27)."
     },
+    23: {
+      conError: true,
+      situacion: "En el complejo, el cable R1–R2 pasa a tener 10 ms de jitter y después 100 % de pérdida. PC-Admin manda 10 pings al Servidor.",
+      esperado: "Con jitter, los 10 vuelven, pero con tiempos distintos: el ping informa mínimo, media y máximo. Con 100 % de pérdida " +
+        "no vuelve ninguno, aunque el camino existe: D32, un problema de calidad del enlace y no de configuración."
+    },
     12: {
       conError: true,
       situacion: "En el desafío VLSM, el sector Cámaras se arma con el router en 10.45.7.41/28, al lado del Wi-Fi " +
@@ -424,6 +430,25 @@ var Autotest = (function () {
         (comoFw.exito ? "se conecta" : diagnosticoTexto(comoFw)) + "; SSH: " + diagnosticoTexto(ssh) + ".");
     } catch (e) {
       return fila(22, nombre, false, "Excepción: " + e.message);
+    }
+  }
+
+  function crit23() {
+    var nombre = "QoS: el jitter hace variar los tiempos y la pérdida se lleva paquetes (D32)";
+    try {
+      function complejoCon(campo, valor) {
+        var t = clonar(ejemploPorId("complejo").topologia);
+        t.enlaces.forEach(function (e) { if (e.id === "l-r1-r2") { e[campo] = valor; } });
+        return Motor.crearEstado(t);
+      }
+      var conJitter = Motor.pingRepetido(complejoCon("jitterMs", 10), "pc-admin", "10.45.7.122", { cantidad: 10, semilla: 5 });
+      var sinNada = Motor.pingRepetido(complejoCon("perdidaPct", 100), "pc-admin", "10.45.7.122", { cantidad: 10, semilla: 5 });
+      var ej = conJitter.estadisticas;
+      var pasa = ej.recibidos === 10 && ej.maximo > ej.minimo && sinNada.diagnostico && sinNada.diagnostico.codigo === "D32";
+      return fila(23, nombre, pasa, "Con jitter: 10 de 10, mínimo " + ej.minimo + " ms, media " + ej.promedio + " ms, máximo " + ej.maximo +
+        " ms. Con 100 % de pérdida: " + (sinNada.diagnostico ? sinNada.diagnostico.codigo + " (" + sinNada.diagnostico.titulo + ")" : "sin diagnóstico") + ".");
+    } catch (e) {
+      return fila(23, nombre, false, "Excepción: " + e.message);
     }
   }
 
@@ -1098,7 +1123,7 @@ var Autotest = (function () {
    * puede leer y discutir. Los criterios de la interfaz y del archivo, y las
    * pruebas internas de las capas, quedan para quien programa:
    * Autotest.correr({ tecnico: true }) desde la consola. */
-  var CRITERIOS_DIDACTICOS = [crit02, crit17, crit03, crit04, crit05, crit06, crit20, crit18, crit19, crit21, crit22, crit07, crit08, crit12];
+  var CRITERIOS_DIDACTICOS = [crit02, crit17, crit03, crit04, crit05, crit06, crit20, crit18, crit19, crit21, crit22, crit23, crit07, crit08, crit12];
   var CRITERIOS_TECNICOS = [crit01, crit09, crit10, crit11, crit13, crit14, crit15, crit16];
 
   function correr(opciones) {

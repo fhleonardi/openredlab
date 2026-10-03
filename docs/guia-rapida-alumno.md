@@ -54,6 +54,10 @@ Si la red llega pero nadie atiende ese puerto, el resultado es **D31**: en TCP e
 
 Las reglas de **Filtrado** de un router o firewall pueden mirar el protocolo, el puerto y por dónde entra el paquete; lo que no coincide con ninguna lo decide la **política por defecto**. Si una regla te frena, el diagnóstico es **D27** y dice cuál.
 
+## Calidad del enlace (QoS)
+
+En las propiedades de un cable podés cargar su **latencia** (lo que tarda en cruzarlo), su **jitter** (cuánto varía ese tiempo) y su **pérdida** (el porcentaje de paquetes que no llegan). El ping manda 4 paquetes por defecto (podés elegir 1, 10 o 50) y, como el ping real, muestra cada respuesta o «Tiempo de espera agotado», los perdidos y el tiempo mínimo, medio y máximo. La pérdida se aplica cada vez que el paquete cruza el cable: a la ida y a la vuelta. Si no vuelve ninguno, el diagnóstico es **D32**.
+
 ## Captura: lo que pasa por un cable
 
 En la pestaña **Captura** elegís un cable (o todos), apretás **Iniciar captura** y después hacés pings, consultas DNS o conexiones en Simulación. Cada paquete que pase por ese cable aparece numerado, como en Wireshark: origen, destino, protocolo e información (por ejemplo `49612 → 80 [SYN] Seq=1000`). Al tocar uno, ves sus capas: la trama (MAC), el paquete IP (IP y TTL), el segmento TCP o el datagrama UDP (puertos, indicadores) y los datos de la aplicación.
@@ -101,6 +105,7 @@ Los diagnósticos que más te van a aparecer:
 | **D29** | Esa IP no es un servidor DNS | El DNS de la PC tiene que ser un servidor con DNS o un público como 8.8.8.8 |
 | **D30** | El servidor DNS no llega a internet | La salida a internet del servidor: puerta de enlace, rutas y NAT |
 | **D31** | Puerto cerrado: la red llega, pero nadie atiende ese servicio | Pestaña Servicios del servidor, y el puerto y protocolo elegidos |
+| **D32** | Se perdieron todos los paquetes | La pérdida (%) de los cables del recorrido |
 
 ## La pestaña Cálculo de subred
 

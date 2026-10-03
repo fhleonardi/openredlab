@@ -470,6 +470,7 @@ var UI = (function () {
     ".pasofallo pre{margin:4px 0 0;font-family:ui-monospace,Consolas,monospace;font-size:12px;white-space:pre-wrap;}",
     ".banda-ok{border:1px solid var(--sim-ok);border-left:6px solid var(--sim-ok);background:var(--sim-okfondo);border-radius:8px;padding:8px 12px;}",
     ".banda-ok b{font-size:16px;color:var(--sim-ok);}",
+    ".banda-ok.conperdida{border-color:var(--sim-aviso);border-left-color:var(--sim-aviso);}",
     ".banda-ok .ruta{font-family:ui-monospace,Consolas,monospace;font-size:13px;margin-top:2px;}",
     ".diagnostico{border:1px solid var(--sim-mal);border-left:6px solid var(--sim-mal);background:var(--sim-malfondo);border-radius:8px;padding:8px 12px;font-size:13px;line-height:1.45;flex:0 0 auto;}",
     ".diagnostico .cod{display:inline-block;color:var(--sim-tenue);border:1px solid var(--sim-borde);font-family:ui-monospace,Consolas,monospace;font-size:11px;border-radius:4px;padding:0 5px;margin-left:8px;vertical-align:middle;}",
@@ -2121,8 +2122,23 @@ var UI = (function () {
         }
         c.appendChild(el("p", "", escapar(nombreDe(e.a.dispositivo) + " (" + e.a.interfaz + ")") + " — " +
           escapar(nombreDe(e.b.dispositivo) + " (" + e.b.interfaz + ")") +
-          "<br>Tipo: " + escapar(palabraCable(e.tipo)) + "<br>Velocidad: " + escapar(String(e.velocidadMbps)) + " Mbps<br>Retardo: " +
-          escapar(String(e.retardoMs)) + " ms" + extra));
+          "<br>Tipo: " + escapar(palabraCable(e.tipo)) + "<br>Velocidad: " + escapar(String(e.velocidadMbps)) + " Mbps" + extra));
+        // Calidad del enlace (QoS): la usa el ping de varios paquetes.
+        c.appendChild(el("p", "leyenda", "<b>Calidad del enlace</b>: la latencia es lo que tarda en cruzarlo; el jitter, cuánto varía; la pérdida, qué parte de los paquetes no llega."));
+        [["retardoMs", "Latencia (ms)", 0, 1000], ["jitterMs", "Jitter (ms)", 0, 1000], ["perdidaPct", "Pérdida (%)", 0, 100]].forEach(function (cfg) {
+          var inp = document.createElement("input");
+          inp.type = "number"; inp.min = String(cfg[2]); inp.max = String(cfg[3]); inp.step = "1";
+          inp.value = e[cfg[0]] !== undefined && e[cfg[0]] !== null ? e[cfg[0]] : 0;
+          inp.addEventListener("change", function () {
+            var n = Number(inp.value);
+            if (!(n >= cfg[2] && n <= cfg[3])) { avisar(cfg[1] + ": va de " + cfg[2] + " a " + cfg[3] + "."); inp.value = e[cfg[0]] || 0; return; }
+            empujarHistorial();
+            e[cfg[0]] = n;
+            reconstruirEstado();
+            registrar("calidad", cfg[1] + " del cable " + e.id + ": " + n + ".");
+          });
+          c.appendChild(etiqueta(cfg[1], inp)); c.appendChild(inp);
+        });
         var bB = boton("Borrar cable (Supr)", "borrar");
         bB.addEventListener("click", borrarSeleccion);
         c.appendChild(bB);
@@ -3011,6 +3027,14 @@ var UI = (function () {
     ctrl.appendChild(el("span", "flecha", "→")).setAttribute("aria-hidden", "true");
     ctrl.appendChild(etiqueta(enDns ? "Nombre" : "Destino", selD)); ctrl.appendChild(selD);
     if (enDns) { ctrl.appendChild(etiqueta("Tipo", selTipoDns)); ctrl.appendChild(selTipoDns); }
+    // Cuántos paquetes manda el ping: como el ping real, 4 por defecto.
+    var selCant = document.createElement("select");
+    [["1", "1 paquete"], ["4", "4 paquetes"], ["10", "10 paquetes"], ["50", "50 paquetes"]].forEach(function (o) {
+      var op = document.createElement("option"); op.value = o[0]; op.textContent = o[1]; selCant.appendChild(op);
+    });
+    selCant.value = String(S.cantPing || 4);
+    selCant.addEventListener("change", function () { S.cantPing = Number(selCant.value); });
+    if (!enDns && !enConectar) { ctrl.appendChild(etiqueta("Paquetes", selCant)); ctrl.appendChild(selCant); }
     if (enConectar) {
       ctrl.appendChild(etiqueta("Servicio", selServ)); ctrl.appendChild(selServ);
       if (selServ.value === "otro") {
@@ -3107,10 +3131,13 @@ var UI = (function () {
       S.ultimoDestino = selD.value;
       S.origenElegido = selO.value;
       if (!S.estado) { reconstruirEstado(); }
-      var res;
-      try { res = Motor.ping(S.estado, selO.value, selD.value.trim()); }
-      catch (e) { registrar("error", "El ping falló por un error interno: " + e.message); return; }
-      pintarPing(selO.value, selD.value.trim(), res);
+      var res, qos;
+      S.semillaPing = (S.semillaPing || 0) + 1;
+      try {
+        qos = Motor.pingRepetido(S.estado, selO.value, selD.value.trim(), { cantidad: Number(selCant.value), semilla: S.semillaPing });
+        res = qos.res;
+      } catch (e) { registrar("error", "El ping falló por un error interno: " + e.message); return; }
+      pintarPing(selO.value, selD.value.trim(), res, qos);
       animarPing(res);
     }
     bPing.addEventListener("click", hacerPing);
@@ -3352,11 +3379,20 @@ var UI = (function () {
         (resp.autoritativa ? "respuesta autoritativa" : "respuesta no autoritativa" + (resp.desdeCache ? ", desde la caché" : "")) + "</div>" +
         "<div class='ruta'>" + resp.registros.map(function (x) { return escapar(textoRegistroUI(x)); }).join("<br>") + "</div>"));
       lado.appendChild(renderConsola());
+    } else if (res.exito && S.ultimo.qos && S.ultimo.qos.diagnostico) {
+      // El camino existe, pero se perdieron todos los paquetes (D32).
+      lado.appendChild(renderDiagnostico(S.ultimo.qos.diagnostico));
+      lado.appendChild(renderConsolaPlegable());
     } else if (res.exito) {
       var r = res.respuestas[0] || { ms: 1, ttl: 64 };
       var ruta = rutaNombres(res);
-      lado.appendChild(el("div", "banda-ok",
-        "<b>✓ El eco volvió en " + r.ms + " ms.</b>" +
+      var q = S.ultimo.qos && S.ultimo.qos.cantidad > 1 ? S.ultimo.qos.estadisticas : null;
+      lado.appendChild(el("div", q && q.perdidos ? "banda-ok conperdida" : "banda-ok",
+        (q
+          ? "<b>✓ Volvieron " + q.recibidos + " de " + q.enviados + " paquetes" + (q.perdidos ? " (" + q.porcentajePerdida + " % de pérdida)" : "") + ".</b>" +
+            "<div>Mínimo " + q.minimo + " ms · media " + q.promedio + " ms · máximo " + q.maximo + " ms" +
+            (q.maximo > q.minimo ? " · variación (jitter) " + (q.maximo - q.minimo) + " ms" : "") + "</div>"
+          : "<b>✓ El eco volvió en " + r.ms + " ms.</b>") +
         "<div class='ruta'>" + escapar(ruta.join(" → ")) + " · " + cantidadSaltos(res) + " saltos · TTL " + r.ttl + "</div>"));
       lado.appendChild(renderConsola());
     } else {
@@ -3740,14 +3776,29 @@ var UI = (function () {
     });
   }
 
-  function pintarPing(origen, destino, res) {
+  function pintarPing(origen, destino, res, qos) {
     capturarTramas((res.tramasPrevias || []).concat(res.tramas || []));
-    S.ultimo = { origen: origen, destino: destino, res: res };
+    S.ultimo = { origen: origen, destino: destino, res: res, qos: qos || null };
     S.panelRes = "ping";
     S.verTodos = false;
     S.verTramas = false;
     S.consolaAbierta = false;
-    if (res.exito) {
+    if (res.exito && qos && qos.estadisticas) {
+      var est = qos.estadisticas;
+      var desde = res.ipResuelta || destino;
+      if (res.ipResuelta) { consolaAgregar("Haciendo ping a " + destino + " [" + res.ipResuelta + "]"); }
+      qos.respuestas.forEach(function (x) {
+        if (x.perdido) { consolaAgregar("Tiempo de espera agotado para esta solicitud.", true); }
+        else { consolaAgregar("Respuesta desde " + desde + ": bytes=32 tiempo=" + x.ms + "ms TTL=" + x.ttl); }
+      });
+      consolaAgregar("Estadísticas: " + est.enviados + " enviados, " + est.recibidos + " recibidos, " + est.perdidos + " perdidos (" +
+        est.porcentajePerdida + " % perdidos).");
+      if (est.recibidos) {
+        consolaAgregar("Tiempos: mínimo = " + est.minimo + " ms, máximo = " + est.maximo + " ms, media = " + est.promedio + " ms.");
+      }
+      anunciar("Ping a " + destino + ": volvieron " + est.recibidos + " de " + est.enviados + " paquetes" +
+        (est.recibidos ? ", media de " + est.promedio + " milisegundos." : "."));
+    } else if (res.exito) {
       var r = res.respuestas[0] || { ttl: 64, ms: 1 };
       if (res.ipResuelta) { consolaAgregar("Haciendo ping a " + destino + " [" + res.ipResuelta + "]"); }
       consolaAgregar("Respuesta desde " + (res.ipResuelta || destino) + ": bytes=32 tiempo=" + r.ms + "ms TTL=" + r.ttl);
@@ -4097,7 +4148,7 @@ var UI = (function () {
       "<li>Rutas a mano (sin OSPF, BGP ni RIP); sin STP, VLAN ni IPv6.</li>" +
       "<li>NAT de salida; DHCP, un rango por router; wireless, sólo distancia (" + alcance + " m).</li>" +
       "<li>Reglas: red, protocolo, puerto y entrada.</li>" +
-      "<li>TCP sin retransmisiones ni congestión.</li>" +
+      "<li>TCP sin retransmisiones ni congestión; la QoS es latencia, jitter y pérdida por cable.</li>" +
       "<li>Sin colisiones en el hub; la captura no muestra ARP ni DHCP.</li>" +
       "<li>Internet: jerarquía DNS y algunos sitios (IP ilustrativas).</li></ul>"));
     c.appendChild(caja);

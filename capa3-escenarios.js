@@ -177,6 +177,20 @@ var Escenarios = (function () {
     });
   }
 
+  // Calidad del enlace: latencia, jitter y pérdida.
+  function validarCalidad(e, anotar) {
+    var campo = "enlaces." + e.id;
+    if (e.retardoMs !== undefined && e.retardoMs !== null && !(Number(e.retardoMs) >= 0)) {
+      anotar(campo + ".retardoMs", "La latencia del cable \"" + e.id + "\" tiene que ser un número de milisegundos (0 o más).");
+    }
+    if (e.jitterMs !== undefined && e.jitterMs !== null && !(Number(e.jitterMs) >= 0)) {
+      anotar(campo + ".jitterMs", "El jitter del cable \"" + e.id + "\" tiene que ser un número de milisegundos (0 o más).");
+    }
+    if (e.perdidaPct !== undefined && e.perdidaPct !== null && !(Number(e.perdidaPct) >= 0 && Number(e.perdidaPct) <= 100)) {
+      anotar(campo + ".perdidaPct", "La pérdida del cable \"" + e.id + "\" es un porcentaje: va de 0 a 100.");
+    }
+  }
+
   function validarServiciosDns(d, etiqueta, anotar) {
     validarEscuchando(d, etiqueta, anotar);
     var dns = d.servicios && d.servicios.dns;
@@ -728,6 +742,7 @@ var Escenarios = (function () {
         anotar("enlaces." + idE, "El cable \"" + idE + "\" no tiene sus dos puntas.");
         continue;
       }
+      validarCalidad(e, anotar);
       var devA = buscarDispositivo(obj, e.a.dispositivo);
       var devB = buscarDispositivo(obj, e.b.dispositivo);
       var ifA = devA ? buscarInterfaz(devA, e.a.interfaz) : null;
@@ -2493,6 +2508,12 @@ var Escenarios = (function () {
         { tipo: "resolver", origen: "pc1", nombre: "intranet.oficina.local", valor: "10.0.0.1", esperado: "exito" }
       ]);
       comparar("objetivos conectar y resolver", objs.map(function (o) { return o.cumple; }), [true, true, true, false]);
+      var conCalidad = clonar(ofi);
+      conCalidad.enlaces[0].jitterMs = 3; conCalidad.enlaces[0].perdidaPct = 5;
+      comparar("calidad del enlace válida", validarTopologia(conCalidad).ok, true);
+      conCalidad.enlaces[0].perdidaPct = 150;
+      comparar("pérdida mayor a 100 % no valida",
+        validarTopologia(conCalidad).errores.some(function (e) { return /va de 0 a 100/.test(e.mensaje); }), true);
       comparar("servicio DNS en una PC no valida",
         validarTopologia(dnsEnPc).errores.some(function (e) { return /Sólo un servidor da el servicio de DNS/.test(e.mensaje); }), true);
       buscarDispositivo(conNube, "r1").interfaces[0].nat = true;

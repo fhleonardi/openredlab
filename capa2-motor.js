@@ -436,6 +436,16 @@ var Motor = (function () {
         return "Revisá el puerto y el protocolo, o activá ese servicio en la pestaña Servicios de " + valor(ctx.equipo, "el servidor") + ".";
       }
     },
+    D32: {
+      titulo: "Se perdieron todos los paquetes",
+      explicacion: function (ctx) {
+        ctx = ctx || {};
+        return "El camino existe (un ping llegaría), pero " + valor(ctx.enlaces, "un cable del recorrido") + " pierde paquetes " +
+          "y esta vez no volvió ninguno de los " + valor(ctx.enviados, "?") + ". La pérdida es una medida de calidad del enlace (QoS): " +
+          "cada vez que un paquete cruza ese cable tiene un " + valor(ctx.perdida, "?") + " % de probabilidad de perderse, a la ida y otra vez a la vuelta.";
+      },
+      sugerencia: "Revisá la pérdida (%) de los cables del recorrido en sus propiedades, o mandá más paquetes para ver el porcentaje real."
+    },
     D23: {
       titulo: "El paquete quedó dando vueltas entre routers",
       explicacion: function (ctx) {
@@ -2931,6 +2941,79 @@ var Motor = (function () {
     return res;
   }
 
+  /* ---------------- Calidad de servicio: ping de varios paquetes ----------------
+   * Cada cable tiene latencia (retardoMs), jitter (jitterMs) y pérdida
+   * (perdidaPct). Un ping de N paquetes recorre el mismo camino N veces:
+   * cada vez suma la latencia de cada cable, más o menos su jitter, y en
+   * cada cable puede perderse. Un generador con semilla hace que el mismo
+   * ejercicio dé siempre lo mismo. */
+  function generador(semilla) {
+    var a = (semilla >>> 0) || 1;
+    return function () {
+      a = (a + 0x6D2B79F5) >>> 0;
+      var t = a;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  function pingRepetido(estado, idOrigen, destino, opciones) {
+    opciones = opciones || {};
+    var cantidad = Math.max(1, Math.min(100, Number(opciones.cantidad) || 4));
+    var azar = generador(opciones.semilla || 1);
+    var res = ping(estado, idOrigen, destino);
+    var resultado = { res: res, cantidad: cantidad, respuestas: [], estadisticas: null };
+    if (!res.exito) { return resultado; }
+    // Los cables del camino, de ida y de vuelta, en orden.
+    var tramos = (res.tramas || []).map(function (t) {
+      return (t.enlaces || []).map(function (id) {
+        for (var i = 0; i < (estado.topologia.enlaces || []).length; i++) {
+          if (estado.topologia.enlaces[i].id === id) { return estado.topologia.enlaces[i]; }
+        }
+        return null;
+      }).filter(Boolean);
+    });
+    var cables = [].concat.apply([], tramos);
+    var internet = (res.tramas || []).some(function (t) { return esInternet(buscarDispositivo(estado, t.a.dispositivo)); });
+    var ttl = res.respuestas[0] ? res.respuestas[0].ttl : 64;
+    for (var n = 1; n <= cantidad; n++) {
+      var ms = internet ? 20 : 0;
+      var perdidoEn = null;
+      for (var k = 0; k < cables.length; k++) {
+        var e = cables[k];
+        var jit = Number(e.jitterMs) || 0;
+        ms += (Number(e.retardoMs) || 0) + jit * (2 * azar() - 1);
+        if ((Number(e.perdidaPct) || 0) > 0 && azar() * 100 < Number(e.perdidaPct)) { perdidoEn = e; break; }
+      }
+      if (perdidoEn) {
+        resultado.respuestas.push({ n: n, perdido: true, enlace: perdidoEn.id });
+      } else {
+        resultado.respuestas.push({ n: n, ms: Math.max(1, Math.round(ms)), ttl: ttl });
+      }
+    }
+    var recibidos = resultado.respuestas.filter(function (x) { return !x.perdido; });
+    var tiempos = recibidos.map(function (x) { return x.ms; });
+    resultado.estadisticas = {
+      enviados: cantidad, recibidos: recibidos.length, perdidos: cantidad - recibidos.length,
+      porcentajePerdida: Math.round((cantidad - recibidos.length) * 100 / cantidad),
+      minimo: tiempos.length ? Math.min.apply(null, tiempos) : null,
+      maximo: tiempos.length ? Math.max.apply(null, tiempos) : null,
+      promedio: tiempos.length ? Math.round(tiempos.reduce(function (a, b) { return a + b; }, 0) / tiempos.length) : null
+    };
+    if (!recibidos.length) {
+      var conPerdida = cables.filter(function (e) { return (Number(e.perdidaPct) || 0) > 0; });
+      var unicos = [];
+      conPerdida.forEach(function (e) { if (unicos.indexOf(e) < 0) { unicos.push(e); } });
+      resultado.diagnostico = diagnosticoDe("D32", {
+        enviados: cantidad,
+        enlaces: unicos.map(function (e) { return "el cable " + nombreDe(estado, e.a.dispositivo) + " — " + nombreDe(estado, e.b.dispositivo); }).join(" y "),
+        perdida: unicos.length ? Math.max.apply(null, unicos.map(function (e) { return Number(e.perdidaPct); })) : "?"
+      });
+    }
+    return resultado;
+  }
+
   function ping(estado, idOrigen, destinoIp) {
     estado.ahora = Date.now();
     return pingConNombre(estado, idOrigen, destinoIp, { registrar: true, profundidad: 0 });
@@ -4662,6 +4745,31 @@ var Motor = (function () {
         [tcp[2].sentido, tcp[2].puertoOrigen], ["vuelta", 443]);
     })();
 
+    // QoS: latencia, jitter y pérdida en un ping de varios paquetes.
+    (function () {
+      var rutas1 = [{ destino: "192.168.2.0", prefijo: 24, siguienteSalto: "10.0.0.2" }];
+      var rutas2 = [{ destino: "192.168.1.0", prefijo: 24, siguienteSalto: "10.0.0.1" }];
+      var topo = dosRouters(rutas1, rutas2);
+      topo.enlaces.forEach(function (e) { e.retardoMs = 2; });
+      var limpio = pingRepetido(crearEstado(topo), "pc1", "192.168.2.10", { cantidad: 4, semilla: 7 });
+      comparar("QoS: sin jitter ni pérdida, 4 de 4 con el mismo tiempo",
+        [limpio.estadisticas.recibidos, limpio.estadisticas.minimo === limpio.estadisticas.maximo], [4, true]);
+      comparar("QoS: la latencia suma los cables de ida y vuelta (5 cables × 2 × 2 ms)", limpio.estadisticas.promedio, 20);
+      topo.enlaces.forEach(function (e) { if (e.id === "l3") { e.jitterMs = 5; } });
+      var conJitter = pingRepetido(crearEstado(topo), "pc1", "192.168.2.10", { cantidad: 10, semilla: 7 });
+      comparar("QoS: con jitter, los tiempos varían", conJitter.estadisticas.maximo > conJitter.estadisticas.minimo, true);
+      var otraVez = pingRepetido(crearEstado(topo), "pc1", "192.168.2.10", { cantidad: 10, semilla: 7 });
+      comparar("QoS: la misma semilla da los mismos tiempos",
+        JSON.stringify(otraVez.respuestas) === JSON.stringify(conJitter.respuestas), true);
+      topo.enlaces.forEach(function (e) { if (e.id === "l3") { e.perdidaPct = 30; } });
+      var conPerdida = pingRepetido(crearEstado(topo), "pc1", "192.168.2.10", { cantidad: 100, semilla: 3 });
+      comparar("QoS: con 30 % de pérdida por cruce se pierde una parte, no todo",
+        conPerdida.estadisticas.perdidos > 20 && conPerdida.estadisticas.perdidos < 80, true);
+      topo.enlaces.forEach(function (e) { if (e.id === "l3") { e.perdidaPct = 100; } });
+      var todo = pingRepetido(crearEstado(topo), "pc1", "192.168.2.10", { cantidad: 4, semilla: 3 });
+      comparar("QoS: con 100 % de pérdida, D32", [todo.estadisticas.recibidos, todo.diagnostico && todo.diagnostico.codigo], [0, "D32"]);
+    })();
+
     // 36. Un destino mal escrito no es un diagnóstico de red.
     (function () {
       var topo = fabTopo([fabPc("pc-admin", "10.45.7.66", 27, "10.45.7.65")], []);
@@ -4682,6 +4790,7 @@ var Motor = (function () {
     avisosDhcp: avisosServidorDhcp,
     esFirewall: esFirewall,
     CAPAS: CAPAS,
+    pingRepetido: pingRepetido,
     SERVICIOS_CONOCIDOS: SERVICIOS_CONOCIDOS,
     conectar: conectar,
     dominios: dominios,
