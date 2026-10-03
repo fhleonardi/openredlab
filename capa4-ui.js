@@ -3496,12 +3496,21 @@ var UI = (function () {
             ? "se espera que no llegue: " + Motor.CATALOGO[o.codigo].titulo.toLowerCase() + ", " + o.codigo
             : "se espera que no llegue")
           : "se espera que llegue";
+        // Cada tipo de objetivo se describe a su manera.
+        var que = o.tipo === "conectar"
+          ? nombreDe(o.origen) + " → " + o.destino + " " + String(o.protocolo || "tcp").toUpperCase() + " " + o.puerto
+          : (o.tipo === "resolver"
+            ? nombreDe(o.origen) + " resuelve " + o.nombre + (o.valor ? " (" + o.valor + ")" : "")
+            : nombreDe(o.origen) + " → " + o.destino);
+        if (o.tipo === "conectar") { espera = espera.replace("que llegue", "que se conecte").replace("que no llegue", "que no se conecte"); }
+        if (o.tipo === "resolver") { espera = espera.replace("que llegue", "que se resuelva").replace("que no llegue", "que no se resuelva"); }
+        var hecho = o.tipo === "conectar" ? "se conectó" : (o.tipo === "resolver" ? "se resolvió" : "el ping llegó");
         var obtenido = r.cumple ? " — cumple"
-          : (r.codigo ? " — no cumple: " + r.titulo + " (" + r.codigo + ")"
-            : (o.esperado === "falla" ? " — no cumple: el ping llegó" : " — no cumple"));
+          : (r.codigo ? " — no cumple: " + r.titulo + (r.codigo !== "VALOR" ? " (" + r.codigo + ")" : "")
+            : (o.esperado === "falla" ? " — no cumple: " + hecho : " — no cumple"));
         lista.appendChild(el("div", r.cumple ? "linpaso" : "pasofallo",
           "<span class='marca' aria-hidden='true'>" + (r.cumple ? "✓" : "✗") + "</span><b>" +
-          escapar(nombreDe(o.origen) + " → " + o.destino) + "</b> (" + escapar(espera) + ")" + escapar(obtenido) +
+          escapar(que) + "</b> (" + escapar(espera) + ")" + escapar(obtenido) +
           (o.descripcion ? "<br><small>" + escapar(o.descripcion) + "</small>" : "")));
       });
     }

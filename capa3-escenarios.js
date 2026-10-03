@@ -943,6 +943,47 @@ var Escenarios = (function () {
     e.estado = "down";
   }
 
+  // Fallas de servicios: NAT, DNS, puertos y filtrado.
+  function fallaNat(copia, falla) {
+    var iface = buscarInterfaz(buscarDispositivo(copia, falla.dispositivo), falla.interfaz);
+    if (iface) { delete iface.nat; }
+  }
+
+  function fallaDns(copia, falla) {
+    var dev = buscarDispositivo(copia, falla.dispositivo);
+    if (dev) { dev.dns = falla.dns || null; }
+  }
+
+  function fallaRegistroDns(copia, falla) {
+    var dev = buscarDispositivo(copia, falla.dispositivo);
+    var dns = dev && dev.servicios && dev.servicios.dns;
+    if (!dns || !Array.isArray(dns.registros)) { return; }
+    dns.registros = dns.registros.filter(function (x) {
+      // tipoRegistro, porque «tipo» ya es el tipo de falla.
+      return !(x.nombre === falla.nombre && (!falla.tipoRegistro || x.tipo === falla.tipoRegistro));
+    });
+  }
+
+  function fallaServicio(copia, falla) {
+    var dev = buscarDispositivo(copia, falla.dispositivo);
+    if (!dev || !dev.servicios) { return; }
+    var puerto = Number(falla.puerto);
+    if (falla.protocolo === "udp" && puerto === 53) { delete dev.servicios.dns; }
+    if (Array.isArray(dev.servicios.escuchando)) {
+      dev.servicios.escuchando = dev.servicios.escuchando.filter(function (x) {
+        return !(x.protocolo === falla.protocolo && Number(x.puerto) === puerto);
+      });
+    }
+  }
+
+  function fallaRegla(copia, falla) {
+    var dev = buscarDispositivo(copia, falla.dispositivo);
+    if (!dev || dev.tipo !== "router" || !falla.regla) { return; }
+    if (!Array.isArray(dev.reglas)) { dev.reglas = []; }
+    var pos = typeof falla.posicion === "number" ? Math.max(0, Math.min(falla.posicion, dev.reglas.length)) : 0;
+    dev.reglas.splice(pos, 0, clonar(falla.regla));
+  }
+
   function aplicarFallas(topologia) {
     var copia = clonar(topologia);
     var fallas = (copia.escenario && copia.escenario.fallas) || [];
@@ -963,6 +1004,16 @@ var Escenarios = (function () {
         fallaGateway(copia, f);
       } else if (f.tipo === "enlace-caido") {
         fallaEnlace(copia, f);
+      } else if (f.tipo === "nat-faltante") {
+        fallaNat(copia, f);
+      } else if (f.tipo === "dns-incorrecto") {
+        fallaDns(copia, f);
+      } else if (f.tipo === "registro-dns-borrado") {
+        fallaRegistroDns(copia, f);
+      } else if (f.tipo === "servicio-detenido") {
+        fallaServicio(copia, f);
+      } else if (f.tipo === "regla-agregada") {
+        fallaRegla(copia, f);
       }
     }
     return copia;
@@ -987,11 +1038,24 @@ var Escenarios = (function () {
     var resultados = [];
     for (var i = 0; i < objetivos.length; i++) {
       var obj = objetivos[i];
-      if (!obj || obj.tipo !== "ping") {
+      // Tres tipos: ping, conectar (IP o nombre, protocolo y puerto) y
+      // resolver (un nombre, con el valor esperado si se pide).
+      var res = null;
+      if (obj && obj.tipo === "ping") {
+        res = Motor.ping(estado, obj.origen, obj.destino);
+      } else if (obj && obj.tipo === "conectar" && Motor.conectar) {
+        res = Motor.conectar(estado, obj.origen, obj.destino, obj.protocolo || "tcp", Number(obj.puerto));
+      } else if (obj && obj.tipo === "resolver" && Motor.consultarDns) {
+        res = Motor.consultarDns(estado, obj.origen, obj.nombre, obj.tipoRegistro || "A");
+        if (res.exito && obj.valor && !res.respuesta.registros.some(function (x) { return x.valor === obj.valor; })) {
+          res = { exito: false, diagnostico: { codigo: "VALOR", titulo: "El nombre se resolvió, pero a otro valor (" +
+            res.respuesta.registros.map(function (x) { return x.valor; }).join(", ") + ")" } };
+        }
+      }
+      if (!res) {
         resultados.push({ objetivo: obj, cumple: false, codigo: null });
         continue;
       }
-      var res = Motor.ping(estado, obj.origen, obj.destino);
       var codigo = res.exito ? null : (res.diagnostico ? res.diagnostico.codigo : null);
       var cumple;
       if (obj.esperado === "falla") {
@@ -2268,6 +2332,29 @@ var Escenarios = (function () {
       rb.reglas.push({ accion: "bloquear", origen: "0.0.0.0/0", destino: "0.0.0.0/0", protocolo: "icmp", puerto: 7, entrada: "eth9" });
       var errsR = validarTopologia(conReglas).errores.map(function (e) { return e.mensaje; }).join(" | ");
       comparar("regla con puerto en ICMP y entrada inexistente no valida", /los puertos son de TCP o UDP/.test(errsR) && /ese puerto no existe/.test(errsR), true);
+      // Fallas y objetivos de servicios sobre la oficina.
+      function conFalla(falla) {
+        var t = clonar(ofi);
+        t.escenario = { fallas: [falla], objetivos: [] };
+        return Motor.crearEstado(aplicarFallas(t));
+      }
+      comparar("falla nat-faltante da D28", Motor.ping(conFalla({ tipo: "nat-faltante", dispositivo: "r1", interfaz: "g0/1" }), "pc1", "8.8.8.8").diagnostico.codigo, "D28");
+      comparar("falla dns-incorrecto da D29",
+        Motor.consultarDns(conFalla({ tipo: "dns-incorrecto", dispositivo: "pc1", dns: "192.168.10.1" }), "pc1", "google.com", "A").diagnostico.codigo, "D29");
+      comparar("falla registro-dns-borrado da D25",
+        Motor.consultarDns(conFalla({ tipo: "registro-dns-borrado", dispositivo: "srv-dns", nombre: "www.oficina.local" }), "pc1", "www.oficina.local", "A").diagnostico.codigo, "D25");
+      comparar("falla servicio-detenido da D31",
+        Motor.conectar(conFalla({ tipo: "servicio-detenido", dispositivo: "srv-dns", protocolo: "tcp", puerto: 80 }), "pc1", "192.168.10.53", "tcp", 80).diagnostico.codigo, "D31");
+      comparar("falla regla-agregada da D27",
+        Motor.conectar(conFalla({ tipo: "regla-agregada", dispositivo: "r1", regla: { accion: "bloquear", origen: "0.0.0.0/0", destino: "0.0.0.0/0", protocolo: "tcp", puerto: 443 } }),
+          "pc1", "google.com", "tcp", 443).diagnostico.codigo, "D27");
+      var objs = verificarObjetivos(Motor.crearEstado(ofi), [
+        { tipo: "conectar", origen: "pc1", destino: "192.168.10.53", protocolo: "tcp", puerto: 80, esperado: "exito" },
+        { tipo: "conectar", origen: "pc1", destino: "192.168.10.53", protocolo: "tcp", puerto: 22, esperado: "falla", codigo: "D31" },
+        { tipo: "resolver", origen: "pc1", nombre: "intranet.oficina.local", valor: "192.168.10.53", esperado: "exito" },
+        { tipo: "resolver", origen: "pc1", nombre: "intranet.oficina.local", valor: "10.0.0.1", esperado: "exito" }
+      ]);
+      comparar("objetivos conectar y resolver", objs.map(function (o) { return o.cumple; }), [true, true, true, false]);
       comparar("servicio DNS en una PC no valida",
         validarTopologia(dnsEnPc).errores.some(function (e) { return /Sólo un servidor da el servicio de DNS/.test(e.mensaje); }), true);
       buscarDispositivo(conNube, "r1").interfaces[0].nat = true;
