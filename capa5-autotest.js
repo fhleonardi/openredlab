@@ -134,6 +134,12 @@ var Autotest = (function () {
       esperado: "Con el hub, las tres comparten el medio: 1 dominio de colisión. Con el switch, cada puerto es su propio dominio: 3. " +
         "En los dos casos es 1 solo dominio de broadcast, porque ni el hub ni el switch lo cortan (lo corta un router)."
     },
+    21: {
+      conError: true,
+      situacion: "En la oficina, PC-1 se conecta a SRV-DNS por HTTP (TCP 80), que está activo, y por SSH (TCP 22), que no.",
+      esperado: "Por HTTP, el handshake de tres pasos (SYN, SYN-ACK, ACK), el pedido GET y su respuesta. Por SSH la red llega, " +
+        "pero nadie escucha en el 22: el servidor responde RST y el diagnóstico es D31, no un problema de red."
+    },
     12: {
       conError: true,
       situacion: "En el desafío VLSM, el sector Cámaras se arma con el router en 10.45.7.41/28, al lado del Wi-Fi " +
@@ -368,6 +374,21 @@ var Autotest = (function () {
         " de broadcast. Con switch: " + conSwitch.colision.length + " de colisión y " + conSwitch.broadcast.length + " de broadcast.");
     } catch (e) {
       return fila(20, nombre, false, "Excepción: " + e.message);
+    }
+  }
+
+  function crit21() {
+    var nombre = "Puerto cerrado: la red llega, pero el servicio no (D31)";
+    try {
+      var est = Motor.crearEstado(clonar(ejemploPorId("oficina-dns").topologia));
+      var http = Motor.conectar(est, "pc1", "192.168.10.53", "tcp", 80);
+      var ssh = Motor.conectar(est, "pc1", "192.168.10.53", "tcp", 22);
+      var hs = http.exito ? http.segmentos.slice(0, 3).map(function (x) { return x.flags; }).join(", ") : "";
+      var pasa = http.exito && hs === "SYN, SYN-ACK, ACK" && ssh.diagnostico && ssh.diagnostico.codigo === "D31";
+      return fila(21, nombre, pasa, "HTTP: " + (http.exito ? hs + ", GET y respuesta, cierre" : diagnosticoTexto(http)) +
+        ". SSH: " + diagnosticoTexto(ssh) + ".");
+    } catch (e) {
+      return fila(21, nombre, false, "Excepción: " + e.message);
     }
   }
 
@@ -1042,7 +1063,7 @@ var Autotest = (function () {
    * puede leer y discutir. Los criterios de la interfaz y del archivo, y las
    * pruebas internas de las capas, quedan para quien programa:
    * Autotest.correr({ tecnico: true }) desde la consola. */
-  var CRITERIOS_DIDACTICOS = [crit02, crit17, crit03, crit04, crit05, crit06, crit20, crit18, crit19, crit07, crit08, crit12];
+  var CRITERIOS_DIDACTICOS = [crit02, crit17, crit03, crit04, crit05, crit06, crit20, crit18, crit19, crit21, crit07, crit08, crit12];
   var CRITERIOS_TECNICOS = [crit01, crit09, crit10, crit11, crit13, crit14, crit15, crit16];
 
   function correr(opciones) {

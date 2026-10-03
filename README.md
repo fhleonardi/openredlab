@@ -21,9 +21,10 @@ No hace falta instalar nada: es un único archivo HTML, sin dependencias y sin c
 - **Elegir el equipo como en la realidad:** un router estándar (g0/0, fib0…) o tipo MikroTik (ether1, sfp1…), un firewall (wan, lan, dmz), switches de 8, 24 o 48 puertos, o un hub. En routers y firewalls podés agregar o quitar puertos y elegir el medio de cada uno.
 - **Hacer ping** entre equipos o a un nombre (google.com) y seguir el recorrido: la decisión con IP «AND» máscara, la puerta de enlace, ARP, las tablas de rutas de cada router y la vuelta de la respuesta.
 - **Ver las capas y el encapsulamiento:** cada paso del recorrido dice en qué capa ocurre (modelos OSI y TCP/IP), y *Cómo viaja el paquete* muestra las tramas de cada tramo: cambian las MAC en cada router, el paquete IP conserva su origen y su destino y el TTL baja uno por router.
+- **Conectarse a servicios con TCP y UDP:** un servidor atiende HTTP, HTTPS, SSH, FTP, SMTP o un puerto propio; *Conectar* muestra el socket (IP:puerto ↔ IP:puerto), el handshake de tres pasos, el pedido y la respuesta, y el cierre, o los datagramas de UDP. Si nadie escucha en el puerto, el diagnóstico lo dice (D31): la red llega, el servicio no.
 - **Ver los dominios de colisión y de broadcast:** el selector *Dominios* del lienzo pinta cada dominio con un color y los cuenta. El hub repite cada trama por todos sus puertos; el switch separa un dominio de colisión por puerto; el router corta el broadcast.
 - **Resolver nombres con DNS:** un servidor DNS propio con su zona (registros A, CNAME, MX y NS) y, para los nombres de internet, la resolución por la jerarquía: consulta recursiva al servidor y consultas iterativas a la raíz, al TLD y al autoritativo, con caché. **Consultar DNS** muestra la respuesta como `nslookup`, para cualquier tipo de registro.
-- **Entender las fallas:** cada problema tiene un diagnóstico (D01 a D30) que explica qué pasó en lenguaje llano y sugiere qué revisar: máscara mal elegida, puerta de enlace fuera de la red, ruta de vuelta faltante, IP duplicada, cable caído, regla de filtrado, entre otros.
+- **Entender las fallas:** cada problema tiene un diagnóstico (D01 a D31) que explica qué pasó en lenguaje llano y sugiere qué revisar: máscara mal elegida, puerta de enlace fuera de la red, ruta de vuelta faltante, IP duplicada, cable caído, regla de filtrado, entre otros.
 - **Calcular subredes** con el equipo seleccionado: IP y máscara en binario, clase de la IP (y si es privada o pública), red, broadcast, rango de hosts y si la puerta de enlace está en la red.
 - **Ver DHCP** con los cuatro mensajes DORA animados sobre los cables.
 - **Salir a internet con NAT:** el router o firewall de borde cambia la IP privada de origen por su IP pública, y a la respuesta la traduce de vuelta; se ve en el recorrido y en las tramas. Sin NAT, el pedido llega pero la respuesta no vuelve, y el simulador lo explica (D28).
@@ -84,7 +85,7 @@ Para probar, abrí `index.html` en el navegador. El botón **Autotest** muestra 
 
 ## Simplificaciones
 
-Es una herramienta para aprender, no un emulador: las rutas se cargan a mano (no hay OSPF, BGP ni RIP), no hay VLAN ni IPv6, el NAT es sólo de salida (sin redirección de puertos), el único tráfico es el ping, DHCP reparte un rango por router y sin relay, y el wireless se modela por distancia. La pestaña **Ayuda** del simulador lista todas.
+Es una herramienta para aprender, no un emulador: las rutas se cargan a mano (no hay OSPF, BGP ni RIP), no hay VLAN ni IPv6, el NAT es sólo de salida (sin redirección de puertos), no hay retransmisiones ni control de congestión en TCP, DHCP reparte un rango por router y sin relay, y el wireless se modela por distancia. La pestaña **Ayuda** del simulador lista todas.
 
 ## Reportar un problema
 

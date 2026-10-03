@@ -972,6 +972,21 @@ var Motor = (function () {
         return "Revisá la salida a internet de " + valor(ctx.servidor, "el servidor") + ": su puerta de enlace, las rutas y el NAT del router de borde.";
       }
     },
+    D31: {
+      titulo: "Puerto cerrado: la red llega, pero nadie atiende ese servicio",
+      explicacion: function (ctx) {
+        ctx = ctx || {};
+        var prot = String(ctx.protocolo || "tcp").toUpperCase();
+        return "El paquete llega a " + valor(ctx.equipo, "el equipo") + " (la red funciona: un ping respondería), pero ningún programa escucha en " +
+          prot + " " + valor(ctx.puerto, "?") + ". " + (prot === "TCP"
+            ? "Por eso contesta el pedido de conexión (SYN) con un RST: «acá no hay nadie»."
+            : "Por eso contesta con un mensaje ICMP de «puerto inalcanzable».");
+      },
+      sugerencia: function (ctx) {
+        ctx = ctx || {};
+        return "Revisá el puerto y el protocolo, o activá ese servicio en la pestaña Servicios de " + valor(ctx.equipo, "el servidor") + ".";
+      }
+    },
     D23: {
       titulo: "El paquete quedó dando vueltas entre routers",
       explicacion: function (ctx) {
@@ -3161,6 +3176,145 @@ var Motor = (function () {
     return responder(resultado.registros, false, false);
   }
 
+  /* ---------------- Servicios, puertos y conexiones ----------------
+   * Un servidor escucha en puertos (servicios.escuchando, más DNS en 53/UDP).
+   * Una conexión TCP se abre con el handshake de tres pasos, lleva un
+   * pedido y su respuesta, y se cierra con FIN; UDP manda datagramas sin
+   * conexión. */
+  var SERVICIOS_CONOCIDOS = [
+    { id: "http", nombre: "HTTP", protocolo: "tcp", puerto: 80, pedido: "GET / HTTP/1.1", respuesta: "HTTP/1.1 200 OK (la página)" },
+    { id: "https", nombre: "HTTPS", protocolo: "tcp", puerto: 443, pedido: "datos cifrados (TLS)", respuesta: "datos cifrados (TLS): no se ve el contenido" },
+    { id: "ssh", nombre: "SSH", protocolo: "tcp", puerto: 22, pedido: "SSH-2.0-cliente", respuesta: "SSH-2.0-OpenSSH (pide usuario y clave)" },
+    { id: "ftp", nombre: "FTP", protocolo: "tcp", puerto: 21, pedido: "USER alumno", respuesta: "220 Servicio FTP listo" },
+    { id: "smtp", nombre: "SMTP", protocolo: "tcp", puerto: 25, pedido: "HELO cliente", respuesta: "220 ESMTP listo" },
+    { id: "dns", nombre: "DNS", protocolo: "udp", puerto: 53, pedido: "consulta DNS", respuesta: "respuesta DNS" }
+  ];
+  var SERVICIOS_INTERNET = {
+    "142.250.79.46": [["tcp", 80], ["tcp", 443]],
+    "208.80.154.224": [["tcp", 80], ["tcp", 443]],
+    "8.8.8.8": [["udp", 53], ["tcp", 53], ["tcp", 443]],
+    "1.1.1.1": [["udp", 53], ["tcp", 53], ["tcp", 443]]
+  };
+
+  function servicioConocido(protocolo, puerto) {
+    return SERVICIOS_CONOCIDOS.filter(function (x) { return x.protocolo === protocolo && x.puerto === puerto; })[0] || null;
+  }
+
+  // ¿Quién atiende protocolo/puerto en esa IP? Devuelve el nombre del
+  // servicio o null si el puerto está cerrado.
+  function quienEscucha(estado, ip, protocolo, puerto) {
+    var duenos = configuradosConIp(estado, ip).filter(function (e) { return e.interfaz.habilitada; });
+    var dev = duenos.length ? duenos[0].dispositivo : null;
+    if (!dev) {
+      var publicos = SERVICIOS_INTERNET[ip] || [];
+      return publicos.some(function (p) { return p[0] === protocolo && p[1] === puerto; })
+        ? (servicioConocido(protocolo, puerto) || { nombre: protocolo.toUpperCase() + " " + puerto }).nombre : null;
+    }
+    if (dev.tipo !== "servidor" || !dev.servicios) { return null; }
+    if (dev.servicios.dns && protocolo === "udp" && puerto === 53) { return "DNS"; }
+    var propio = (dev.servicios.escuchando || []).filter(function (x) { return x.protocolo === protocolo && Number(x.puerto) === puerto; })[0];
+    if (!propio) { return null; }
+    return propio.nombre || (servicioConocido(protocolo, puerto) || { nombre: protocolo.toUpperCase() + " " + puerto }).nombre;
+  }
+
+  function puertoEfimero(ip, puerto) {
+    var suma = String(ip).split(".").reduce(function (a, b) { return a + Number(b); }, 0);
+    return 49152 + ((suma + puerto) % 16000);
+  }
+
+  function conectar(estado, idCliente, destino, protocolo, puerto, opciones) {
+    opciones = opciones || {};
+    estado.ahora = opciones.ahora || Date.now();
+    protocolo = protocolo === "udp" ? "udp" : "tcp";
+    puerto = Number(puerto);
+    var pasos = [];
+    var segmentos = [];
+    function agregar(titulo, detalle, ok, capa) { pasos.push({ n: pasos.length + 1, titulo: titulo, detalle: detalle, ok: !!ok, capa: capa }); }
+    function fallo(diag) { return { exito: false, pasos: pasos, segmentos: segmentos, socket: null, diagnostico: diag }; }
+    var cliente = buscarDispositivo(estado, idCliente);
+    var nombreCliente = cliente ? (cliente.nombre || cliente.id) : idCliente;
+    if (!(puerto >= 1 && puerto <= 65535)) {
+      return fallo({ codigo: "ENTRADA", titulo: "El puerto no es válido", explicacion: "Un puerto va de 1 a 65535.", sugerencia: "Revisá el número de puerto." });
+    }
+    var texto = String(destino === undefined || destino === null ? "" : destino).trim().toLowerCase();
+    var ip = texto;
+    if (!Red.esIpValida(texto)) {
+      if (!pareceNombre(texto)) {
+        return fallo({ codigo: "ENTRADA", titulo: "El destino no es válido", explicacion: "\"" + texto + "\" no es una IP ni un nombre.", sugerencia: "Escribí una IP o un nombre como www.google.com." });
+      }
+      var resuelto = resolverNombre(estado, idCliente, texto, "A");
+      Array.prototype.push.apply(pasos, resuelto.pasos);
+      if (!resuelto.exito) { return fallo(resuelto.diagnostico); }
+      var as = resuelto.respuesta.registros.filter(function (x) { return x.tipo === "A"; });
+      ip = as[as.length - 1].valor;
+    }
+    // La red tiene que llegar, de ida y de vuelta: lo dice el ping.
+    var red = ejecutarPing(estado, idCliente, ip, { registrar: false, profundidad: 0 });
+    var destinoNombre = (configuradosConIp(estado, ip)[0] || {}).dispositivo;
+    var nombreDestino = destinoNombre ? (destinoNombre.nombre || destinoNombre.id) : ip;
+    if (!red.exito) {
+      agregar("Comprobar que la red llega a " + ip, "Antes de conectarse, el paquete tiene que poder ir y volver; " +
+        (red.diagnostico ? red.diagnostico.titulo.charAt(0).toLowerCase() + red.diagnostico.titulo.slice(1) + "." : "no llega."), false, 3);
+      return fallo(red.diagnostico);
+    }
+    var ida = (red.tramas || []).filter(function (t) { return t.sentido === "ida"; });
+    var ipCliente = ida.length ? ida[0].ipOrigen : null;
+    var ipVista = ida.length ? ida[ida.length - 1].ipOrigen : ipCliente;
+    agregar("Comprobar que la red llega a " + ip, "La red llega a " + nombreDestino + " (" + ip + ") y vuelve: el resto es de las capas de arriba." +
+      (ipVista && ipVista !== ipCliente ? " Por el NAT, el servidor va a ver la conexión desde " + ipVista + "." : ""), true, 3);
+    var efimero = puertoEfimero(ipCliente || "0.0.0.0", puerto);
+    var socket = { cliente: ipCliente + ":" + efimero, servidor: ip + ":" + puerto, vistoPorServidor: (ipVista || ipCliente) + ":" + efimero, protocolo: protocolo };
+    function seg(deCliente, flags, seq, ack, datos) {
+      segmentos.push({
+        n: segmentos.length + 1, de: deCliente ? "cliente" : "servidor", protocolo: protocolo,
+        puertoOrigen: deCliente ? efimero : puerto, puertoDestino: deCliente ? puerto : efimero,
+        flags: flags, seq: seq, ack: ack, datos: datos || null
+      });
+    }
+    var servicio = quienEscucha(estado, ip, protocolo, puerto);
+    var info = servicioConocido(protocolo, puerto);
+    var etiqueta = protocolo.toUpperCase() + " " + puerto;
+    if (protocolo === "tcp") {
+      seg(true, "SYN", 1000, 0);
+      agregar("Abrir la conexión (SYN)", nombreCliente + " elige el puerto efímero " + efimero + " y manda un SYN a " + ip + ":" + puerto +
+        " (seq=1000): «quiero conectarme».", true, 4);
+      if (!servicio) {
+        seg(false, "RST-ACK", 0, 1001);
+        agregar("Recibir la respuesta al SYN", nombreDestino + " no tiene ningún programa escuchando en " + etiqueta + ": responde RST («acá no hay nadie») y la conexión no se abre.", false, 4);
+        return fallo(diagnosticoDe("D31", { equipo: nombreDestino, puerto: puerto, protocolo: protocolo }));
+      }
+      seg(false, "SYN-ACK", 5000, 1001);
+      agregar("Aceptar la conexión (SYN-ACK)", servicio + " escucha en " + etiqueta + " de " + nombreDestino + ": responde SYN-ACK (seq=5000, ack=1001): «acepto, y espero tu byte 1001».", true, 4);
+      seg(true, "ACK", 1001, 5001);
+      agregar("Confirmar (ACK)", nombreCliente + " confirma con un ACK (ack=5001). Handshake de tres pasos completo: la conexión está establecida. " +
+        "Socket: " + socket.cliente + " ↔ " + socket.servidor + ".", true, 4);
+      var pedido = info ? info.pedido : "datos";
+      var respuesta = info ? info.respuesta : "respuesta del servicio";
+      seg(true, "PSH-ACK", 1001, 5001, pedido);
+      agregar("Enviar el pedido (" + servicio + ")", nombreCliente + " manda «" + pedido + "» (" + pedido.length + " bytes, seq=1001).", true, 7);
+      seg(false, "PSH-ACK", 5001, 1001 + pedido.length, respuesta);
+      agregar("Recibir la respuesta", servicio + " responde «" + respuesta + "», y con ack=" + (1001 + pedido.length) + " confirma que recibió todo el pedido.", true, 7);
+      var seqC = 1001 + pedido.length, seqS = 5001 + respuesta.length;
+      seg(true, "FIN-ACK", seqC, seqS);
+      seg(false, "FIN-ACK", seqS, seqC + 1);
+      seg(true, "ACK", seqC + 1, seqS + 1);
+      agregar("Cerrar la conexión (FIN)", "Los dos lados se mandan FIN y lo confirman: la conexión se cierra y el puerto " + efimero + " queda libre.", true, 4);
+    } else {
+      var datos = info ? info.pedido : "datos";
+      seg(true, "", null, null, datos);
+      agregar("Enviar el datagrama (UDP)", nombreCliente + " manda un datagrama a " + ip + ":" + puerto + " desde el puerto " + efimero +
+        ". UDP no establece conexión ni confirma la entrega: si se pierde, la aplicación tiene que darse cuenta.", true, 4);
+      if (!servicio) {
+        agregar("Recibir la respuesta", nombreDestino + " no tiene ningún programa escuchando en " + etiqueta + ": responde con un ICMP de «puerto inalcanzable».", false, 4);
+        return fallo(diagnosticoDe("D31", { equipo: nombreDestino, puerto: puerto, protocolo: protocolo }));
+      }
+      var resp = info ? info.respuesta : "respuesta";
+      seg(false, "", null, null, resp);
+      agregar("Recibir la respuesta", servicio + " responde con otro datagrama («" + resp + "»).", true, 7);
+    }
+    return { exito: true, pasos: pasos, segmentos: segmentos, socket: socket, diagnostico: null, servicio: servicio };
+  }
+
   // Herramienta tipo nslookup.
   function consultarDns(estado, idCliente, nombre, tipo, opciones) {
     opciones = opciones || {};
@@ -4837,6 +4991,44 @@ var Motor = (function () {
       comparar("un hub no tiene tabla MAC", est.mac.sw1, undefined);
     })();
 
+    // Conexiones TCP y UDP.
+    (function () {
+      var porDefecto = [{ destino: "0.0.0.0", prefijo: 0, siguienteSalto: "200.45.7.1" }];
+      var topo = conInternet(porDefecto, "192.168.1.53");
+      var srv = fabPc("srv", "192.168.1.53", 24, "192.168.1.1");
+      srv.tipo = "servidor";
+      srv.interfaces = [srv.interfaces[0]];
+      srv.servicios = { escuchando: [{ protocolo: "tcp", puerto: 80, nombre: "HTTP" }],
+        dns: { zona: "oficina.local", recursivo: true, registros: [{ nombre: "www.oficina.local", tipo: "A", valor: "192.168.1.53" }] } };
+      topo.dispositivos.push(srv);
+      topo.enlaces.push(fabEnlace("l9", "srv", "eth0", "sw1", "fa0/3"));
+      var http = conectar(crearEstado(topo), "pc1", "192.168.1.53", "tcp", 80);
+      comparar("TCP: conexión HTTP establecida", http.exito, true);
+      comparar("TCP: handshake de tres pasos", http.segmentos.slice(0, 3).map(function (x) { return x.flags; }), ["SYN", "SYN-ACK", "ACK"]);
+      comparar("TCP: el ack del SYN-ACK es el seq del SYN más 1", http.segmentos[1].ack, http.segmentos[0].seq + 1);
+      comparar("TCP: el pedido HTTP", http.segmentos[3].datos, "GET / HTTP/1.1");
+      comparar("TCP: ocho segmentos con el cierre", http.segmentos.map(function (x) { return x.flags; }),
+        ["SYN", "SYN-ACK", "ACK", "PSH-ACK", "PSH-ACK", "FIN-ACK", "FIN-ACK", "ACK"]);
+      comparar("TCP: puerto efímero", http.segmentos[0].puertoOrigen >= 49152 && http.segmentos[0].puertoDestino === 80, true);
+      comparar("TCP: pasos de capa 4 y 7", http.pasos.some(function (p) { return p.capa === 4; }) && http.pasos.some(function (p) { return p.capa === 7; }), true);
+      var nombre = conectar(crearEstado(topo), "pc1", "www.oficina.local", "tcp", 80);
+      comparar("TCP: se conecta a un nombre resolviéndolo antes", [nombre.exito, nombre.pasos[0].capa], [true, 7]);
+      var cerrado = conectar(crearEstado(topo), "pc1", "192.168.1.53", "tcp", 22);
+      comparar("TCP: puerto cerrado da D31 con SYN y RST",
+        [cerrado.diagnostico.codigo, cerrado.segmentos.map(function (x) { return x.flags; })], ["D31", ["SYN", "RST-ACK"]]);
+      var dnsUdp = conectar(crearEstado(topo), "pc1", "192.168.1.53", "udp", 53);
+      comparar("UDP: DNS sin handshake, dos datagramas", [dnsUdp.exito, dnsUdp.segmentos.length, dnsUdp.segmentos[0].flags], [true, 2, ""]);
+      var udpCerrado = conectar(crearEstado(topo), "pc1", "192.168.1.53", "udp", 69);
+      comparar("UDP: puerto cerrado da D31 por ICMP", [udpCerrado.diagnostico.codigo, /ICMP/.test(udpCerrado.diagnostico.explicacion)], ["D31", true]);
+      var google = conectar(crearEstado(topo), "pc1", "google.com", "tcp", 443);
+      comparar("TCP: HTTPS a google.com con NAT",
+        [google.exito, google.socket.cliente.split(":")[0], google.socket.vistoPorServidor.split(":")[0]], [true, "192.168.1.10", "200.45.7.2"]);
+      comparar("TCP: el router no escucha en el 80 (D31)", conectar(crearEstado(topo), "pc1", "192.168.1.1", "tcp", 80).diagnostico.codigo, "D31");
+      var sinRuta = conInternet([], "192.168.1.53");
+      comparar("TCP: si la red no llega, el diagnóstico es el de la red",
+        conectar(crearEstado(sinRuta), "pc1", "8.8.8.8", "tcp", 443).diagnostico.codigo, "D11");
+    })();
+
     // 36. Un destino mal escrito no es un diagnóstico de red.
     (function () {
       var topo = fabTopo([fabPc("pc-admin", "10.45.7.66", 27, "10.45.7.65")], []);
@@ -4857,6 +5049,8 @@ var Motor = (function () {
     avisosDhcp: avisosServidorDhcp,
     esFirewall: esFirewall,
     CAPAS: CAPAS,
+    SERVICIOS_CONOCIDOS: SERVICIOS_CONOCIDOS,
+    conectar: conectar,
     dominios: dominios,
     esHub: esHub,
     TIPOS_REGISTRO: TIPOS_REGISTRO,
@@ -5022,7 +5216,42 @@ var Escenarios = (function () {
     return nombre === zona || nombre.slice(-(zona.length + 1)) === "." + zona;
   }
 
+  // Puertos en escucha de un servidor: { protocolo, puerto, nombre }.
+  function validarEscuchando(d, etiqueta, anotar) {
+    var lista = d.servicios && d.servicios.escuchando;
+    if (lista === undefined || lista === null) { return; }
+    var campo = etiqueta + ".servicios.escuchando";
+    if (d.tipo !== "servidor") {
+      anotar(campo, "Sólo un servidor atiende servicios en puertos, y \"" + d.id + "\" es " + d.tipo + ".");
+      return;
+    }
+    if (!Array.isArray(lista)) {
+      anotar(campo, "Los servicios del servidor \"" + d.id + "\" tienen que ser una lista.");
+      return;
+    }
+    var vistos = {};
+    lista.forEach(function (x, i) {
+      var c = campo + "[" + i + "]";
+      var quien = "El servicio " + (i + 1) + " del servidor \"" + d.id + "\"";
+      if (!x || (x.protocolo !== "tcp" && x.protocolo !== "udp")) {
+        anotar(c + ".protocolo", quien + " tiene que ser tcp o udp.");
+        return;
+      }
+      var n = Number(x.puerto);
+      if (!(n >= 1 && n <= 65535) || Math.floor(n) !== n) {
+        anotar(c + ".puerto", quien + " tiene el puerto " + JSON.stringify(x.puerto) + ": va de 1 a 65535.");
+        return;
+      }
+      var clave = x.protocolo + n;
+      if (vistos[clave]) {
+        anotar(c + ".puerto", quien + " repite " + x.protocolo.toUpperCase() + " " + n + ": un puerto lo atiende un solo servicio.");
+      }
+      vistos[clave] = true;
+    });
+  }
+
   function validarServiciosDns(d, etiqueta, anotar) {
+    validarEscuchando(d, etiqueta, anotar);
     var dns = d.servicios && d.servicios.dns;
     if (d.servicios === undefined || d.servicios === null || dns === undefined || dns === null) {
       return;
@@ -6621,7 +6850,7 @@ var Escenarios = (function () {
       id: "srv-dns", tipo: "servidor", nombre: "SRV-DNS", x: 540, y: 440, encendido: true,
       interfaces: [interfaz("eth0", "ethernet", "192.168.10.53", 24, true)],
       gateway: "192.168.10.1", dns: null, rutas: [], dhcp: null,
-      servicios: { dns: { zona: "oficina.local", recursivo: true, registros: [
+      servicios: { escuchando: [{ protocolo: "tcp", puerto: 80, nombre: "HTTP" }], dns: { zona: "oficina.local", recursivo: true, registros: [
         { nombre: "dns.oficina.local", tipo: "A", valor: "192.168.10.53" },
         { nombre: "oficina.local", tipo: "NS", valor: "dns.oficina.local" },
         { nombre: "www.oficina.local", tipo: "A", valor: "192.168.10.53" },
@@ -7078,6 +7307,12 @@ var Escenarios = (function () {
         /no pertenece a la zona oficina\.local/.test(conRegistro({ nombre: "www.otra.local", tipo: "A", valor: "10.0.0.1" })), true);
       comparar("tipo de registro inexistente no valida",
         /puede ser A, CNAME, MX, NS/.test(conRegistro({ nombre: "txt.oficina.local", tipo: "TXT", valor: "hola" })), true);
+      var conPuertos = clonar(ofi);
+      buscarDispositivo(conPuertos, "srv-dns").servicios.escuchando.push({ protocolo: "tcp", puerto: 8080, nombre: "Intranet" });
+      comparar("servicios: catálogo y puerto propio validan", validarTopologia(conPuertos).ok, true);
+      buscarDispositivo(conPuertos, "srv-dns").servicios.escuchando.push({ protocolo: "tcp", puerto: 70000 });
+      comparar("servicios: puerto fuera de rango no valida",
+        validarTopologia(conPuertos).errores.some(function (e) { return /va de 1 a 65535/.test(e.mensaje); }), true);
       var dnsEnPc = clonar(ofi);
       buscarDispositivo(dnsEnPc, "pc1").servicios = { dns: { zona: "x.local", registros: [] } };
       comparar("servicio DNS en una PC no valida",
@@ -7607,6 +7842,9 @@ var UI = (function () {
     ".simprop label.enlinea{display:flex;align-items:center;gap:8px;color:var(--sim-texto);font-size:13px;}",
     ".simprop input.invalido,.siminf input.invalido{border-color:var(--sim-mal);outline:2px solid var(--sim-mal);}",
     ".simprop .borrar{margin-top:14px;}",
+    ".nuevoservicio{display:grid;grid-template-columns:minmax(0,1fr) 64px 72px auto;gap:4px;margin:4px 0;}",
+    ".nuevoservicio input,.nuevoservicio select{min-width:0;width:100%;box-sizing:border-box;}",
+    ".segmentos{font-family:ui-monospace,Consolas,monospace;font-size:12px;margin-top:4px;line-height:1.45;}",
     ".registrosdns{margin:6px 0;font-size:12px;}",
     ".registrosdns .fila{display:grid;grid-template-columns:78px minmax(0,1fr) auto;grid-template-areas:'n n n' 't v q';gap:3px 4px;align-items:center;padding:4px 0;border-bottom:1px dotted var(--sim-borde);}",
     ".registrosdns .fila .nombre{grid-area:n;}",
@@ -7659,6 +7897,7 @@ var UI = (function () {
     ".siminf .cuerpoinf.sim{display:flex;flex-direction:column;overflow:hidden;}",
     ".modosim{display:inline-flex;border:1px solid var(--sim-borde);border-radius:6px;overflow:hidden;}",
     ".modosim button{border:0;border-radius:0;margin:0;}",
+    ".simctrl input.puerto{width:72px;}",
     ".modosim button.activo{background:var(--sim-acento);color:#fff;}",
     ".simctrl{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;}",
     ".simctrl label{font-size:12px;color:var(--sim-tenue);}",
@@ -9360,7 +9599,7 @@ var UI = (function () {
     if (d.tipo !== "router") {
       nombres = nombres.filter(function (p) { return p[0] !== "rutas" && p[0] !== "filtrado" && p[0] !== "dhcp"; });
     }
-    if (d.tipo === "servidor") { nombres.splice(2, 0, ["dns", "DNS"]); }
+    if (d.tipo === "servidor") { nombres.splice(2, 0, ["servicios", "Servicios"], ["dns", "DNS"]); }
     if (!nombres.some(function (p) { return p[0] === S.pestañaProps; })) { S.pestañaProps = "config"; }
     nombres.forEach(function (p) {
       var activa = p[0] === S.pestañaProps;
@@ -9379,6 +9618,7 @@ var UI = (function () {
     else if (S.pestañaProps === "filtrado") { panelFiltrado(c, d); }
     else if (S.pestañaProps === "dhcp") { panelDhcp(c, d); }
     else if (S.pestañaProps === "dns") { panelDnsServidor(c, d); }
+    else if (S.pestañaProps === "servicios") { panelServicios(c, d); }
     else { panelEstado(c, d); }
 
     var bBorrar = boton("Borrar dispositivo (Supr)", "borrar");
@@ -9633,6 +9873,62 @@ var UI = (function () {
     });
     var pie = editarPuertos(c, d);
     if (pie) { c.appendChild(pie); }
+  }
+
+  // Puertos en escucha del servidor: los del catálogo con casillas y los
+  // propios en una lista.
+  function panelServicios(c, d) {
+    d.servicios = d.servicios || {};
+    var lista = d.servicios.escuchando || [];
+    function escucha(prot, puerto) { return lista.some(function (x) { return x.protocolo === prot && Number(x.puerto) === puerto; }); }
+    function guardar(texto) { d.servicios.escuchando = lista; reconstruirEstado(); registrar("servicios", texto); renderPropiedades(); }
+    c.appendChild(el("p", "tenue", "Un servicio es un programa que escucha en un puerto. El cliente se conecta a IP:puerto."));
+    var catalogo = (Motor.SERVICIOS_CONOCIDOS || []).filter(function (x) { return x.id !== "dns"; });
+    catalogo.forEach(function (x) {
+      var lab = el("label", "enlinea");
+      var cb = document.createElement("input");
+      cb.type = "checkbox"; cb.checked = escucha(x.protocolo, x.puerto);
+      cb.addEventListener("change", function () {
+        empujarHistorial();
+        if (cb.checked) { lista.push({ protocolo: x.protocolo, puerto: x.puerto, nombre: x.nombre }); }
+        else { lista = lista.filter(function (y) { return !(y.protocolo === x.protocolo && Number(y.puerto) === x.puerto); }); }
+        guardar(x.nombre + (cb.checked ? " activado" : " desactivado") + " en " + (d.nombre || d.id) + ".");
+      });
+      lab.appendChild(cb);
+      lab.appendChild(document.createTextNode(x.nombre + " (" + x.protocolo.toUpperCase() + " " + x.puerto + ")"));
+      lab.style.display = "block";
+      c.appendChild(lab);
+    });
+    c.appendChild(el("p", "", "DNS (UDP 53): " + (d.servicios.dns ? "<b>activo</b>, con la zona " + escapar(d.servicios.dns.zona || "—") + "." : "no da DNS (se activa en la pestaña DNS).")));
+    var propios = lista.filter(function (x) { return !catalogo.some(function (k) { return k.protocolo === x.protocolo && k.puerto === Number(x.puerto); }); });
+    c.appendChild(el("p", "", "<b>Otros servicios</b>"));
+    if (!propios.length) { c.appendChild(el("p", "tenue", "Ninguno. Por ejemplo, una intranet en TCP 8080.")); }
+    propios.forEach(function (x) {
+      var fila = el("div", "filaif", "<span class='datos'>" + escapar(x.nombre || "Servicio") + " · " + escapar(x.protocolo.toUpperCase() + " " + x.puerto) + "</span>");
+      var bQ = boton("Quitar");
+      bQ.addEventListener("click", function () {
+        empujarHistorial();
+        lista = lista.filter(function (y) { return y !== x; });
+        guardar("Se quitó " + (x.nombre || "un servicio") + " de " + (d.nombre || d.id) + ".");
+      });
+      fila.appendChild(bQ);
+      c.appendChild(fila);
+    });
+    var form = el("div", "nuevoservicio");
+    var inNom = document.createElement("input"); inNom.type = "text"; inNom.placeholder = "Intranet"; inNom.setAttribute("aria-label", "Nombre del servicio");
+    var selP = document.createElement("select"); selP.innerHTML = "<option value='tcp'>TCP</option><option value='udp'>UDP</option>"; selP.setAttribute("aria-label", "Protocolo");
+    var inPu = document.createElement("input"); inPu.type = "number"; inPu.min = "1"; inPu.max = "65535"; inPu.placeholder = "8080"; inPu.setAttribute("aria-label", "Puerto");
+    var bA = boton("Agregar");
+    bA.addEventListener("click", function () {
+      var n = Number(inPu.value);
+      if (!(n >= 1 && n <= 65535) || Math.floor(n) !== n) { avisar("El puerto va de 1 a 65535."); return; }
+      if (escucha(selP.value, n) || (selP.value === "udp" && n === 53 && d.servicios.dns)) { avisar("Ese puerto ya lo atiende otro servicio."); return; }
+      empujarHistorial();
+      lista.push({ protocolo: selP.value, puerto: n, nombre: inNom.value.trim() || (selP.value.toUpperCase() + " " + n) });
+      guardar("Se agregó " + selP.value.toUpperCase() + " " + n + " en " + (d.nombre || d.id) + ".");
+    });
+    [inNom, selP, inPu, bA].forEach(function (x) { form.appendChild(x); });
+    c.appendChild(form);
   }
 
   // La zona y los registros del servidor DNS, editables. Cada registro
@@ -10063,7 +10359,7 @@ var UI = (function () {
     var modos = el("div", "modosim");
     modos.setAttribute("role", "group");
     modos.setAttribute("aria-label", "Herramienta");
-    [["ping", "Ping"], ["dns", "Consultar DNS"]].forEach(function (m) {
+    [["ping", "Ping"], ["dns", "Consultar DNS"], ["conectar", "Conectar"]].forEach(function (m) {
       var b = boton(m[1], (S.modoSim || "ping") === m[0] ? "activo" : "");
       b.setAttribute("aria-pressed", String((S.modoSim || "ping") === m[0]));
       b.addEventListener("click", function () {
@@ -10083,11 +10379,44 @@ var UI = (function () {
     });
     selTipoDns.value = S.tipoDns || "A";
     selTipoDns.addEventListener("change", function () { S.tipoDns = selTipoDns.value; });
-    var bPing = enDns ? boton("Consultar", "primario") : boton("Ping", "primario");
+    var enConectar = S.modoSim === "conectar";
+    if (enConectar) {
+      selD.placeholder = "IP o nombre, p. ej. www.google.com";
+      selD.value = S.ultimoConectar || "";
+    }
+    // Servicio: los del catálogo o un puerto a mano.
+    var selServ = document.createElement("select");
+    (Motor.SERVICIOS_CONOCIDOS || []).forEach(function (x) {
+      var op = document.createElement("option"); op.value = x.protocolo + ":" + x.puerto;
+      op.textContent = x.nombre + " (" + x.protocolo.toUpperCase() + " " + x.puerto + ")"; selServ.appendChild(op);
+    });
+    var opOtro = document.createElement("option"); opOtro.value = "otro"; opOtro.textContent = "Otro puerto…"; selServ.appendChild(opOtro);
+    selServ.value = S.servicioConectar || "tcp:80";
+    var selProt = document.createElement("select");
+    selProt.innerHTML = "<option value='tcp'>TCP</option><option value='udp'>UDP</option>";
+    selProt.value = S.protConectar || "tcp";
+    var inPuerto = document.createElement("input");
+    inPuerto.type = "number"; inPuerto.min = "1"; inPuerto.max = "65535"; inPuerto.className = "puerto";
+    inPuerto.value = S.puertoConectar || "8080";
+    // Lo escrito sobrevive a cambiar de herramienta o de servicio.
+    selD.addEventListener("input", function () {
+      if (enConectar) { S.ultimoConectar = selD.value; } else if (enDns) { S.ultimoNombre = selD.value; } else { S.ultimoDestino = selD.value; }
+    });
+    selServ.addEventListener("change", function () { S.servicioConectar = selServ.value; renderInferior(); });
+    selProt.addEventListener("change", function () { S.protConectar = selProt.value; });
+    inPuerto.addEventListener("change", function () { S.puertoConectar = inPuerto.value; });
+    var bPing = enDns ? boton("Consultar", "primario") : (enConectar ? boton("Conectar", "primario conectar") : boton("Ping", "primario"));
     ctrl.appendChild(etiqueta("Origen", selO)); ctrl.appendChild(selO);
     ctrl.appendChild(el("span", "flecha", "→")).setAttribute("aria-hidden", "true");
     ctrl.appendChild(etiqueta(enDns ? "Nombre" : "Destino", selD)); ctrl.appendChild(selD);
     if (enDns) { ctrl.appendChild(etiqueta("Tipo", selTipoDns)); ctrl.appendChild(selTipoDns); }
+    if (enConectar) {
+      ctrl.appendChild(etiqueta("Servicio", selServ)); ctrl.appendChild(selServ);
+      if (selServ.value === "otro") {
+        ctrl.appendChild(etiqueta("Protocolo", selProt)); ctrl.appendChild(selProt);
+        ctrl.appendChild(etiqueta("Puerto", inPuerto)); ctrl.appendChild(inPuerto);
+      }
+    }
     ctrl.appendChild(bPing);
     if (enDns) {
       var bVaciar = boton("Vaciar caché");
@@ -10145,8 +10474,33 @@ var UI = (function () {
       renderInferior();
     }
 
+    function hacerConexion() {
+      S.ultimoConectar = selD.value;
+      S.origenElegido = selO.value;
+      if (!S.estado) { reconstruirEstado(); }
+      var prot, puerto;
+      if (selServ.value === "otro") { prot = selProt.value; puerto = Number(inPuerto.value); }
+      else { prot = selServ.value.split(":")[0]; puerto = Number(selServ.value.split(":")[1]); }
+      var res;
+      try { res = Motor.conectar(S.estado, selO.value, selD.value.trim(), prot, puerto); }
+      catch (e) { registrar("error", "La conexión falló por un error interno: " + e.message); return; }
+      S.ultimo = { origen: selO.value, destino: selD.value.trim(), res: res, conexion: true, protocolo: prot, puerto: puerto };
+      S.panelRes = "ping";
+      S.verTodos = true;
+      S.verTramas = false;
+      if (res.exito) {
+        consolaAgregar("Conexión " + prot.toUpperCase() + " " + res.socket.cliente + " ↔ " + res.socket.servidor + " (" + res.servicio + ")");
+      } else if (res.diagnostico) {
+        consolaAgregar("La conexión a " + selD.value.trim() + ":" + puerto + " falló: " + res.diagnostico.titulo + " (" + res.diagnostico.codigo + ")", true);
+      }
+      registrar("conexion", "Conexión " + prot.toUpperCase() + " de " + nombreDe(selO.value) + " a " + selD.value.trim() + ":" + puerto + ": " +
+        (res.exito ? "establecida" : (res.diagnostico ? res.diagnostico.codigo : "falló")));
+      renderInferior();
+    }
+
     function hacerPing() {
       if (S.modoSim === "dns") { hacerConsulta(); return; }
+      if (S.modoSim === "conectar") { hacerConexion(); return; }
       S.ultimoDestino = selD.value;
       S.origenElegido = selO.value;
       if (!S.estado) { reconstruirEstado(); }
@@ -10216,7 +10570,29 @@ var UI = (function () {
     var res = S.ultimo.res;
     cont.appendChild(renderRecorrido(res));
     var lado = el("div", "lado");
-    if (S.ultimo.dns && res.exito) {
+    if (S.ultimo.conexion) {
+      // El socket y los segmentos, uno por línea: → del cliente, ← del servidor.
+      var lineas = (res.segmentos || []).map(function (x) {
+        var flecha = x.de === "cliente" ? "→" : "←";
+        var cab = x.protocolo === "udp" ? "UDP" : x.flags;
+        var numeros = x.protocolo === "tcp" ? " seq=" + x.seq + (x.ack ? " ack=" + x.ack : "") : "";
+        return escapar(flecha + " " + cab + " " + x.puertoOrigen + "→" + x.puertoDestino + numeros + (x.datos ? " «" + x.datos + "»" : ""));
+      });
+      if (res.exito) {
+        var sk = res.socket;
+        lado.appendChild(el("div", "banda-ok",
+          "<b>✓ " + escapar(res.servicio) + ": conexión " + (S.ultimo.protocolo === "tcp" ? "establecida y cerrada" : "por datagramas") + "</b>" +
+          "<div>Socket: " + escapar(sk.cliente) + " ↔ " + escapar(sk.servidor) +
+          (sk.vistoPorServidor !== sk.cliente ? " · el servidor la ve desde " + escapar(sk.vistoPorServidor) + " (NAT)" : "") + "</div>" +
+          "<div class='segmentos'>" + lineas.join("<br>") + "</div>"));
+        lado.appendChild(renderConsola());
+      } else {
+        var dgC = renderDiagnostico(res.diagnostico);
+        if (lineas.length) { dgC.appendChild(el("div", "segmentos", lineas.join("<br>"))); }
+        lado.appendChild(dgC);
+        lado.appendChild(renderConsolaPlegable());
+      }
+    } else if (S.ultimo.dns && res.exito) {
       // Respuesta como la de nslookup: quién respondió, si es autoritativa
       // y los registros, con la cadena de CNAME.
       var resp = res.respuesta;
@@ -10942,13 +11318,15 @@ var UI = (function () {
     caja.appendChild(el("section", "",
       "<h3>Qué simplifica el simulador</h3><ul>" +
       "<li>Las rutas se cargan a mano: no hay OSPF, BGP ni RIP. Tampoco STP, VLAN ni IPv6, y el NAT es sólo de salida (no hay redirección de puertos).</li>" +
-      "<li>El único tráfico es el ping, con tiempos aproximados: no hay TCP, HTTP ni TLS.</li>" +
+      "<li>El ping tiene tiempos aproximados.</li>" +
       "<li>El wireless sólo mira la distancia: llega hasta " + alcance + " m.</li>" +
       "<li>El router filtra <b>cada paquete por separado</b>; el firewall recuerda la conversación y deja volver la respuesta.</li>" +
       "<li>Cada router reparte por DHCP un solo rango, sólo a su propia red.</li>" +
       "<li>La nube Internet responde por cualquier IP pública y trae armada la jerarquía del DNS (raíz, .com, .org, .ar, .google, .one) " +
       "con google.com, www.google.com, dns.google, one.one.one.one y wikipedia.org. Las IP de la raíz, de .com y de ns1.google.com son las reales; " +
       "las demás, ilustrativas.</li>" +
+      "<li><i>Conectar</i> muestra una conexión TCP completa (handshake, un pedido y su respuesta, cierre) o el intercambio UDP. " +
+      "No se simulan retransmisiones, ventana ni control de congestión, ni el contenido cifrado de TLS.</li>" +
       "<li>El hub es un modelo del switch: repite cada trama por todos sus puertos y no tiene tabla MAC. No se simulan colisiones: " +
       "los dominios de colisión y de broadcast se ven con el selector <i>Dominios</i> del lienzo.</li>" +
       "<li>Un servidor DNS es autoritativo de una sola zona. Su caché dura el TTL de cada registro (300 s si no se indica) y se vacía al cambiar la red.</li></ul>"));
@@ -11524,6 +11902,12 @@ var Autotest = (function () {
       esperado: "Con el hub, las tres comparten el medio: 1 dominio de colisión. Con el switch, cada puerto es su propio dominio: 3. " +
         "En los dos casos es 1 solo dominio de broadcast, porque ni el hub ni el switch lo cortan (lo corta un router)."
     },
+    21: {
+      conError: true,
+      situacion: "En la oficina, PC-1 se conecta a SRV-DNS por HTTP (TCP 80), que está activo, y por SSH (TCP 22), que no.",
+      esperado: "Por HTTP, el handshake de tres pasos (SYN, SYN-ACK, ACK), el pedido GET y su respuesta. Por SSH la red llega, " +
+        "pero nadie escucha en el 22: el servidor responde RST y el diagnóstico es D31, no un problema de red."
+    },
     12: {
       conError: true,
       situacion: "En el desafío VLSM, el sector Cámaras se arma con el router en 10.45.7.41/28, al lado del Wi-Fi " +
@@ -11758,6 +12142,21 @@ var Autotest = (function () {
         " de broadcast. Con switch: " + conSwitch.colision.length + " de colisión y " + conSwitch.broadcast.length + " de broadcast.");
     } catch (e) {
       return fila(20, nombre, false, "Excepción: " + e.message);
+    }
+  }
+
+  function crit21() {
+    var nombre = "Puerto cerrado: la red llega, pero el servicio no (D31)";
+    try {
+      var est = Motor.crearEstado(clonar(ejemploPorId("oficina-dns").topologia));
+      var http = Motor.conectar(est, "pc1", "192.168.10.53", "tcp", 80);
+      var ssh = Motor.conectar(est, "pc1", "192.168.10.53", "tcp", 22);
+      var hs = http.exito ? http.segmentos.slice(0, 3).map(function (x) { return x.flags; }).join(", ") : "";
+      var pasa = http.exito && hs === "SYN, SYN-ACK, ACK" && ssh.diagnostico && ssh.diagnostico.codigo === "D31";
+      return fila(21, nombre, pasa, "HTTP: " + (http.exito ? hs + ", GET y respuesta, cierre" : diagnosticoTexto(http)) +
+        ". SSH: " + diagnosticoTexto(ssh) + ".");
+    } catch (e) {
+      return fila(21, nombre, false, "Excepción: " + e.message);
     }
   }
 
@@ -12432,7 +12831,7 @@ var Autotest = (function () {
    * puede leer y discutir. Los criterios de la interfaz y del archivo, y las
    * pruebas internas de las capas, quedan para quien programa:
    * Autotest.correr({ tecnico: true }) desde la consola. */
-  var CRITERIOS_DIDACTICOS = [crit02, crit17, crit03, crit04, crit05, crit06, crit20, crit18, crit19, crit07, crit08, crit12];
+  var CRITERIOS_DIDACTICOS = [crit02, crit17, crit03, crit04, crit05, crit06, crit20, crit18, crit19, crit21, crit07, crit08, crit12];
   var CRITERIOS_TECNICOS = [crit01, crit09, crit10, crit11, crit13, crit14, crit15, crit16];
 
   function correr(opciones) {

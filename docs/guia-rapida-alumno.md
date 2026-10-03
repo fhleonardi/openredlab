@@ -42,6 +42,16 @@ Después de un ping, el botón **Cómo viaja el paquete** cambia los pasos por l
 
 Los switches y puntos de acceso aparecen como «pasa por… sin cambiar la trama»: trabajan con la MAC y no la modifican. **Ver los encabezados** muestra cada trama con lo que lleva adentro: la trama (MAC), el paquete IP (IP y TTL) y el mensaje ICMP del ping, con lo que cambió resaltado. Al pasar el mouse por una línea se resalta su cable en el lienzo.
 
+## Puertos y conexiones (TCP y UDP)
+
+Un **servicio** es un programa que escucha en un **puerto** de un servidor (pestaña **Servicios**: HTTP 80, HTTPS 443, SSH 22, FTP 21, SMTP 25 o uno propio). En **Simulación → Conectar** elegís el destino y el servicio y ves:
+
+- el **socket**: tu IP y un puerto efímero (49152 o más) ↔ la IP y el puerto del servidor;
+- en **TCP**, el **handshake de tres pasos** (SYN → SYN-ACK → ACK), el pedido y la respuesta, y el cierre (FIN), con los números de secuencia (`seq`) y de confirmación (`ack`);
+- en **UDP**, sólo los datagramas: no hay conexión ni confirmación.
+
+Si la red llega pero nadie atiende ese puerto, el resultado es **D31**: en TCP el servidor responde RST.
+
 ## Hub, switch y router: los dominios
 
 Un **hub** (en la Configuración del switch, modelo *Hub de 8 puertos*) repite cada trama por todos sus puertos: la reciben todos y sólo el destino la acepta. Un **switch** la manda sólo por el puerto del destino, gracias a su tabla MAC. Un **router** no deja pasar los broadcast de una red a otra.
@@ -82,6 +92,7 @@ Los diagnósticos que más te van a aparecer:
 | **D28** | Falta NAT: la respuesta no puede volver de internet | Casilla NAT del puerto del router que va a internet |
 | **D29** | Esa IP no es un servidor DNS | El DNS de la PC tiene que ser un servidor con DNS o un público como 8.8.8.8 |
 | **D30** | El servidor DNS no llega a internet | La salida a internet del servidor: puerta de enlace, rutas y NAT |
+| **D31** | Puerto cerrado: la red llega, pero nadie atiende ese servicio | Pestaña Servicios del servidor, y el puerto y protocolo elegidos |
 
 ## La pestaña Cálculo de subred
 

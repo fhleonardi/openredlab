@@ -363,6 +363,9 @@ var UI = (function () {
     ".simprop label.enlinea{display:flex;align-items:center;gap:8px;color:var(--sim-texto);font-size:13px;}",
     ".simprop input.invalido,.siminf input.invalido{border-color:var(--sim-mal);outline:2px solid var(--sim-mal);}",
     ".simprop .borrar{margin-top:14px;}",
+    ".nuevoservicio{display:grid;grid-template-columns:minmax(0,1fr) 64px 72px auto;gap:4px;margin:4px 0;}",
+    ".nuevoservicio input,.nuevoservicio select{min-width:0;width:100%;box-sizing:border-box;}",
+    ".segmentos{font-family:ui-monospace,Consolas,monospace;font-size:12px;margin-top:4px;line-height:1.45;}",
     ".registrosdns{margin:6px 0;font-size:12px;}",
     ".registrosdns .fila{display:grid;grid-template-columns:78px minmax(0,1fr) auto;grid-template-areas:'n n n' 't v q';gap:3px 4px;align-items:center;padding:4px 0;border-bottom:1px dotted var(--sim-borde);}",
     ".registrosdns .fila .nombre{grid-area:n;}",
@@ -415,6 +418,7 @@ var UI = (function () {
     ".siminf .cuerpoinf.sim{display:flex;flex-direction:column;overflow:hidden;}",
     ".modosim{display:inline-flex;border:1px solid var(--sim-borde);border-radius:6px;overflow:hidden;}",
     ".modosim button{border:0;border-radius:0;margin:0;}",
+    ".simctrl input.puerto{width:72px;}",
     ".modosim button.activo{background:var(--sim-acento);color:#fff;}",
     ".simctrl{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;}",
     ".simctrl label{font-size:12px;color:var(--sim-tenue);}",
@@ -2116,7 +2120,7 @@ var UI = (function () {
     if (d.tipo !== "router") {
       nombres = nombres.filter(function (p) { return p[0] !== "rutas" && p[0] !== "filtrado" && p[0] !== "dhcp"; });
     }
-    if (d.tipo === "servidor") { nombres.splice(2, 0, ["dns", "DNS"]); }
+    if (d.tipo === "servidor") { nombres.splice(2, 0, ["servicios", "Servicios"], ["dns", "DNS"]); }
     if (!nombres.some(function (p) { return p[0] === S.pestañaProps; })) { S.pestañaProps = "config"; }
     nombres.forEach(function (p) {
       var activa = p[0] === S.pestañaProps;
@@ -2135,6 +2139,7 @@ var UI = (function () {
     else if (S.pestañaProps === "filtrado") { panelFiltrado(c, d); }
     else if (S.pestañaProps === "dhcp") { panelDhcp(c, d); }
     else if (S.pestañaProps === "dns") { panelDnsServidor(c, d); }
+    else if (S.pestañaProps === "servicios") { panelServicios(c, d); }
     else { panelEstado(c, d); }
 
     var bBorrar = boton("Borrar dispositivo (Supr)", "borrar");
@@ -2389,6 +2394,62 @@ var UI = (function () {
     });
     var pie = editarPuertos(c, d);
     if (pie) { c.appendChild(pie); }
+  }
+
+  // Puertos en escucha del servidor: los del catálogo con casillas y los
+  // propios en una lista.
+  function panelServicios(c, d) {
+    d.servicios = d.servicios || {};
+    var lista = d.servicios.escuchando || [];
+    function escucha(prot, puerto) { return lista.some(function (x) { return x.protocolo === prot && Number(x.puerto) === puerto; }); }
+    function guardar(texto) { d.servicios.escuchando = lista; reconstruirEstado(); registrar("servicios", texto); renderPropiedades(); }
+    c.appendChild(el("p", "tenue", "Un servicio es un programa que escucha en un puerto. El cliente se conecta a IP:puerto."));
+    var catalogo = (Motor.SERVICIOS_CONOCIDOS || []).filter(function (x) { return x.id !== "dns"; });
+    catalogo.forEach(function (x) {
+      var lab = el("label", "enlinea");
+      var cb = document.createElement("input");
+      cb.type = "checkbox"; cb.checked = escucha(x.protocolo, x.puerto);
+      cb.addEventListener("change", function () {
+        empujarHistorial();
+        if (cb.checked) { lista.push({ protocolo: x.protocolo, puerto: x.puerto, nombre: x.nombre }); }
+        else { lista = lista.filter(function (y) { return !(y.protocolo === x.protocolo && Number(y.puerto) === x.puerto); }); }
+        guardar(x.nombre + (cb.checked ? " activado" : " desactivado") + " en " + (d.nombre || d.id) + ".");
+      });
+      lab.appendChild(cb);
+      lab.appendChild(document.createTextNode(x.nombre + " (" + x.protocolo.toUpperCase() + " " + x.puerto + ")"));
+      lab.style.display = "block";
+      c.appendChild(lab);
+    });
+    c.appendChild(el("p", "", "DNS (UDP 53): " + (d.servicios.dns ? "<b>activo</b>, con la zona " + escapar(d.servicios.dns.zona || "—") + "." : "no da DNS (se activa en la pestaña DNS).")));
+    var propios = lista.filter(function (x) { return !catalogo.some(function (k) { return k.protocolo === x.protocolo && k.puerto === Number(x.puerto); }); });
+    c.appendChild(el("p", "", "<b>Otros servicios</b>"));
+    if (!propios.length) { c.appendChild(el("p", "tenue", "Ninguno. Por ejemplo, una intranet en TCP 8080.")); }
+    propios.forEach(function (x) {
+      var fila = el("div", "filaif", "<span class='datos'>" + escapar(x.nombre || "Servicio") + " · " + escapar(x.protocolo.toUpperCase() + " " + x.puerto) + "</span>");
+      var bQ = boton("Quitar");
+      bQ.addEventListener("click", function () {
+        empujarHistorial();
+        lista = lista.filter(function (y) { return y !== x; });
+        guardar("Se quitó " + (x.nombre || "un servicio") + " de " + (d.nombre || d.id) + ".");
+      });
+      fila.appendChild(bQ);
+      c.appendChild(fila);
+    });
+    var form = el("div", "nuevoservicio");
+    var inNom = document.createElement("input"); inNom.type = "text"; inNom.placeholder = "Intranet"; inNom.setAttribute("aria-label", "Nombre del servicio");
+    var selP = document.createElement("select"); selP.innerHTML = "<option value='tcp'>TCP</option><option value='udp'>UDP</option>"; selP.setAttribute("aria-label", "Protocolo");
+    var inPu = document.createElement("input"); inPu.type = "number"; inPu.min = "1"; inPu.max = "65535"; inPu.placeholder = "8080"; inPu.setAttribute("aria-label", "Puerto");
+    var bA = boton("Agregar");
+    bA.addEventListener("click", function () {
+      var n = Number(inPu.value);
+      if (!(n >= 1 && n <= 65535) || Math.floor(n) !== n) { avisar("El puerto va de 1 a 65535."); return; }
+      if (escucha(selP.value, n) || (selP.value === "udp" && n === 53 && d.servicios.dns)) { avisar("Ese puerto ya lo atiende otro servicio."); return; }
+      empujarHistorial();
+      lista.push({ protocolo: selP.value, puerto: n, nombre: inNom.value.trim() || (selP.value.toUpperCase() + " " + n) });
+      guardar("Se agregó " + selP.value.toUpperCase() + " " + n + " en " + (d.nombre || d.id) + ".");
+    });
+    [inNom, selP, inPu, bA].forEach(function (x) { form.appendChild(x); });
+    c.appendChild(form);
   }
 
   // La zona y los registros del servidor DNS, editables. Cada registro
@@ -2819,7 +2880,7 @@ var UI = (function () {
     var modos = el("div", "modosim");
     modos.setAttribute("role", "group");
     modos.setAttribute("aria-label", "Herramienta");
-    [["ping", "Ping"], ["dns", "Consultar DNS"]].forEach(function (m) {
+    [["ping", "Ping"], ["dns", "Consultar DNS"], ["conectar", "Conectar"]].forEach(function (m) {
       var b = boton(m[1], (S.modoSim || "ping") === m[0] ? "activo" : "");
       b.setAttribute("aria-pressed", String((S.modoSim || "ping") === m[0]));
       b.addEventListener("click", function () {
@@ -2839,11 +2900,44 @@ var UI = (function () {
     });
     selTipoDns.value = S.tipoDns || "A";
     selTipoDns.addEventListener("change", function () { S.tipoDns = selTipoDns.value; });
-    var bPing = enDns ? boton("Consultar", "primario") : boton("Ping", "primario");
+    var enConectar = S.modoSim === "conectar";
+    if (enConectar) {
+      selD.placeholder = "IP o nombre, p. ej. www.google.com";
+      selD.value = S.ultimoConectar || "";
+    }
+    // Servicio: los del catálogo o un puerto a mano.
+    var selServ = document.createElement("select");
+    (Motor.SERVICIOS_CONOCIDOS || []).forEach(function (x) {
+      var op = document.createElement("option"); op.value = x.protocolo + ":" + x.puerto;
+      op.textContent = x.nombre + " (" + x.protocolo.toUpperCase() + " " + x.puerto + ")"; selServ.appendChild(op);
+    });
+    var opOtro = document.createElement("option"); opOtro.value = "otro"; opOtro.textContent = "Otro puerto…"; selServ.appendChild(opOtro);
+    selServ.value = S.servicioConectar || "tcp:80";
+    var selProt = document.createElement("select");
+    selProt.innerHTML = "<option value='tcp'>TCP</option><option value='udp'>UDP</option>";
+    selProt.value = S.protConectar || "tcp";
+    var inPuerto = document.createElement("input");
+    inPuerto.type = "number"; inPuerto.min = "1"; inPuerto.max = "65535"; inPuerto.className = "puerto";
+    inPuerto.value = S.puertoConectar || "8080";
+    // Lo escrito sobrevive a cambiar de herramienta o de servicio.
+    selD.addEventListener("input", function () {
+      if (enConectar) { S.ultimoConectar = selD.value; } else if (enDns) { S.ultimoNombre = selD.value; } else { S.ultimoDestino = selD.value; }
+    });
+    selServ.addEventListener("change", function () { S.servicioConectar = selServ.value; renderInferior(); });
+    selProt.addEventListener("change", function () { S.protConectar = selProt.value; });
+    inPuerto.addEventListener("change", function () { S.puertoConectar = inPuerto.value; });
+    var bPing = enDns ? boton("Consultar", "primario") : (enConectar ? boton("Conectar", "primario conectar") : boton("Ping", "primario"));
     ctrl.appendChild(etiqueta("Origen", selO)); ctrl.appendChild(selO);
     ctrl.appendChild(el("span", "flecha", "→")).setAttribute("aria-hidden", "true");
     ctrl.appendChild(etiqueta(enDns ? "Nombre" : "Destino", selD)); ctrl.appendChild(selD);
     if (enDns) { ctrl.appendChild(etiqueta("Tipo", selTipoDns)); ctrl.appendChild(selTipoDns); }
+    if (enConectar) {
+      ctrl.appendChild(etiqueta("Servicio", selServ)); ctrl.appendChild(selServ);
+      if (selServ.value === "otro") {
+        ctrl.appendChild(etiqueta("Protocolo", selProt)); ctrl.appendChild(selProt);
+        ctrl.appendChild(etiqueta("Puerto", inPuerto)); ctrl.appendChild(inPuerto);
+      }
+    }
     ctrl.appendChild(bPing);
     if (enDns) {
       var bVaciar = boton("Vaciar caché");
@@ -2901,8 +2995,33 @@ var UI = (function () {
       renderInferior();
     }
 
+    function hacerConexion() {
+      S.ultimoConectar = selD.value;
+      S.origenElegido = selO.value;
+      if (!S.estado) { reconstruirEstado(); }
+      var prot, puerto;
+      if (selServ.value === "otro") { prot = selProt.value; puerto = Number(inPuerto.value); }
+      else { prot = selServ.value.split(":")[0]; puerto = Number(selServ.value.split(":")[1]); }
+      var res;
+      try { res = Motor.conectar(S.estado, selO.value, selD.value.trim(), prot, puerto); }
+      catch (e) { registrar("error", "La conexión falló por un error interno: " + e.message); return; }
+      S.ultimo = { origen: selO.value, destino: selD.value.trim(), res: res, conexion: true, protocolo: prot, puerto: puerto };
+      S.panelRes = "ping";
+      S.verTodos = true;
+      S.verTramas = false;
+      if (res.exito) {
+        consolaAgregar("Conexión " + prot.toUpperCase() + " " + res.socket.cliente + " ↔ " + res.socket.servidor + " (" + res.servicio + ")");
+      } else if (res.diagnostico) {
+        consolaAgregar("La conexión a " + selD.value.trim() + ":" + puerto + " falló: " + res.diagnostico.titulo + " (" + res.diagnostico.codigo + ")", true);
+      }
+      registrar("conexion", "Conexión " + prot.toUpperCase() + " de " + nombreDe(selO.value) + " a " + selD.value.trim() + ":" + puerto + ": " +
+        (res.exito ? "establecida" : (res.diagnostico ? res.diagnostico.codigo : "falló")));
+      renderInferior();
+    }
+
     function hacerPing() {
       if (S.modoSim === "dns") { hacerConsulta(); return; }
+      if (S.modoSim === "conectar") { hacerConexion(); return; }
       S.ultimoDestino = selD.value;
       S.origenElegido = selO.value;
       if (!S.estado) { reconstruirEstado(); }
@@ -2972,7 +3091,29 @@ var UI = (function () {
     var res = S.ultimo.res;
     cont.appendChild(renderRecorrido(res));
     var lado = el("div", "lado");
-    if (S.ultimo.dns && res.exito) {
+    if (S.ultimo.conexion) {
+      // El socket y los segmentos, uno por línea: → del cliente, ← del servidor.
+      var lineas = (res.segmentos || []).map(function (x) {
+        var flecha = x.de === "cliente" ? "→" : "←";
+        var cab = x.protocolo === "udp" ? "UDP" : x.flags;
+        var numeros = x.protocolo === "tcp" ? " seq=" + x.seq + (x.ack ? " ack=" + x.ack : "") : "";
+        return escapar(flecha + " " + cab + " " + x.puertoOrigen + "→" + x.puertoDestino + numeros + (x.datos ? " «" + x.datos + "»" : ""));
+      });
+      if (res.exito) {
+        var sk = res.socket;
+        lado.appendChild(el("div", "banda-ok",
+          "<b>✓ " + escapar(res.servicio) + ": conexión " + (S.ultimo.protocolo === "tcp" ? "establecida y cerrada" : "por datagramas") + "</b>" +
+          "<div>Socket: " + escapar(sk.cliente) + " ↔ " + escapar(sk.servidor) +
+          (sk.vistoPorServidor !== sk.cliente ? " · el servidor la ve desde " + escapar(sk.vistoPorServidor) + " (NAT)" : "") + "</div>" +
+          "<div class='segmentos'>" + lineas.join("<br>") + "</div>"));
+        lado.appendChild(renderConsola());
+      } else {
+        var dgC = renderDiagnostico(res.diagnostico);
+        if (lineas.length) { dgC.appendChild(el("div", "segmentos", lineas.join("<br>"))); }
+        lado.appendChild(dgC);
+        lado.appendChild(renderConsolaPlegable());
+      }
+    } else if (S.ultimo.dns && res.exito) {
       // Respuesta como la de nslookup: quién respondió, si es autoritativa
       // y los registros, con la cadena de CNAME.
       var resp = res.respuesta;
@@ -3698,13 +3839,15 @@ var UI = (function () {
     caja.appendChild(el("section", "",
       "<h3>Qué simplifica el simulador</h3><ul>" +
       "<li>Las rutas se cargan a mano: no hay OSPF, BGP ni RIP. Tampoco STP, VLAN ni IPv6, y el NAT es sólo de salida (no hay redirección de puertos).</li>" +
-      "<li>El único tráfico es el ping, con tiempos aproximados: no hay TCP, HTTP ni TLS.</li>" +
+      "<li>El ping tiene tiempos aproximados.</li>" +
       "<li>El wireless sólo mira la distancia: llega hasta " + alcance + " m.</li>" +
       "<li>El router filtra <b>cada paquete por separado</b>; el firewall recuerda la conversación y deja volver la respuesta.</li>" +
       "<li>Cada router reparte por DHCP un solo rango, sólo a su propia red.</li>" +
       "<li>La nube Internet responde por cualquier IP pública y trae armada la jerarquía del DNS (raíz, .com, .org, .ar, .google, .one) " +
       "con google.com, www.google.com, dns.google, one.one.one.one y wikipedia.org. Las IP de la raíz, de .com y de ns1.google.com son las reales; " +
       "las demás, ilustrativas.</li>" +
+      "<li><i>Conectar</i> muestra una conexión TCP completa (handshake, un pedido y su respuesta, cierre) o el intercambio UDP. " +
+      "No se simulan retransmisiones, ventana ni control de congestión, ni el contenido cifrado de TLS.</li>" +
       "<li>El hub es un modelo del switch: repite cada trama por todos sus puertos y no tiene tabla MAC. No se simulan colisiones: " +
       "los dominios de colisión y de broadcast se ven con el selector <i>Dominios</i> del lienzo.</li>" +
       "<li>Un servidor DNS es autoritativo de una sola zona. Su caché dura el TTL de cada registro (300 s si no se indica) y se vacía al cambiar la red.</li></ul>"));
