@@ -10,6 +10,13 @@ Los números siguen la forma MAYOR.MENOR.PARCHE:
 
 Los archivos de red llevan el número de su formato (`version`) y la versión del simulador que los exportó (`generador`). Un archivo de un formato anterior se actualiza solo al abrirlo.
 
+## 1.1.0 — 2026-10-03
+
+- **Internet une sitios.** Si la IP pública de destino es de un equipo del lienzo, la nube de Internet ya no responde ella: le lleva el paquete hasta el sitio de ese equipo. Cada sitio puede tener su propia nube, pero todas son la misma internet, y el paquete cruza de una a la otra. En el recorrido aparece el paso «Cruzar internet hacia …». En *Cómo viaja el paquete* y en la captura, el tramo de una nube a la otra figura «por internet». La animación pasa de una nube a la otra. La respuesta vuelve por el mismo camino, y el NAT la traduce al llegar.
+- **Diagnóstico nuevo D34, «Internet no llega hasta ese equipo».** Aparece cuando la IP es de un equipo del lienzo pero su sitio no está conectado a ninguna nube, o está caído el cable o apagado el router entre la nube y el sitio. Falla el ping, y también cualquier conexión.
+- **Ejemplo nuevo: Dos sitios por internet.** Una PC en su casa, detrás de un router con NAT, consulta un servidor web de la oficina por su IP pública.
+- Las demás IP públicas las sigue respondiendo la nube (y al conectarse a una IP sin servicio, D33).
+
 ## 1.0.3 — 2026-10-03
 
 - **Conectar ya no da éxito con un servidor al que el paquete no llega.** Antes, un servidor con IP pública detrás de otra nube de Internet «atendía» la conexión aunque estuviera desenchufado, porque la nube contesta el ping a cualquier IP pública. Ahora atiende sólo el equipo al que llegó el paquete, y un objetivo «conectar» de un laboratorio ya no puede dar «cumple» con el servidor desconectado.

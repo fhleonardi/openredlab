@@ -29,7 +29,7 @@ var Escenarios = (function () {
 
   // Versión de la app (semver). Cada PR que toca una capa la sube y suma su
   // entrada en CHANGELOG.md; el ensamblador controla que coincidan.
-  var VERSION_APP = "1.0.3";
+  var VERSION_APP = "1.1.0";
 
   // Versión del formato de archivo que escribe esta capa. Sube sólo si un
   // campo existente cambia o desaparece, y cada subida trae su migración.
@@ -2555,6 +2555,46 @@ var Escenarios = (function () {
     };
   }
 
+  // Dos sitios por internet (SRE-1031): una casa con NAT y una oficina con
+  // un servidor web de IP pública, cada uno con su nube. Todas las nubes son
+  // la misma internet: el paquete cruza de una a la otra.
+  function topologiaDosSitios() {
+    var pc = armarPc("pc-casa", "PC-Casa", 120, 440, "192.168.0.10", 24, "192.168.0.1");
+    var salidaCasa = interfaz("g0/1", "ethernet", "200.45.7.2", 30, true);
+    salidaCasa.nat = true;
+    var rCasa = routerConPuertos("r-casa", "R-Casa", 220, 270, [["g0/0", "ethernet", "192.168.0.1"]],
+      [{ destino: "0.0.0.0", prefijo: 0, siguienteSalto: "200.45.7.1" }]);
+    rCasa.interfaces.push(salidaCasa);
+    var rOficina = routerConPuertos("r-oficina", "R-Oficina", 760, 270,
+      [["g0/0", "ethernet", "203.0.113.1"], ["g0/1", "ethernet", "200.51.3.2", 30]],
+      [{ destino: "0.0.0.0", prefijo: 0, siguienteSalto: "200.51.3.1" }]);
+    var web = {
+      id: "srv-web", tipo: "servidor", nombre: "SRV-Web", x: 860, y: 440, encendido: true,
+      interfaces: [interfaz("eth0", "ethernet", "203.0.113.10", 24, true)],
+      gateway: "203.0.113.1", dns: null, rutas: [], dhcp: null,
+      servicios: { escuchando: [{ protocolo: "tcp", puerto: 80, nombre: "HTTP" }, { protocolo: "tcp", puerto: 443, nombre: "HTTPS" }] }
+    };
+    function nube(id, nombre, x, ip) {
+      return {
+        id: id, tipo: "internet", nombre: nombre, x: x, y: 100, encendido: true,
+        interfaces: [interfaz("eth0", "ethernet", ip, 30, true)],
+        gateway: null, dns: null, rutas: [], dhcp: null
+      };
+    }
+    return {
+      version: 1, nombre: "Dos sitios por internet",
+      dispositivos: [pc, rCasa, nube("internet-casa", "Internet (casa)", 360, "200.45.7.1"),
+        nube("internet-oficina", "Internet (oficina)", 620, "200.51.3.1"), rOficina, web],
+      enlaces: [
+        armarEnlace("l-casa", "pc-casa", "eth0", "r-casa", "g0/0", "ethernet"),
+        armarEnlace("l-casa-inet", "r-casa", "g0/1", "internet-casa", "eth0", "ethernet"),
+        armarEnlace("l-ofi-inet", "r-oficina", "g0/1", "internet-oficina", "eth0", "ethernet"),
+        armarEnlace("l-ofi", "r-oficina", "g0/0", "srv-web", "eth0", "ethernet")
+      ],
+      escenario: null
+    };
+  }
+
   // Dos ISP unidos por peering, que compran tránsito a un proveedor mayor.
   // Las rutas estáticas reflejan la política: al cliente del otro ISP por
   // el peering; al resto de internet, por el tránsito. Direcciones de
@@ -2716,6 +2756,12 @@ var Escenarios = (function () {
       nombre: "Dos ISP: peering y tránsito",
       descripcion: "Dos proveedores (AS 64501 y 64502) intercambian el tráfico de sus clientes por peering y compran tránsito a un proveedor mayor para llegar al resto de internet.",
       topologia: topologiaIsp()
+    },
+    {
+      id: "dos-sitios",
+      nombre: "Dos sitios por internet",
+      descripcion: "Una PC en su casa, detrás de un router con NAT, consulta un servidor web de la oficina por su IP pública. Cada sitio tiene su nube, pero todas son la misma internet: el paquete cruza de una a la otra.",
+      topologia: topologiaDosSitios()
     }
   ];
 
@@ -2765,6 +2811,14 @@ var Escenarios = (function () {
     comparar("valida dos-subredes", validarTopologia(dosSubredes).ok, true);
     comparar("valida complejo", validarTopologia(complejo).ok, true);
     comparar("valida complejo-roto", validarTopologia(roto).ok, true);
+
+    // Dos sitios por internet (SRE-1031): la casa llega al servidor de la
+    // oficina cruzando de una nube a la otra.
+    var dosSitios = ejemploPorId("dos-sitios").topologia;
+    comparar("valida dos-sitios", validarTopologia(dosSitios).ok, true);
+    var webOficina = Motor.conectar(Motor.crearEstado(clonar(dosSitios)), "pc-casa", "203.0.113.10", "tcp", 80);
+    comparar("dos-sitios: la casa se conecta al servidor web de la oficina",
+      [webOficina.exito, webOficina.tramas.some(function (t) { return t.medio === "internet"; })], [true, true]);
 
     // Ping dentro de la misma subred en las tres sanas.
     comparar("ping basica misma subred", Motor.ping(Motor.crearEstado(basica), "pc1", "192.168.1.20").exito, true);
