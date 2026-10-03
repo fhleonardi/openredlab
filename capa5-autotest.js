@@ -121,6 +121,13 @@ var Autotest = (function () {
       esperado: "Sin NAT el pedido llega, pero la respuesta no puede volver a una IP privada: D28. Con NAT, R-Borde cambia " +
         "la IP de origen por 200.45.7.2 al salir, y a la respuesta la traduce de vuelta: el ping responde."
     },
+    19: {
+      conError: false,
+      situacion: "En el ejemplo «Oficina con DNS propio», PC-1 le pregunta a su servidor, SRV-DNS, por intranet.oficina.local " +
+        "(de su zona) y por google.com (de afuera), y repite la segunda consulta.",
+      esperado: "SRV-DNS responde intranet.oficina.local con autoridad. Para google.com consulta la raíz, el servidor de .com y el " +
+        "autoritativo de google.com (consultas iterativas), responde sin autoridad y la guarda en su caché: la segunda vez contesta desde ahí."
+    },
     12: {
       conError: true,
       situacion: "En el desafío VLSM, el sector Cámaras se arma con el router en 10.45.7.41/28, al lado del Wi-Fi " +
@@ -310,6 +317,26 @@ var Autotest = (function () {
         (salida ? ", y el paquete salió a internet con la IP de origen " + salida.ipOrigen + "." : "."));
     } catch (e) {
       return fila(18, nombre, false, "Excepción: " + e.message);
+    }
+  }
+
+  function crit19() {
+    var nombre = "El nombre se resuelve preguntando a la jerarquía, y la segunda vez sale de la caché";
+    try {
+      var ej = ejemploPorId("oficina-dns");
+      if (!ej) { return fila(19, nombre, false, "No se encontró el ejemplo «Oficina con DNS propio»."); }
+      var est = Motor.crearEstado(clonar(ej.topologia));
+      var local = Motor.consultarDns(est, "pc1", "intranet.oficina.local", "A");
+      var afuera = Motor.consultarDns(est, "pc1", "google.com", "A");
+      var otraVez = Motor.consultarDns(est, "pc1", "google.com", "A");
+      var iterativas = (afuera.pasos || []).filter(function (p) { return /consulta iterativa/.test(p.titulo); }).length;
+      var pasa = local.exito && local.respuesta.autoritativa && afuera.exito && !afuera.respuesta.autoritativa &&
+        iterativas === 3 && otraVez.exito && otraVez.respuesta.desdeCache;
+      return fila(19, nombre, pasa, "intranet.oficina.local: " + (local.exito ? "respuesta autoritativa de SRV-DNS" : diagnosticoTexto(local)) +
+        ". google.com: " + iterativas + " consultas iterativas (raíz, .com y autoritativo)" +
+        (otraVez.respuesta && otraVez.respuesta.desdeCache ? "; la segunda vez, desde la caché." : "."));
+    } catch (e) {
+      return fila(19, nombre, false, "Excepción: " + e.message);
     }
   }
 
@@ -984,7 +1011,7 @@ var Autotest = (function () {
    * puede leer y discutir. Los criterios de la interfaz y del archivo, y las
    * pruebas internas de las capas, quedan para quien programa:
    * Autotest.correr({ tecnico: true }) desde la consola. */
-  var CRITERIOS_DIDACTICOS = [crit02, crit17, crit03, crit04, crit05, crit06, crit18, crit07, crit08, crit12];
+  var CRITERIOS_DIDACTICOS = [crit02, crit17, crit03, crit04, crit05, crit06, crit18, crit19, crit07, crit08, crit12];
   var CRITERIOS_TECNICOS = [crit01, crit09, crit10, crit11, crit13, crit14, crit15, crit16];
 
   function correr(opciones) {

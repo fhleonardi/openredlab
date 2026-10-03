@@ -31,13 +31,17 @@ var Escenarios = (function () {
   var VERSIONES_SOPORTADAS = [1];
 
   // Tipos de dispositivo reconocidos (§4 del BASE, más el punto de acceso).
-  var TIPOS_VALIDOS = ["pc", "switch-l2", "router", "camara", "iot", "ap", "internet"];
+  var TIPOS_VALIDOS = ["pc", "servidor", "switch-l2", "router", "camara", "iot", "ap", "internet"];
 
   // Medios y tipos de enlace reconocidos.
   var MEDIOS_VALIDOS = ["ethernet", "fibra", "wireless"];
 
   // Juego de interfaces esperado por tipo: ids y medios exactos.
   var INTERFACES_ESPERADAS = {
+    // Un servidor se conecta por cable, como un equipo de sala de servidores.
+    servidor: [
+      { id: "eth0", medio: "ethernet" }
+    ],
     pc: [
       { id: "eth0", medio: "ethernet" },
       { id: "wlan0", medio: "wireless" }
@@ -117,6 +121,69 @@ var Escenarios = (function () {
     return lista;
   }
   var MODELOS_SWITCH = { "24-puertos": puertosSwitch(24), "48-puertos": puertosSwitch(48) };
+
+  /* ---------------- Servidor DNS ----------------
+   * servicios.dns = { zona, recursivo, registros: [{ nombre, tipo, valor,
+   * prioridad?, ttl? }] }. El servidor es autoritativo de su zona: los
+   * registros tienen que ser de esa zona. */
+  var TIPOS_REGISTRO = ["A", "CNAME", "MX", "NS"];
+
+  function esNombreDominio(texto) {
+    return typeof texto === "string" &&
+      /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(texto);
+  }
+
+  function dentroDeZona(nombre, zona) {
+    return nombre === zona || nombre.slice(-(zona.length + 1)) === "." + zona;
+  }
+
+  function validarServiciosDns(d, etiqueta, anotar) {
+    var dns = d.servicios && d.servicios.dns;
+    if (d.servicios === undefined || d.servicios === null || dns === undefined || dns === null) {
+      return;
+    }
+    var campo = etiqueta + ".servicios.dns";
+    if (d.tipo !== "servidor") {
+      anotar(campo, "Sólo un servidor da el servicio de DNS, y \"" + d.id + "\" es " + d.tipo + ".");
+      return;
+    }
+    if (!esNombreDominio(dns.zona)) {
+      anotar(campo + ".zona", "La zona DNS del servidor \"" + d.id + "\" tiene que ser un nombre de dominio, por ejemplo oficina.local.");
+    }
+    if (dns.recursivo !== undefined && typeof dns.recursivo !== "boolean") {
+      anotar(campo + ".recursivo", "El servidor \"" + d.id + "\" no indica bien si resuelve nombres de afuera (va true o false).");
+    }
+    if (!Array.isArray(dns.registros)) {
+      anotar(campo + ".registros", "Los registros DNS del servidor \"" + d.id + "\" tienen que ser una lista.");
+      return;
+    }
+    dns.registros.forEach(function (reg, i) {
+      var c = campo + ".registros[" + i + "]";
+      var quien = "El registro " + (i + 1) + " del servidor \"" + d.id + "\"";
+      if (!reg || !esNombreDominio(reg.nombre)) {
+        anotar(c + ".nombre", quien + " no tiene un nombre válido (por ejemplo www.oficina.local).");
+        return;
+      }
+      if (esNombreDominio(dns.zona) && !dentroDeZona(reg.nombre, dns.zona)) {
+        anotar(c + ".nombre", quien + " (" + reg.nombre + ") no pertenece a la zona " + dns.zona + ".");
+      }
+      if (TIPOS_REGISTRO.indexOf(reg.tipo) < 0) {
+        anotar(c + ".tipo", quien + " tiene un tipo que no existe: puede ser " + TIPOS_REGISTRO.join(", ") + ".");
+        return;
+      }
+      if (reg.tipo === "A" && !Red.esIpValida(String(reg.valor || ""))) {
+        anotar(c + ".valor", quien + " es de tipo A: su valor tiene que ser una IP.");
+      } else if (reg.tipo !== "A" && !esNombreDominio(reg.valor)) {
+        anotar(c + ".valor", quien + " es de tipo " + reg.tipo + ": su valor tiene que ser un nombre, no una IP.");
+      }
+      if (reg.prioridad !== undefined && reg.prioridad !== null && (reg.tipo !== "MX" || !(Number(reg.prioridad) >= 0))) {
+        anotar(c + ".prioridad", quien + ": la prioridad sólo va en un MX y es un número.");
+      }
+      if (reg.ttl !== undefined && reg.ttl !== null && !(Number(reg.ttl) > 0)) {
+        anotar(c + ".ttl", quien + ": el TTL tiene que ser una cantidad de segundos mayor que cero.");
+      }
+    });
+  }
 
   function interfacesEsperadas(dispositivo) {
     if (dispositivo.tipo === "router" && dispositivo.modelo && MODELOS_ROUTER[dispositivo.modelo]) {
@@ -521,6 +588,7 @@ var Escenarios = (function () {
           anotar(etiqueta + ".dns", "El servidor DNS del equipo \"" + d.id + "\" no es una IP válida (" + JSON.stringify(d.dns) + ").");
         }
       }
+      validarServiciosDns(d, etiqueta, anotar);
 
       // Rutas de los routers.
       if (d.rutas !== undefined && d.rutas !== null) {
@@ -1657,6 +1725,54 @@ var Escenarios = (function () {
     };
   }
 
+  // Oficina con su propio servidor DNS (zona oficina.local), que además
+  // resuelve los nombres de internet preguntándole a la jerarquía.
+  function topologiaOficinaDns() {
+    var pc1 = armarPc("pc1", "PC-1", 140, 440, "192.168.10.10", 24, "192.168.10.1");
+    var pc2 = armarPc("pc2", "PC-2", 340, 440, "192.168.10.11", 24, "192.168.10.1");
+    pc1.dns = "192.168.10.53";
+    pc2.dns = "192.168.10.53";
+    var srv = {
+      id: "srv-dns", tipo: "servidor", nombre: "SRV-DNS", x: 540, y: 440, encendido: true,
+      interfaces: [interfaz("eth0", "ethernet", "192.168.10.53", 24, true)],
+      gateway: "192.168.10.1", dns: null, rutas: [], dhcp: null,
+      servicios: { dns: { zona: "oficina.local", recursivo: true, registros: [
+        { nombre: "dns.oficina.local", tipo: "A", valor: "192.168.10.53" },
+        { nombre: "oficina.local", tipo: "NS", valor: "dns.oficina.local" },
+        { nombre: "www.oficina.local", tipo: "A", valor: "192.168.10.53" },
+        { nombre: "intranet.oficina.local", tipo: "CNAME", valor: "www.oficina.local" },
+        { nombre: "correo.oficina.local", tipo: "A", valor: "192.168.10.53" },
+        { nombre: "oficina.local", tipo: "MX", valor: "correo.oficina.local", prioridad: 10 }
+      ] } }
+    };
+    var salida = interfaz("g0/1", "ethernet", "200.45.7.2", 30, true);
+    salida.nat = true;
+    var router = {
+      id: "r1", tipo: "router", nombre: "R-Borde", x: 340, y: 120, encendido: true,
+      interfaces: [interfaz("g0/0", "ethernet", "192.168.10.1", 24, true), salida,
+        interfaz("fib0", "fibra", null, 24, true), interfaz("wlan0", "wireless", null, 24, false)],
+      gateway: null, dns: null, rutas: [{ destino: "0.0.0.0", prefijo: 0, siguienteSalto: "200.45.7.1" }], dhcp: null
+    };
+    var nube = {
+      id: "nube", tipo: "internet", nombre: "Internet", x: 620, y: 120, encendido: true,
+      interfaces: [interfaz("eth0", "ethernet", "200.45.7.1", 30, true)],
+      gateway: null, dns: null, rutas: [], dhcp: null
+    };
+    return {
+      version: 1,
+      nombre: "Oficina con DNS propio",
+      dispositivos: [router, nube, armarSwitch("sw1", "SW-Oficina", 340, 290), pc1, pc2, srv],
+      enlaces: [
+        armarEnlace("l-r1", "r1", "g0/0", "sw1", "fa0/1", "ethernet"),
+        armarEnlace("l-nube", "r1", "g0/1", "nube", "eth0", "ethernet"),
+        armarEnlace("l-pc1", "pc1", "eth0", "sw1", "fa0/2", "ethernet"),
+        armarEnlace("l-pc2", "pc2", "eth0", "sw1", "fa0/3", "ethernet"),
+        armarEnlace("l-srv", "srv-dns", "eth0", "sw1", "fa0/4", "ethernet")
+      ],
+      escenario: null
+    };
+  }
+
   var EJEMPLOS = [
     {
       id: "basica",
@@ -1693,6 +1809,12 @@ var Escenarios = (function () {
       nombre: "Router de 8 puertos",
       descripcion: "Tres subredes colgadas de un mismo router, cada puerto con su propia red (como un MikroTik con los puertos fuera del bridge).",
       topologia: topologiaRouter8()
+    },
+    {
+      id: "oficina-dns",
+      nombre: "Oficina con DNS propio",
+      descripcion: "Un servidor DNS con la zona oficina.local, que también resuelve los nombres de internet consultando la jerarquía.",
+      topologia: topologiaOficinaDns()
     }
   ];
 
@@ -2054,6 +2176,27 @@ var Escenarios = (function () {
       conNube.dispositivos.push({ id: "nube", tipo: "internet", nombre: "Internet", x: 400, y: -80, encendido: true,
         interfaces: [interfaz("eth0", "ethernet", "200.45.7.1", 30, true)], gateway: null, dns: null, rutas: [], dhcp: null });
       comparar("dispositivo internet valida", validarTopologia(conNube).ok, true);
+      var ofi = topologiaOficinaDns();
+      comparar("servidor DNS: el ejemplo valida", validarTopologia(ofi).ok, true);
+      var resOfi = Motor.consultarDns(Motor.crearEstado(ofi), "pc1", "intranet.oficina.local", "A");
+      comparar("servidor DNS: el ejemplo resuelve un nombre propio", resOfi.exito && resOfi.respuesta.registros[1].valor, "192.168.10.53");
+      comparar("servidor DNS: el ejemplo resuelve google.com",
+        Motor.ping(Motor.crearEstado(ofi), "pc1", "google.com").exito, true);
+      function conRegistro(reg) {
+        var t = clonar(ofi);
+        buscarDispositivo(t, "srv-dns").servicios.dns.registros.push(reg);
+        return validarTopologia(t).errores.map(function (e) { return e.mensaje; }).join(" | ");
+      }
+      comparar("registro A con un nombre no valida",
+        /es de tipo A: su valor tiene que ser una IP/.test(conRegistro({ nombre: "web.oficina.local", tipo: "A", valor: "srv" })), true);
+      comparar("registro fuera de la zona no valida",
+        /no pertenece a la zona oficina\.local/.test(conRegistro({ nombre: "www.otra.local", tipo: "A", valor: "10.0.0.1" })), true);
+      comparar("tipo de registro inexistente no valida",
+        /puede ser A, CNAME, MX, NS/.test(conRegistro({ nombre: "txt.oficina.local", tipo: "TXT", valor: "hola" })), true);
+      var dnsEnPc = clonar(ofi);
+      buscarDispositivo(dnsEnPc, "pc1").servicios = { dns: { zona: "x.local", registros: [] } };
+      comparar("servicio DNS en una PC no valida",
+        validarTopologia(dnsEnPc).errores.some(function (e) { return /Sólo un servidor da el servicio de DNS/.test(e.mensaje); }), true);
       buscarDispositivo(conNube, "r1").interfaces[0].nat = true;
       comparar("NAT en un puerto de router valida", validarTopologia(conNube).ok, true);
       var natPc = clonar(r8);

@@ -52,7 +52,7 @@ var UI = (function () {
     registro: [],
     avisoGuardado: false,
     interfazEditada: {},
-    contadores: { pc: 0, router: 0, "switch-l2": 0, camara: 0, iot: 0 },
+    contadores: { pc: 0, servidor: 0, router: 0, "switch-l2": 0, camara: 0, iot: 0 },
     abajo: null,
     ultimo: null,
     ultimaVerif: null,
@@ -74,6 +74,7 @@ var UI = (function () {
 
   var TIPOS = [
     { tipo: "pc", etiqueta: "PC" },
+    { tipo: "servidor", etiqueta: "Servidor" },
     { tipo: "router", etiqueta: "Router" },
     { tipo: "firewall", etiqueta: "Firewall" },
     { tipo: "switch-l2", etiqueta: "Switch" },
@@ -83,7 +84,7 @@ var UI = (function () {
     { tipo: "internet", etiqueta: "Internet" }
   ];
 
-  var PREFIJOS_NOMBRES = { pc: "PC-", router: "R", firewall: "FW-", "switch-l2": "SW", camara: "CAM", iot: "IOT", ap: "AP-", internet: "Internet-" };
+  var PREFIJOS_NOMBRES = { servidor: "SRV", pc: "PC-", router: "R", firewall: "FW-", "switch-l2": "SW", camara: "CAM", iot: "IOT", ap: "AP-", internet: "Internet-" };
 
   /* ---------------- Utilidades ---------------- */
 
@@ -171,7 +172,7 @@ var UI = (function () {
     return lineas;
   }
 
-  var NOMBRES_TIPO = { pc: "PC", router: "router", "router-8": "router de 8 puertos", firewall: "firewall", internet: "internet", "switch-l2": "switch", camara: "cámara", iot: "IoT", ap: "punto de acceso" };
+  var NOMBRES_TIPO = { servidor: "servidor", pc: "PC", router: "router", "router-8": "router de 8 puertos", firewall: "firewall", internet: "internet", "switch-l2": "switch", camara: "cámara", iot: "IoT", ap: "punto de acceso" };
 
   // Clave de paleta e ícono: el tipo, salvo el router de 8 puertos y el
   // firewall, que son tipo "router" con modelo "8-puertos" o "firewall".
@@ -226,6 +227,9 @@ var UI = (function () {
     }
     if (tipo === "pc") {
       return [iface("eth0", "ethernet", true), iface("wlan0", "wireless", false)];
+    }
+    if (tipo === "servidor") {
+      return [iface("eth0", "ethernet", true)];
     }
     if (tipo === "camara") {
       return [iface("eth0", "ethernet", true), iface("wlan0", "wireless", false)];
@@ -336,7 +340,7 @@ var UI = (function () {
     ".simpaleta label{display:block;font-size:12px;color:var(--sim-tenue);margin:4px 0 2px;}",
     ".simpaleta select,.simpaleta .herramienta{width:100%;box-sizing:border-box;margin-bottom:6px;}",
     ".simpaleta .herramienta{font-size:12px;padding:4px 6px;}",
-    ".simpaleta .leyenda{font-size:11px;color:var(--sim-tenue);line-height:1.4;margin:2px 0 6px;}",
+    ".simpaleta .leyenda{font-size:11px;color:var(--sim-tenue);line-height:1.3;margin:2px 0 0;}",
     ".simpaleta .palgrid + h2{margin-top:8px;}",
     ".simlienzo{flex:1;position:relative;min-width:0;background:var(--sim-fondo);}",
     ".simlienzo svg.lienzo{width:100%;height:100%;display:block;touch-action:none;}",
@@ -355,6 +359,9 @@ var UI = (function () {
     ".simprop label.enlinea{display:flex;align-items:center;gap:8px;color:var(--sim-texto);font-size:13px;}",
     ".simprop input.invalido,.siminf input.invalido{border-color:var(--sim-mal);outline:2px solid var(--sim-mal);}",
     ".simprop .borrar{margin-top:14px;}",
+    ".simprop table.registros{width:100%;border-collapse:collapse;font-size:12px;margin:4px 0;}",
+    ".simprop table.registros th,.simprop table.registros td{text-align:left;padding:2px 4px;border-bottom:1px dotted var(--sim-borde);overflow-wrap:anywhere;}",
+    ".simprop table.registros td:nth-child(2){white-space:nowrap;}",
     ".filaif{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:12px;padding:6px 0;border-bottom:1px dotted var(--sim-borde);}",
     ".filaif .datos{flex:1;min-width:0;}",
     ".filaif label{margin:0;}",
@@ -543,6 +550,11 @@ var UI = (function () {
       return "<rect x='-26' y='-11' width='52' height='22' rx='4' fill='#f6d186' stroke='#8a5a00' stroke-width='2'/>" +
         "<path d='M-9 -5 L9 5 M-9 5 L9 -5' stroke='#8a5a00' stroke-width='2'/>" +
         "<circle cx='0' cy='0' r='2.5' fill='#8a5a00'/>";
+    }
+    if (tipo === "servidor") {
+      return "<rect x='-12' y='-16' width='24' height='32' rx='2' fill='#c5cae9' stroke='#283593' stroke-width='2'/>" +
+        "<path d='M-8 -7 H8 M-8 1 H8 M-8 9 H8' stroke='#283593' stroke-width='2'/>" +
+        "<circle cx='6' cy='-11' r='1.6' fill='#2e7d32'/>";
     }
     if (tipo === "pc") {
       return "<rect x='-16' y='-12' width='32' height='22' rx='2' fill='#9fc5e8' stroke='#0b5fa5' stroke-width='2'/>" +
@@ -752,7 +764,7 @@ var UI = (function () {
     });
     pal.appendChild(bCable);
     S.botonCable = bCable;
-    pal.appendChild(el("p", "leyenda", "Trazo lleno: cobre · grueso con brillo: fibra · puntos en curva: wireless.<br>Verde: activo · rojo y cortado: caído."));
+    pal.appendChild(el("p", "leyenda", "Cobre: lleno · fibra: grueso · wireless: puntos. Verde: activo · rojo y cortado: caído."));
     var bCol = boton("Colapsar");
     bCol.setAttribute("aria-expanded", "true");
     bCol.addEventListener("click", function () {
@@ -880,7 +892,7 @@ var UI = (function () {
   }
 
   function recontarNombres() {
-    S.contadores = { pc: 0, router: 0, "switch-l2": 0, camara: 0, iot: 0 };
+    S.contadores = { pc: 0, servidor: 0, router: 0, "switch-l2": 0, camara: 0, iot: 0 };
     (S.topologia.dispositivos || []).forEach(function (d) {
       var k = claveNombre(claveDe(d));
       var pre = PREFIJOS_NOMBRES[k] || "";
@@ -1864,6 +1876,7 @@ var UI = (function () {
       gateway: null, dns: null, rutas: [], dhcp: null
     };
     if (equipo.modelo) { nuevo.modelo = equipo.modelo; }
+    if (tipo === "servidor") { nuevo.servicios = { dns: { zona: "red.local", recursivo: true, registros: [] } }; }
     lista.push(nuevo);
     reconstruirEstado(); renderTodo();
     seleccionar(id);
@@ -2038,6 +2051,7 @@ var UI = (function () {
     if (d.tipo !== "router") {
       nombres = nombres.filter(function (p) { return p[0] !== "rutas" && p[0] !== "filtrado" && p[0] !== "dhcp"; });
     }
+    if (d.tipo === "servidor") { nombres.splice(2, 0, ["dns", "DNS"]); }
     if (!nombres.some(function (p) { return p[0] === S.pestañaProps; })) { S.pestañaProps = "config"; }
     nombres.forEach(function (p) {
       var activa = p[0] === S.pestañaProps;
@@ -2055,6 +2069,7 @@ var UI = (function () {
     else if (S.pestañaProps === "rutas") { panelRutas(c, d); }
     else if (S.pestañaProps === "filtrado") { panelFiltrado(c, d); }
     else if (S.pestañaProps === "dhcp") { panelDhcp(c, d); }
+    else if (S.pestañaProps === "dns") { panelDnsServidor(c, d); }
     else { panelEstado(c, d); }
 
     var bBorrar = boton("Borrar dispositivo (Supr)", "borrar");
@@ -2167,6 +2182,7 @@ var UI = (function () {
       }, function (v) { return v.trim() === "" || Red.esIpValida(v.trim()); }, true);
       campoTexto(c, "DNS", d.dns || "", function (v) {
         d.dns = v.trim() === "" ? null : v.trim();
+        reconstruirEstado();
       }, function (v) { return v.trim() === "" || Red.esIpValida(v.trim()); }, true);
     }
     var labE = el("label", "enlinea");
@@ -2308,6 +2324,36 @@ var UI = (function () {
     });
     var pie = editarPuertos(c, d);
     if (pie) { c.appendChild(pie); }
+  }
+
+  // La zona y los registros del servidor DNS.
+  function panelDnsServidor(c, d) {
+    var dns = d.servicios && d.servicios.dns;
+    if (!dns) {
+      c.appendChild(el("p", "", "Este servidor no da el servicio de DNS."));
+      return;
+    }
+    c.appendChild(el("p", "", "Zona: <b>" + escapar(dns.zona || "—") + "</b>. " +
+      (dns.recursivo === false
+        ? "Sólo responde por su zona."
+        : "Responde por su zona y resuelve los nombres de afuera preguntándole a la jerarquía de internet.")));
+    var regs = dns.registros || [];
+    if (!regs.length) {
+      c.appendChild(el("p", "tenue", "Todavía no tiene registros."));
+    } else {
+      var tabla = el("table", "registros");
+      tabla.innerHTML = "<thead><tr><th>Nombre</th><th>Tipo</th><th>Valor</th></tr></thead>";
+      var cuerpo = document.createElement("tbody");
+      regs.forEach(function (x) {
+        var tr = document.createElement("tr");
+        tr.innerHTML = "<td>" + escapar(x.nombre) + "</td><td>" + escapar(x.tipo) + "</td><td>" +
+          (x.prioridad !== undefined && x.prioridad !== null ? escapar(String(x.prioridad)) + " " : "") + escapar(x.valor) + "</td>";
+        cuerpo.appendChild(tr);
+      });
+      tabla.appendChild(cuerpo);
+      c.appendChild(tabla);
+    }
+    c.appendChild(el("p", "tenue", "Los registros se editan en el archivo de la red (Exportar); el editor en pantalla llega en la próxima versión."));
   }
 
   function panelRutas(c, d) {
@@ -2761,7 +2807,7 @@ var UI = (function () {
     return lineas.length ? lineas[lineas.length - 1].trim() : "";
   }
 
-  var PASOS_CLAVE = /^(Averiguar la IP de|Decidir si el destino|Buscar ruta|Traducir la dirección|Llegar a internet|Comprobar que la respuesta)/;
+  var PASOS_CLAVE = /^(Consultar al servidor DNS|Responder (con autoridad|desde la caché|al cliente)|Decidir si el destino|Buscar ruta|Traducir la dirección|Llegar a internet|Comprobar que la respuesta)/;
 
   // «Capa 2 · Enlace», con el nombre TCP/IP y la unidad de datos al pasar
   // el mouse. Los pasos de configuración no son de ninguna capa.
@@ -3433,8 +3479,10 @@ var UI = (function () {
       "<li>El wireless sólo mira la distancia: llega hasta " + alcance + " m.</li>" +
       "<li>El router filtra <b>cada paquete por separado</b>; el firewall recuerda la conversación y deja volver la respuesta.</li>" +
       "<li>Cada router reparte por DHCP un solo rango, sólo a su propia red.</li>" +
-      "<li>La nube Internet responde por cualquier IP pública. El DNS conoce google.com, www.google.com, " +
-      "dns.google y one.one.one.one.</li></ul>"));
+      "<li>La nube Internet responde por cualquier IP pública y trae armada la jerarquía del DNS (raíz, .com, .org, .ar, .google, .one) " +
+      "con google.com, www.google.com, dns.google, one.one.one.one y wikipedia.org. Las IP de la raíz, de .com y de ns1.google.com son las reales; " +
+      "las demás, ilustrativas.</li>" +
+      "<li>Un servidor DNS es autoritativo de una sola zona. Su caché dura el TTL de cada registro (300 s si no se indica) y se vacía al cambiar la red.</li></ul>"));
     c.appendChild(caja);
   }
 
