@@ -467,7 +467,10 @@ var UI = (function () {
     ".tablacap tr.p-icmp{background:rgba(252,224,255,.35);}",
     ".tablacap tr.p-tcp{background:rgba(231,230,255,.45);}",
     ".tablacap tr.p-udp{background:rgba(218,238,255,.45);}",
-    ".tablacap tr.sel,.tablacap tr:focus{background:var(--sim-acento);color:#fff;outline:none;}",
+    ".tablacap tr.sel{background:var(--sim-acento);color:#fff;}",
+    ".tablacap tr:focus{outline:none;}",
+    ".tablacap tr:focus-visible{outline:2px solid var(--sim-acento);outline-offset:-2px;}",
+    ".tablacap tr.sel:focus-visible{outline-color:var(--sim-texto);}",
     ".detallecap{border:1px solid var(--sim-borde);border-radius:8px;padding:8px 10px;font-size:12px;line-height:1.6;overflow:auto;}",
     ".detallecap b{color:var(--sim-acento);}",
     ".modosim button.activo{background:var(--sim-acento);color:#fff;}",
@@ -488,7 +491,9 @@ var UI = (function () {
     ".capa{display:inline-block;min-width:92px;color:var(--sim-tenue);border:1px solid var(--sim-borde);font-size:11px;border-radius:4px;padding:0 5px;margin-right:6px;text-align:center;vertical-align:1px;cursor:help;}",
     ".recorrido .nota-ttl{font-size:12px;color:var(--sim-tenue);margin:0 0 4px;}",
     ".trama{font-size:13px;padding:2px 4px;border-radius:4px;}",
-    ".trama:hover,.trama:focus{background:var(--sim-okfondo);outline:none;}",
+    ".trama:hover{background:var(--sim-okfondo);}",
+    ".trama:focus{outline:none;}",
+    ".trama:focus-visible{outline:2px solid var(--sim-acento);outline-offset:1px;}",
     ".trama .sent{display:inline-block;min-width:64px;color:var(--sim-tenue);font-size:12px;}",
     ".trama .cambia{color:var(--sim-mal);}",
     ".trama .queda{color:var(--sim-ok);}",
@@ -539,7 +544,6 @@ var UI = (function () {
     ".calc .veredicto{margin-top:3px;font-weight:600;}",
     "svg .nodo,svg .enlace,svg .asa{cursor:pointer;}",
     "svg .asa:focus-visible{outline:3px solid var(--sim-acento);outline-offset:2px;}",
-    "svg .enlace:focus{outline:none;}",
     "svg .puerto{cursor:pointer;stroke:#333;stroke-width:1;}",
     "svg text{font-family:system-ui,Arial,sans-serif;}",
     "svg .etiqueta text.mono{font-family:ui-monospace,Consolas,monospace;}",
@@ -697,6 +701,110 @@ var UI = (function () {
     if (!control.id) { control.id = idCampo("campo"); }
     lab.htmlFor = control.id;
     return lab;
+  }
+
+  // Foco estable al redibujar: los paneles se vacían con innerHTML, así que
+  // antes se anota qué control tenía el foco y después se lo vuelve a buscar,
+  // por su data-foco o por tipo y nombre (los ids de idCampo cambian en cada
+  // dibujo). Si ya no existe, el foco queda en el panel y no en <body>.
+  function firmaFoco(n) {
+    var nombre = n.getAttribute("aria-label") || n.name || "";
+    if (!nombre && n.id) {
+      var lab = document.querySelector("label[for='" + n.id + "']");
+      if (lab) { nombre = lab.textContent; }
+    }
+    if (!nombre && n.tagName === "BUTTON") { nombre = n.textContent; }
+    return n.tagName + "|" + nombre;
+  }
+
+  function enfocables(cont) {
+    return cont.querySelectorAll("button,input,select,textarea,a[href],[tabindex]");
+  }
+
+  function claveFoco(cont) {
+    var a = document.activeElement;
+    if (!cont || !a || a === cont || !cont.contains(a)) { return null; }
+    var f = a.getAttribute("data-foco");
+    if (f) { return { foco: f }; }
+    var firma = firmaFoco(a), lista = enfocables(cont), n = 0;
+    for (var i = 0; i < lista.length && lista[i] !== a; i++) {
+      if (firmaFoco(lista[i]) === firma) { n += 1; }
+    }
+    return { firma: firma, n: n };
+  }
+
+  function restaurarFoco(cont, clave) {
+    if (!cont || !clave) { return; }
+    var a = document.activeElement;
+    // Un panel que ya enfocó algo a propósito (p. ej. el campo recién agregado) manda.
+    if (a && a !== document.body && cont.contains(a)) { return; }
+    var dest = null, i;
+    if (clave.foco) {
+      var conClave = cont.querySelectorAll("[data-foco]");
+      for (i = 0; i < conClave.length; i++) {
+        if (conClave[i].getAttribute("data-foco") === clave.foco) { dest = conClave[i]; break; }
+      }
+    } else {
+      var lista = enfocables(cont), n = 0;
+      for (i = 0; i < lista.length; i++) {
+        if (firmaFoco(lista[i]) !== clave.firma) { continue; }
+        dest = lista[i];
+        if (n === clave.n) { break; }
+        n += 1;
+      }
+    }
+    if (!dest || dest.disabled) {
+      dest = cont;
+      if (!cont.hasAttribute("tabindex")) { cont.setAttribute("tabindex", "-1"); }
+    }
+    try { dest.focus({ preventScroll: true }); } catch (e) { /* sin foco: se sigue igual */ }
+  }
+
+  function conFoco(cont, dibujar) {
+    var clave = claveFoco(cont);
+    dibujar();
+    restaurarFoco(cont, clave);
+  }
+
+  // Pestañas con el patrón ARIA: sólo la activa entra en el orden de Tab, y
+  // las flechas, Inicio y Fin pasan de una a otra eligiéndola. Devuelve el id
+  // que tiene que llevar el panel.
+  function armarPestañas(lista, pares, activa, base, alElegir) {
+    var idPanel = "sim-panel-" + base;
+    var botones = [];
+    pares.forEach(function (p, i) {
+      var sel = p[0] === activa;
+      var b = boton(p[1], sel ? "activo" : "");
+      b.id = "sim-tab-" + base + "-" + p[0];
+      b.setAttribute("role", "tab");
+      b.setAttribute("aria-selected", String(sel));
+      b.setAttribute("aria-controls", idPanel);
+      b.setAttribute("data-foco", "tab-" + base + "-" + p[0]);
+      b.tabIndex = sel ? 0 : -1;
+      b.addEventListener("click", function () { alElegir(p[0]); });
+      b.addEventListener("keydown", function (ev) {
+        var j = -1;
+        if (ev.key === "ArrowRight") { j = (i + 1) % pares.length; }
+        else if (ev.key === "ArrowLeft") { j = (i - 1 + pares.length) % pares.length; }
+        else if (ev.key === "Home") { j = 0; }
+        else if (ev.key === "End") { j = pares.length - 1; }
+        if (j < 0) { return; }
+        ev.preventDefault();
+        ev.stopPropagation();
+        botones[j].focus();
+        alElegir(pares[j][0]);
+      });
+      botones.push(b);
+      lista.appendChild(b);
+    });
+    return idPanel;
+  }
+
+  // El panel de un grupo de pestañas, anunciado con el nombre de la activa.
+  function marcarPanel(panel, idPanel, base, activa) {
+    panel.id = idPanel;
+    panel.setAttribute("role", "tabpanel");
+    panel.setAttribute("aria-labelledby", "sim-tab-" + base + "-" + activa);
   }
 
   // Los campos de direcciones: teclado numérico con punto en el celular y sin
@@ -947,6 +1055,8 @@ var UI = (function () {
     hoja.hidden = true;
     hoja.setAttribute("role", "dialog");
     hoja.setAttribute("aria-labelledby", "sim-titulo-hoja");
+    hoja.setAttribute("aria-modal", "true");
+    hoja.addEventListener("keydown", cicloHoja);
     hoja.innerHTML = "<div class='tirador' aria-hidden='true'></div>";
     var cabHoja = el("div", "cabhoja");
     var tituloHoja = el("h2", "");
@@ -1192,6 +1302,8 @@ var UI = (function () {
       if (!S.presentacion || e.estado === "down") { g.appendChild(mid); }
       g.addEventListener("pointerenter", function (ev) { mostrarTipEnlace(ev, e); });
       g.addEventListener("pointerleave", ocultarTip);
+      g.addEventListener("focus", function () { mostrarTipEnlace(puntoDe(g), e); });
+      g.addEventListener("blur", ocultarTip);
       if (S.moviendoExtremo && S.moviendoExtremo.enlace === e.id) { g.setAttribute("opacity", "0.35"); }
       g.addEventListener("click", function (ev) {
         ev.stopPropagation();
@@ -1261,6 +1373,8 @@ var UI = (function () {
           mostrarTipPuerto(ev, d, iface);
         });
         c.addEventListener("pointerleave", ocultarTip);
+        c.addEventListener("focus", function () { mostrarTipPuerto(puntoDe(c), d, iface); });
+        c.addEventListener("blur", ocultarTip);
         c.addEventListener("click", function (ev) {
           ev.stopPropagation();
           clicPuerto(d, iface);
@@ -1300,6 +1414,9 @@ var UI = (function () {
 
       g.addEventListener("pointerenter", function (ev) { mostrarTipNodo(ev, d); });
       g.addEventListener("pointerleave", ocultarTip);
+      // Sólo el foco del equipo mismo: el de sus puertos muestra el del puerto.
+      g.addEventListener("focus", function () { mostrarTipNodo(puntoDe(g), d); });
+      g.addEventListener("blur", ocultarTip);
       g.addEventListener("click", function (ev) {
         ev.stopPropagation();
         // En modo cableado, tocar el equipo fuera de sus puertos es salir del
@@ -1492,6 +1609,12 @@ var UI = (function () {
 
   function ocultarTip() { S.tooltip.style.display = "none"; }
 
+  // Con el teclado no hay puntero: el tooltip se ubica junto al elemento enfocado.
+  function puntoDe(n) {
+    var r = n.getBoundingClientRect();
+    return { clientX: r.right, clientY: r.top };
+  }
+
   /* ---------------- Interacción: paleta, nodos, cable ---------------- */
 
   function arrastrePaleta(ev, tipo, item) {
@@ -1618,6 +1741,9 @@ var UI = (function () {
   // adentro de la hoja y al cerrar vuelven a su lugar.
   function abrirHoja(tipo) {
     if (!S.hojaEl) { return; }
+    // Al cerrarse, el foco vuelve a lo que la abrió (si se pasa de una hoja a
+    // otra, sigue valiendo el origen de la primera).
+    if (S.hojaEl.hidden) { S.hojaOrigen = document.activeElement; }
     devolverPaneles();
     S.hoja = tipo;
     S.hojaCuerpo.innerHTML = "";
@@ -1666,8 +1792,39 @@ var UI = (function () {
       renderInferior();
     }
     S.hojaEl.hidden = false;
+    fondoInerte(true);
     actualizarCelular();
     try { S.hojaCerrar.focus(); } catch (e) { /* sin foco: se sigue igual */ }
+  }
+
+  // Con la hoja abierta, lo de atrás no se puede tocar ni recorrer con Tab.
+  // El aviso para el lector de pantalla queda afuera: tiene que seguir hablando.
+  function fondoInerte(si) {
+    if (!si) {
+      (S.inertes || []).forEach(function (n) { n.inert = false; n.removeAttribute("inert"); });
+      S.inertes = [];
+      return;
+    }
+    if (S.inertes && S.inertes.length) { return; }
+    S.inertes = [];
+    Array.prototype.forEach.call(S.raiz.children, function (n) {
+      if (n === S.hojaEl || n === S.anuncio) { return; }
+      n.inert = true;
+      n.setAttribute("inert", "");
+      S.inertes.push(n);
+    });
+  }
+
+  // Tab y Mayús+Tab dan la vuelta dentro de la hoja, también donde no hay inert.
+  function cicloHoja(ev) {
+    if (ev.key !== "Tab" || S.hojaEl.hidden) { return; }
+    var lista = Array.prototype.filter.call(enfocables(S.hojaEl), function (n) {
+      return n.tabIndex >= 0 && !n.disabled && n.offsetParent !== null;
+    });
+    if (!lista.length) { return; }
+    var primero = lista[0], ultimo = lista[lista.length - 1];
+    if (ev.shiftKey && document.activeElement === primero) { ev.preventDefault(); ultimo.focus(); }
+    else if (!ev.shiftKey && document.activeElement === ultimo) { ev.preventDefault(); primero.focus(); }
   }
 
   function devolverPaneles() {
@@ -1683,7 +1840,13 @@ var UI = (function () {
     S.hoja = null;
     S.hojaEl.hidden = true;
     S.hojaCuerpo.innerHTML = "";
+    fondoInerte(false);
     actualizarCelular();
+    var origen = S.hojaOrigen;
+    S.hojaOrigen = null;
+    if (origen && origen !== document.body && document.contains(origen)) {
+      try { origen.focus({ preventScroll: true }); } catch (e) { /* sin foco: se sigue igual */ }
+    }
   }
 
   function salirModoCable(d) {
@@ -2109,6 +2272,10 @@ var UI = (function () {
   /* ---------------- Panel derecho ---------------- */
 
   function renderPropiedades() {
+    conFoco(S.prop, dibujarPropiedades);
+  }
+
+  function dibujarPropiedades() {
     var c = S.prop;
     c.innerHTML = "";
     if (S.enlaceSel && !S.seleccionado) {
@@ -2192,25 +2359,21 @@ var UI = (function () {
     }
     if (d.tipo === "servidor") { nombres.splice(2, 0, ["servicios", "Servicios"], ["dns", "DNS"]); }
     if (!nombres.some(function (p) { return p[0] === S.pestañaProps; })) { S.pestañaProps = "config"; }
-    nombres.forEach(function (p) {
-      var activa = p[0] === S.pestañaProps;
-      var b = boton(p[1], activa ? "activo" : "");
-      b.setAttribute("role", "tab");
-      b.setAttribute("aria-selected", String(activa));
-      b.addEventListener("click", function () { S.pestañaProps = p[0]; renderPropiedades(); });
-      tabs.appendChild(b);
-    });
+    var idPanel = armarPestañas(tabs, nombres, S.pestañaProps, "prop", function (clave) { S.pestañaProps = clave; renderPropiedades(); });
     c.appendChild(tabs);
     c.appendChild(el("h2", "", escapar(d.nombre || d.id) + " <small>" + escapar(nombreTipo(claveDe(d))) + "</small>"));
 
-    if (S.pestañaProps === "config") { panelConfig(c, d); }
-    else if (S.pestañaProps === "ifs") { panelInterfaces(c, d); }
-    else if (S.pestañaProps === "rutas") { panelRutas(c, d); }
-    else if (S.pestañaProps === "filtrado") { panelFiltrado(c, d); }
-    else if (S.pestañaProps === "dhcp") { panelDhcp(c, d); }
-    else if (S.pestañaProps === "dns") { panelDnsServidor(c, d); }
-    else if (S.pestañaProps === "servicios") { panelServicios(c, d); }
-    else { panelEstado(c, d); }
+    var panel = el("div", "");
+    marcarPanel(panel, idPanel, "prop", S.pestañaProps);
+    c.appendChild(panel);
+    if (S.pestañaProps === "config") { panelConfig(panel, d); }
+    else if (S.pestañaProps === "ifs") { panelInterfaces(panel, d); }
+    else if (S.pestañaProps === "rutas") { panelRutas(panel, d); }
+    else if (S.pestañaProps === "filtrado") { panelFiltrado(panel, d); }
+    else if (S.pestañaProps === "dhcp") { panelDhcp(panel, d); }
+    else if (S.pestañaProps === "dns") { panelDnsServidor(panel, d); }
+    else if (S.pestañaProps === "servicios") { panelServicios(panel, d); }
+    else { panelEstado(panel, d); }
 
     var bBorrar = boton("Borrar dispositivo (Supr)", "borrar");
     bBorrar.addEventListener("click", borrarSeleccion);
@@ -2870,6 +3033,10 @@ var UI = (function () {
   /* ---------------- Franja inferior ---------------- */
 
   function renderInferior() {
+    conFoco(S.inf, dibujarInferior);
+  }
+
+  function dibujarInferior() {
     var c = S.inf;
     c.innerHTML = "";
     var compacta = S.presentacion && !S.presExpandida;
@@ -2885,14 +3052,7 @@ var UI = (function () {
     if (S.pestañaInf === "laboratorio" && S.modo !== "docente") { S.pestañaInf = "simulacion"; }
     var pestañas = [["simulacion", "Simulación"], ["captura", "Captura"], ["dhcp", "DHCP"], ["calculo", "Cálculo de subred"], ["ayuda", "Ayuda"]];
     if (S.modo === "docente") { pestañas.push(["laboratorio", "Laboratorio"]); }
-    pestañas.forEach(function (p) {
-      var activa = p[0] === S.pestañaInf;
-      var b = boton(p[1], activa ? "activo" : "");
-      b.setAttribute("role", "tab");
-      b.setAttribute("aria-selected", String(activa));
-      b.addEventListener("click", function () { S.pestañaInf = p[0]; renderInferior(); });
-      lista.appendChild(b);
-    });
+    var idPanel = armarPestañas(lista, pestañas, S.pestañaInf, "inf", function (clave) { S.pestañaInf = clave; renderInferior(); });
     barra.appendChild(lista);
     barra.appendChild(el("span", "espacio"));
     var selV = document.createElement("select");
@@ -2904,6 +3064,7 @@ var UI = (function () {
     var colapsado = S.inf.classList.contains("colapsado");
     var bCol = boton(S.presentacion ? "Volver a una línea" : (colapsado ? "Expandir" : "Colapsar"));
     bCol.setAttribute("aria-expanded", String(!colapsado));
+    bCol.setAttribute("data-foco", "colapsar");
     bCol.addEventListener("click", function () {
       if (S.presentacion) { S.presExpandida = false; renderInferior(); return; }
       S.inf.classList.toggle("colapsado");
@@ -2911,8 +3072,13 @@ var UI = (function () {
     });
     barra.appendChild(bCol);
     c.appendChild(barra);
-    if (colapsado) { return; }
+    if (colapsado) {
+      // Sin panel dibujado, las pestañas no controlan nada.
+      lista.querySelectorAll("[aria-controls]").forEach(function (b) { b.removeAttribute("aria-controls"); });
+      return;
+    }
     var cuerpo = el("div", "cuerpoinf");
+    marcarPanel(cuerpo, idPanel, "inf", S.pestañaInf);
     c.appendChild(cuerpo);
     if (S.pestañaInf === "simulacion") { panelSimulacion(cuerpo); }
     else if (S.pestañaInf === "captura") { panelCaptura(cuerpo); }
@@ -2927,6 +3093,7 @@ var UI = (function () {
   function renderEstadoPresentacion(c) {
     var fila = el("div", "estadopres");
     var bExp = boton("Expandir simulación");
+    bExp.setAttribute("data-foco", "colapsar");
     bExp.addEventListener("click", function () { S.presExpandida = true; renderInferior(); });
     fila.appendChild(bExp);
     fila.appendChild(el("span", "", escapar(resumenUltimoPing())));
@@ -3329,6 +3496,8 @@ var UI = (function () {
         : "Elegí un cable (o todos) y apretá <b>Iniciar captura</b>. Después hacé pings, consultas DNS y conexiones en Simulación."));
     } else {
       var tabla = el("table", "tablacap");
+      tabla.setAttribute("role", "grid");
+      tabla.setAttribute("aria-label", "Paquetes capturados");
       tabla.innerHTML = "<thead><tr><th>N.º</th><th>Origen</th><th>Destino</th><th>Protocolo</th><th>Info</th>" +
         (cap.enlace ? "" : "<th>Tramo</th>") + "</tr></thead>";
       var tb = document.createElement("tbody");
@@ -3337,12 +3506,16 @@ var UI = (function () {
         var tr = document.createElement("tr");
         tr.className = (p.n === cap.sel ? "sel " : "") + "p-" + transporteDe(t).toLowerCase();
         tr.tabIndex = 0;
+        tr.setAttribute("aria-selected", String(p.n === cap.sel));
+        tr.setAttribute("data-foco", "cap-" + p.n);
         tr.innerHTML = "<td>" + p.n + "</td><td>" + escapar(t.ipOrigen) + "</td><td>" + escapar(t.ipDestino) + "</td><td>" +
           escapar(t.protocolo || "ICMP") + "</td><td>" + escapar(t.info || t.mensaje || "") + "</td>" +
           (cap.enlace ? "" : "<td>" + escapar(nombreDe(t.de.dispositivo) + " → " + nombreDe(t.a.dispositivo)) + "</td>");
         function elegir() { cap.sel = p.n; renderInferior(); resaltarTrama(t); }
         tr.addEventListener("click", elegir);
-        tr.addEventListener("keydown", function (ev) { if (ev.key === "Enter") { elegir(); } });
+        tr.addEventListener("keydown", function (ev) {
+          if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); elegir(); }
+        });
         tb.appendChild(tr);
       });
       tabla.appendChild(tb);
@@ -3625,17 +3798,20 @@ var UI = (function () {
     }
     if (tramas.length) {
       var bTramas = boton(enTramas ? "Ver los pasos" : "Cómo viaja el paquete (" + tramas.length + (tramas.length === 1 ? " trama)" : " tramas)"));
+      bTramas.setAttribute("data-foco", "tramas");
       bTramas.addEventListener("click", function () { S.verTramas = !S.verTramas; quitarResalteTrama(); renderInferior(); });
       pie.appendChild(bTramas);
     }
     if (enTramas) {
       var bEnc = boton(S.verEncabezados ? "Ocultar los encabezados" : "Ver los encabezados");
       bEnc.setAttribute("aria-expanded", String(!!S.verEncabezados));
+      bEnc.setAttribute("data-foco", "encabezados");
       bEnc.addEventListener("click", function () { S.verEncabezados = !S.verEncabezados; renderInferior(); });
       pie.appendChild(bEnc);
     }
     if (!enTramas && (pasos.length > visibles.length || S.verTodos)) {
       var bTodos = boton(S.verTodos ? "Ver resumen" : "Ver los " + pasos.length + " pasos");
+      bTodos.setAttribute("data-foco", "todos");
       bTodos.addEventListener("click", function () { S.verTodos = !S.verTodos; renderInferior(); });
       pie.appendChild(bTodos);
     }
@@ -3797,6 +3973,7 @@ var UI = (function () {
     cont.style.flex = S.consolaAbierta ? "1" : "0 0 auto";
     var b = boton("Consola · " + S.lineasConsola.length + " líneas " + (S.consolaAbierta ? "▾" : "▸"), "consolabtn");
     b.setAttribute("aria-expanded", String(!!S.consolaAbierta));
+    b.setAttribute("data-foco", "consola");
     b.addEventListener("click", function () { S.consolaAbierta = !S.consolaAbierta; renderInferior(); });
     cont.appendChild(b);
     if (S.consolaAbierta) { cont.appendChild(renderConsola()); }
@@ -3965,6 +4142,7 @@ var UI = (function () {
       ["desafio", "Desafío VLSM (" + sectoresLab(false).length + ")"], ["verificar", "Verificar"]].forEach(function (s) {
       var b = boton(s[1], actual === s[0] ? "activo" : "");
       b.setAttribute("aria-pressed", String(actual === s[0]));
+      b.setAttribute("data-foco", "lab-" + s[0]);
       b.addEventListener("click", function () { S.seccionLab = s[0]; S.itemLab = 0; renderInferior(); });
       secs.appendChild(b);
     });
@@ -4606,6 +4784,7 @@ var UI = (function () {
       "<span><kbd>F</kbd></span><span>modo presentación</span>" +
       "<span>Fondo · <kbd>+</kbd> <kbd>−</kbd></span><span>mover la vista · zoom</span>" +
       "<span><kbd>Tab</kbd> y flechas</span><span>elegir y mover equipos</span>" +
+      "<span><kbd>←</kbd> <kbd>→</kbd> en pestañas</span><span>cambiar de panel</span>" +
       "<span><kbd>Enter</kbd> en la paleta</span><span>agregar al centro</span>" +
       "<span>Punta del cable</span><span>clic en ella y en el puerto nuevo</span>" +
       "</div>"));
