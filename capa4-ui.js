@@ -499,6 +499,7 @@ var UI = (function () {
     ".simres{display:flex;gap:12px;flex:1;min-height:0;}",
     ".simres .recorrido{flex:3;min-width:0;border:1px solid var(--sim-borde);border-radius:8px;display:flex;flex-direction:column;min-height:0;}",
     ".simres .lado{flex:2;min-width:0;display:flex;flex-direction:column;gap:8px;min-height:0;overflow:auto;}",
+    ".simres .colconsola{flex:2;min-width:0;display:flex;flex-direction:column;min-height:0;}",
     ".recorrido .cab{display:flex;justify-content:space-between;gap:8px;font-size:12px;font-weight:600;color:var(--sim-tenue);padding:4px 10px;border-bottom:1px solid var(--sim-borde);}",
     ".recorrido .cab .ok{color:var(--sim-ok);font-weight:400;}",
     ".recorrido .cab .mal{color:var(--sim-mal);font-weight:400;}",
@@ -3689,6 +3690,9 @@ var UI = (function () {
     var res = S.ultimo.res;
     cont.appendChild(renderRecorrido(res));
     var lado = el("div", "lado");
+    // Con el resultado a la vista, la consola va en su propia columna: debajo
+    // de la banda quedaba sin alto.
+    var conConsola = false;
     if (S.ultimo.conexion) {
       // El socket y los segmentos, uno por línea: → del cliente, ← del servidor.
       var lineas = (res.segmentos || []).map(function (x) {
@@ -3704,7 +3708,7 @@ var UI = (function () {
           "<div>Socket: " + escapar(sk.cliente) + " ↔ " + escapar(sk.servidor) +
           (sk.vistoPorServidor !== sk.cliente ? " · el servidor la ve desde " + escapar(sk.vistoPorServidor) + " (NAT)" : "") + "</div>" +
           "<div class='segmentos'>" + lineas.join("<br>") + "</div>"));
-        lado.appendChild(renderConsola());
+        conConsola = true;
       } else {
         var dgC = renderDiagnostico(res.diagnostico);
         if (lineas.length) { dgC.appendChild(el("div", "segmentos", lineas.join("<br>"))); }
@@ -3720,7 +3724,7 @@ var UI = (function () {
         "<div>Servidor: " + escapar(resp.servidor) + " · " +
         (resp.autoritativa ? "respuesta autoritativa" : "respuesta no autoritativa" + (resp.desdeCache ? ", desde la caché" : "")) + "</div>" +
         "<div class='ruta'>" + resp.registros.map(function (x) { return escapar(textoRegistroUI(x)); }).join("<br>") + "</div>"));
-      lado.appendChild(renderConsola());
+      conConsola = true;
     } else if (res.exito && S.ultimo.qos && S.ultimo.qos.diagnostico) {
       // El camino existe, pero se perdieron todos los paquetes (D32).
       lado.appendChild(renderDiagnostico(S.ultimo.qos.diagnostico));
@@ -3736,13 +3740,18 @@ var UI = (function () {
             (q.maximo > q.minimo ? " · variación (jitter) " + (q.maximo - q.minimo) + " ms" : "") + "</div>"
           : "<b>✓ El eco volvió en " + r.ms + " ms.</b>") +
         "<div class='ruta'>" + escapar(ruta.join(" → ")) + " · " + cantidadSaltos(res) + " saltos · TTL " + r.ttl + "</div>"));
-      lado.appendChild(renderConsola());
+      conConsola = true;
     } else {
       lado.appendChild(renderDiagnostico(res.diagnostico));
       // Con un diagnóstico a la vista, la consola se pliega a una línea.
       lado.appendChild(renderConsolaPlegable());
     }
     cont.appendChild(lado);
+    if (conConsola) {
+      var col = el("div", "colconsola");
+      col.appendChild(renderConsola());
+      cont.appendChild(col);
+    }
     return cont;
   }
 
