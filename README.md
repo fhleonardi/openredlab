@@ -37,7 +37,7 @@ No hace falta instalar nada: es un único archivo HTML, sin dependencias y sin c
 
 ## Escenarios
 
-En el selector **Ejemplos…** vienen redes listas: una básica, dos subredes, un complejo turístico completo, el mismo complejo con fallas, un desafío VLSM, un router de 8 puertos, una oficina con DNS propio y cuatro topologías: estrella, bus (con un hub), malla entre routers y dos LAN unidas por una WAN.
+En el selector **Ejemplos…** vienen redes listas: una básica, dos subredes, un complejo turístico completo, el mismo complejo con fallas, un desafío VLSM, un router de 8 puertos, una oficina con DNS propio y cuatro topologías: estrella, bus (con un hub), malla entre routers y dos LAN unidas por una WAN, y dos proveedores de internet unidos por peering, con un proveedor de tránsito.
 
 En [`escenarios/`](escenarios/) hay archivos para abrir con **Importar** o arrastrándolos al lienzo:
 

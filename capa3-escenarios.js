@@ -1961,6 +1961,47 @@ var Escenarios = (function () {
     };
   }
 
+  // Dos ISP unidos por peering, que compran tránsito a un proveedor mayor.
+  // Las rutas estáticas reflejan la política: al cliente del otro ISP por
+  // el peering; al resto de internet, por el tránsito. Direcciones de
+  // documentación (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24).
+  function topologiaIsp() {
+    var transito = routerConPuertos("transito", "Tránsito (AS 64500)", 400, 180,
+      [["g0/0", "ethernet", "192.0.2.6", 30], ["g0/1", "ethernet", "192.0.2.10", 30], ["g0/2", "ethernet", "192.0.2.13", 30]],
+      [{ destino: "198.51.100.0", prefijo: 24, siguienteSalto: "192.0.2.5" },
+       { destino: "203.0.113.0", prefijo: 24, siguienteSalto: "192.0.2.9" },
+       { destino: "192.0.2.0", prefijo: 30, siguienteSalto: "192.0.2.5" },
+       { destino: "0.0.0.0", prefijo: 0, siguienteSalto: "192.0.2.14" }]);
+    var ispA = routerConPuertos("isp-a", "ISP-A (AS 64501)", 180, 340,
+      [["g0/0", "ethernet", "198.51.100.1", 24], ["g0/1", "ethernet", "192.0.2.1", 30], ["g0/2", "ethernet", "192.0.2.5", 30]],
+      [{ destino: "203.0.113.0", prefijo: 24, siguienteSalto: "192.0.2.2" },
+       { destino: "0.0.0.0", prefijo: 0, siguienteSalto: "192.0.2.6" }]);
+    var ispB = routerConPuertos("isp-b", "ISP-B (AS 64502)", 620, 340,
+      [["g0/0", "ethernet", "203.0.113.1", 24], ["g0/1", "ethernet", "192.0.2.2", 30], ["g0/2", "ethernet", "192.0.2.9", 30]],
+      [{ destino: "198.51.100.0", prefijo: 24, siguienteSalto: "192.0.2.1" },
+       { destino: "0.0.0.0", prefijo: 0, siguienteSalto: "192.0.2.10" }]);
+    var nube = {
+      id: "nube", tipo: "internet", nombre: "Internet", x: 400, y: 30, encendido: true,
+      interfaces: [interfaz("eth0", "ethernet", "192.0.2.14", 30, true)],
+      gateway: null, dns: null, rutas: [], dhcp: null
+    };
+    var cliA = armarPc("cli-a", "Cliente-A", 180, 500, "198.51.100.10", 24, "198.51.100.1");
+    var cliB = armarPc("cli-b", "Cliente-B", 620, 500, "203.0.113.10", 24, "203.0.113.1");
+    return {
+      version: 1, nombre: "Dos ISP: peering y tránsito",
+      dispositivos: [nube, transito, ispA, ispB, cliA, cliB],
+      enlaces: [
+        armarEnlace("l-peering", "isp-a", "g0/1", "isp-b", "g0/1", "ethernet"),
+        armarEnlace("l-transito-a", "isp-a", "g0/2", "transito", "g0/0", "ethernet"),
+        armarEnlace("l-transito-b", "isp-b", "g0/2", "transito", "g0/1", "ethernet"),
+        armarEnlace("l-internet", "transito", "g0/2", "nube", "eth0", "ethernet"),
+        armarEnlace("l-cli-a", "cli-a", "eth0", "isp-a", "g0/0", "ethernet"),
+        armarEnlace("l-cli-b", "cli-b", "eth0", "isp-b", "g0/0", "ethernet")
+      ],
+      escenario: null
+    };
+  }
+
   // Oficina con su propio servidor DNS (zona oficina.local), que además
   // resuelve los nombres de internet preguntándole a la jerarquía.
   function topologiaOficinaDns() {
@@ -2075,6 +2116,12 @@ var Escenarios = (function () {
       nombre: "Dos LAN unidas por una WAN",
       descripcion: "Dos sedes, cada una con su LAN, unidas por un enlace WAN de fibra entre sus routers.",
       topologia: topologiaLanWan()
+    },
+    {
+      id: "isp-peering",
+      nombre: "Dos ISP: peering y tránsito",
+      descripcion: "Dos proveedores (AS 64501 y 64502) intercambian el tráfico de sus clientes por peering y compran tránsito a un proveedor mayor para llegar al resto de internet.",
+      topologia: topologiaIsp()
     }
   ];
 
@@ -2471,6 +2518,19 @@ var Escenarios = (function () {
       var wan = Motor.ping(Motor.crearEstado(topologiaLanWan()), "pc-c1", "192.168.200.12");
       comparar("LAN y WAN: una sede llega a la otra", wan.exito, true);
       comparar("LAN y WAN: tres dominios de broadcast", Motor.dominios(Motor.crearEstado(topologiaLanWan())).broadcast.length, 3);
+      // Proveedores: peering entre clientes, tránsito hacia el resto.
+      comparar("ISP: el ejemplo valida", validarTopologia(topologiaIsp()).ok, true);
+      var entreClientes = Motor.ping(Motor.crearEstado(topologiaIsp()), "cli-a", "203.0.113.10");
+      var porDonde = (entreClientes.tramas || []).filter(function (t) { return t.sentido === "ida"; }).map(function (t) { return t.a.dispositivo; });
+      comparar("ISP: entre clientes, por el peering y sin pasar por el tránsito",
+        [entreClientes.exito, porDonde.indexOf("isp-b") >= 0, porDonde.indexOf("transito") < 0], [true, true, true]);
+      var aGoogle = Motor.ping(Motor.crearEstado(topologiaIsp()), "cli-a", "google.com");
+      comparar("ISP: hacia el resto de internet, por el tránsito",
+        [aGoogle.exito, (aGoogle.tramas || []).some(function (t) { return t.a.dispositivo === "transito"; })], [true, true]);
+      var sinPeering = topologiaIsp();
+      buscarEnlace(sinPeering, "l-peering").estado = "down";
+      comparar("ISP: sin peering, las rutas estáticas no se desvían solas",
+        Motor.ping(Motor.crearEstado(sinPeering), "cli-a", "203.0.113.10").exito, false);
       var dnsEnPc = clonar(ofi);
       buscarDispositivo(dnsEnPc, "pc1").servicios = { dns: { zona: "x.local", registros: [] } };
       var conReglas = clonar(ofi);
