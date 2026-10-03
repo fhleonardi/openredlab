@@ -15140,7 +15140,21 @@ var Autotest = (function () {
     function tecla(n, key) {
       n.dispatchEvent(new KeyboardEvent("keydown", { key: key, bubbles: true, cancelable: true }));
     }
+    // Se mira la hoja de estilos y no el estilo computado: :focus-visible
+    // depende de cómo el navegador decidió que llegó el foco.
+    function reglaCss(selector) {
+      var hoja = document.getElementById("sim-estilos");
+      var reglas = hoja && hoja.sheet ? hoja.sheet.cssRules : [];
+      for (var i = 0; i < reglas.length; i++) {
+        if (reglas[i].selectorText === selector) { return reglas[i]; }
+      }
+      return null;
+    }
     try {
+      // En el celular la franja inferior está oculta: no hay foco que medir ahí.
+      if (window.matchMedia && window.matchMedia("(max-width:640px)").matches) {
+        return fila(25, nombre, true, "No aplica en pantallas de 640 px o menos, donde la franja inferior está oculta. Correr el Autotest en una pantalla más ancha.");
+      }
       var prob = [];
       UI.setModo("topologia");
       UI.cargarTopologia(clonar(ejemploPorId("complejo").topologia));
@@ -15163,6 +15177,15 @@ var Autotest = (function () {
       if (!panel || panel.getAttribute("role") !== "tabpanel") { prob.push("la franja no tiene tabpanel"); }
       tecla(document.activeElement, "Home");
       if (document.activeElement.id !== "sim-tab-inf-simulacion") { prob.push("Inicio no vuelve a Simulación"); }
+
+      // Fin llega a la última pestaña del modo: en Docente, Laboratorio.
+      UI.setModo("docente");
+      var tPrim = document.querySelector(".siminf [role=tab]");
+      tPrim.focus();
+      tecla(tPrim, "End");
+      if (document.activeElement.id !== "sim-tab-inf-laboratorio") { prob.push("Fin en modo Docente no llega a Laboratorio"); }
+      UI.setModo("topologia");
+      UI.seleccionar(id);
 
       // Captura en todos los cables y un ping al gateway del equipo.
       document.getElementById("sim-tab-inf-captura").click();
@@ -15198,6 +15221,19 @@ var Autotest = (function () {
         act = document.activeElement;
         if (!act || act.getAttribute("data-foco") !== clave) { prob.push("elegir un paquete pierde el foco"); }
         else if (act.getAttribute("aria-selected") !== "true") { prob.push("la fila elegida no tiene aria-selected"); }
+        // La fila elegida y otra con foco se distinguen: fondo distinto y
+        // un anillo propio para el foco (también sobre la elegida).
+        var filas2 = inf.querySelectorAll(".tablacap tbody tr");
+        filas2[0].focus();
+        if (filas2[0].classList.contains("sel") || !filas2[1].classList.contains("sel")) { prob.push("enfocar otra fila cambia la elegida"); }
+        else if (getComputedStyle(filas2[0]).backgroundColor === getComputedStyle(filas2[1]).backgroundColor) {
+          prob.push("la fila enfocada se ve igual que la elegida");
+        }
+        // Con var() en el atajo outline, las propiedades sueltas quedan vacías: se lee cssText.
+        var rFoco = reglaCss(".tablacap tr:focus-visible"), rFocoSel = reglaCss(".tablacap tr.sel:focus-visible");
+        if (!rFoco || rFoco.cssText.indexOf("solid") < 0 || !rFocoSel || rFocoSel.cssText.indexOf("outline-color") < 0) {
+          prob.push("las filas de la captura no tienen anillo de foco propio");
+        }
       }
       var bLim = botonCon(inf, "Limpiar");
       if (bLim) { bLim.click(); }
@@ -15214,21 +15250,44 @@ var Autotest = (function () {
         }
       }
 
+      // El foco en un puerto muestra su tooltip, y al salir se oculta.
+      var puerto = document.querySelector("svg .puerto");
+      var tip = document.querySelector(".simraiz .tooltip");
+      if (!puerto || !tip) { prob.push("no hay puertos o tooltip en el lienzo"); }
+      else {
+        // Si la ventana no tiene el foco (Autotest corrido desde la consola o
+        // con la ventana atrás), el navegador mueve el foco sin avisar: los
+        // eventos se disparan a mano para probar igual lo que escucha el puerto.
+        var sinVentana = !document.hasFocus();
+        puerto.focus();
+        if (sinVentana) { puerto.dispatchEvent(new FocusEvent("focus")); }
+        if (tip.style.display !== "block" || tip.textContent.indexOf("puerto") < 0) { prob.push("el foco en un puerto no muestra su tooltip"); }
+        puerto.blur();
+        if (sinVentana) { puerto.dispatchEvent(new FocusEvent("blur")); }
+        if (tip.style.display !== "none") { prob.push("el tooltip del puerto no se oculta al salir"); }
+      }
+
       // Hoja del celular: modal, con el fondo inerte mientras está abierta.
       var bConf = botonCon(document.querySelector(".simacciones"), "Configurar");
       var sec = document.querySelector(".simhoja");
       if (!bConf || !sec) { prob.push("no están la barra del celular o la hoja"); }
       else {
+        // En escritorio el botón Configurar está oculto: el origen es una
+        // pestaña visible, que es lo que la hoja tiene que devolver.
+        var tOrigen = document.getElementById("sim-tab-inf-simulacion");
+        tOrigen.focus();
         bConf.click();
         if (sec.getAttribute("aria-modal") !== "true") { prob.push("la hoja no es modal"); }
         if (!document.querySelector(".simcuerpo").inert) { prob.push("el fondo no queda inerte con la hoja abierta"); }
+        if (document.activeElement && document.activeElement !== document.body) { document.activeElement.blur(); }
         sec.querySelector(".cabhoja button").click();
         if (document.querySelector(".simraiz [inert]")) { prob.push("queda fondo inerte al cerrar la hoja"); }
+        if (document.activeElement !== tOrigen) { prob.push("al cerrar la hoja el foco no vuelve a lo que la abrió"); }
       }
       document.getElementById("sim-tab-inf-simulacion").click();
 
       if (prob.length === 0) {
-        return fila(25, nombre, true, "Flechas e Inicio en las pestañas; foco conservado al alternar tramas y al elegir un paquete; hoja modal; anillo del cable intacto.");
+        return fila(25, nombre, true, "Flechas, Inicio y Fin (también en Docente) en las pestañas; foco conservado al alternar tramas y al elegir un paquete; fila elegida y enfocada distinguibles; tooltip del puerto con foco; hoja modal que devuelve el foco; anillo del cable intacto.");
       }
       return fila(25, nombre, false, "Falla: " + prob.join("; ") + ".");
     } catch (e) {
