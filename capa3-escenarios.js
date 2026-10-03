@@ -120,7 +120,13 @@ var Escenarios = (function () {
     lista.push({ id: "fib0", medio: "fibra" });
     return lista;
   }
-  var MODELOS_SWITCH = { "24-puertos": puertosSwitch(24), "48-puertos": puertosSwitch(48) };
+  // El hub repite todo por todos sus puertos: 8 de cobre, sin fibra.
+  function puertosHub() {
+    var lista = [];
+    for (var i = 1; i <= 8; i++) { lista.push({ id: "fa0/" + i, medio: "ethernet" }); }
+    return lista;
+  }
+  var MODELOS_SWITCH = { "24-puertos": puertosSwitch(24), "48-puertos": puertosSwitch(48), hub: puertosHub() };
 
   /* ---------------- Servidor DNS ----------------
    * servicios.dns = { zona, recursivo, registros: [{ nombre, tipo, valor,
@@ -502,7 +508,7 @@ var Escenarios = (function () {
         } else if (d.tipo === "router" && !MODELOS_ROUTER[d.modelo]) {
           anotar(etiqueta + ".modelo", "El router \"" + d.id + "\" tiene un modelo que no existe: puede ser el estándar (sin modelo), \"8-puertos\" o \"firewall\".");
         } else if (d.tipo === "switch-l2" && !MODELOS_SWITCH[d.modelo]) {
-          anotar(etiqueta + ".modelo", "El switch \"" + d.id + "\" tiene un modelo que no existe: puede ser el estándar (sin modelo), \"24-puertos\" o \"48-puertos\".");
+          anotar(etiqueta + ".modelo", "El switch \"" + d.id + "\" tiene un modelo que no existe: puede ser el estándar (sin modelo), \"24-puertos\", \"48-puertos\" o \"hub\".");
         }
       }
       var esperadas = interfacesEsperadas(d);
@@ -2246,6 +2252,9 @@ var Escenarios = (function () {
 
     (function () {
       var topo = topologiaComplejo();
+      var conHub = clonar(topo);
+      comparar("switch a hub sigue los cables y valida", cambiarModelo(conHub, "sw-admin", "hub").ok &&
+        validarTopologia(conHub).ok && buscarDispositivo(conHub, "sw-admin").interfaces.length, 8);
       comparar("switch a 24 puertos", cambiarModelo(topo, "sw-admin", "24-puertos").ok &&
         buscarDispositivo(topo, "sw-admin").interfaces.length, 25);
       comparar("switch de 24 puertos valida", validarTopologia(topo).ok, true);

@@ -128,6 +128,12 @@ var Autotest = (function () {
       esperado: "SRV-DNS responde intranet.oficina.local con autoridad. Para google.com consulta la raíz, el servidor de .com y el " +
         "autoritativo de google.com (consultas iterativas), responde sin autoridad y la guarda en su caché: la segunda vez contesta desde ahí."
     },
+    20: {
+      conError: false,
+      situacion: "Tres PC conectadas a un mismo equipo: primero un hub y después un switch.",
+      esperado: "Con el hub, las tres comparten el medio: 1 dominio de colisión. Con el switch, cada puerto es su propio dominio: 3. " +
+        "En los dos casos es 1 solo dominio de broadcast, porque ni el hub ni el switch lo cortan (lo corta un router)."
+    },
     12: {
       conError: true,
       situacion: "En el desafío VLSM, el sector Cámaras se arma con el router en 10.45.7.41/28, al lado del Wi-Fi " +
@@ -337,6 +343,31 @@ var Autotest = (function () {
         (otraVez.respuesta && otraVez.respuesta.desdeCache ? "; la segunda vez, desde la caché." : "."));
     } catch (e) {
       return fila(19, nombre, false, "Excepción: " + e.message);
+    }
+  }
+
+  function tresPcEn(modelo) {
+    var t = clonar(ejemploPorId("basica").topologia);
+    var sw = t.dispositivos.filter(function (d) { return d.tipo === "switch-l2"; })[0];
+    if (modelo) { sw.modelo = modelo; sw.interfaces = sw.interfaces.filter(function (f) { return f.medio === "ethernet"; }); }
+    var pc = clonar(t.dispositivos.filter(function (d) { return d.tipo === "pc"; })[0]);
+    pc.id = "pc-3"; pc.nombre = "PC-3"; pc.y += 120; pc.interfaces[0].ip = "192.168.1.30";
+    t.dispositivos.push(pc);
+    t.enlaces.push({ id: "l-pc3", tipo: "ethernet", estado: "up", a: { dispositivo: "pc-3", interfaz: "eth0" }, b: { dispositivo: sw.id, interfaz: "fa0/8" } });
+    return t;
+  }
+
+  function crit20() {
+    var nombre = "Un hub es un solo dominio de colisión; un switch separa uno por puerto";
+    try {
+      var conHub = Motor.dominios(Motor.crearEstado(tresPcEn("hub")));
+      var conSwitch = Motor.dominios(Motor.crearEstado(tresPcEn(null)));
+      var pasa = conHub.colision.length === 1 && conSwitch.colision.length === 3 &&
+        conHub.broadcast.length === 1 && conSwitch.broadcast.length === 1;
+      return fila(20, nombre, pasa, "Con hub: " + conHub.colision.length + " de colisión y " + conHub.broadcast.length +
+        " de broadcast. Con switch: " + conSwitch.colision.length + " de colisión y " + conSwitch.broadcast.length + " de broadcast.");
+    } catch (e) {
+      return fila(20, nombre, false, "Excepción: " + e.message);
     }
   }
 
@@ -1011,7 +1042,7 @@ var Autotest = (function () {
    * puede leer y discutir. Los criterios de la interfaz y del archivo, y las
    * pruebas internas de las capas, quedan para quien programa:
    * Autotest.correr({ tecnico: true }) desde la consola. */
-  var CRITERIOS_DIDACTICOS = [crit02, crit17, crit03, crit04, crit05, crit06, crit18, crit19, crit07, crit08, crit12];
+  var CRITERIOS_DIDACTICOS = [crit02, crit17, crit03, crit04, crit05, crit06, crit20, crit18, crit19, crit07, crit08, crit12];
   var CRITERIOS_TECNICOS = [crit01, crit09, crit10, crit11, crit13, crit14, crit15, crit16];
 
   function correr(opciones) {
