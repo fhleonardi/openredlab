@@ -60,6 +60,7 @@ Cada paso lleva su **capa** (por ejemplo «Capa 2 · Enlace»): pasá el mouse p
 | **D19** | El equipo inalámbrico no está conectado a un punto de acceso | Que el AP esté encendido y con su radio en modo ap |
 | **D20** | Nadie tiene esa IP en tu red | Que la IP de destino esté bien escrita y el equipo exista |
 | **D23** | El paquete quedó dando vueltas entre routers | La ruta hacia ese destino en cada router del recorrido |
+| **D24** | El equipo no tiene servidor DNS | Panel derecho, Configuración: el campo DNS |
 | **D25** | El nombre no existe | Cómo está escrito, y si el servidor DNS que preguntás conoce esa zona |
 | **D26** | El servidor DNS no responde | Que la PC llegue a la IP de su servidor DNS (es un ping como cualquier otro) |
 | **D27** | Una regla de filtrado bloqueó el paquete | Pestaña Filtrado del router o firewall: el orden de las reglas |
