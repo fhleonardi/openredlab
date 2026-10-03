@@ -1168,7 +1168,119 @@ var Autotest = (function () {
     }
   }
 
-  var CRITERIOS_TECNICOS = [crit01, crit09, crit10, crit11, crit13, crit14, crit15, crit16, crit24];
+  /* Foco y teclado (SRE-1026): el foco sobrevive a los redibujados de la
+   * franja inferior, las pestañas responden a las flechas, la hoja del
+   * celular deja el fondo inerte y ninguna regla le quita el anillo al cable. */
+  function crit25() {
+    var nombre = "El foco no se pierde al redibujar y las pestañas se recorren con flechas";
+    var previo = modoActualDom();
+    function botonCon(raiz, texto) {
+      var bs = raiz.querySelectorAll("button");
+      for (var i = 0; i < bs.length; i++) { if (bs[i].textContent.indexOf(texto) === 0) { return bs[i]; } }
+      return null;
+    }
+    function tecla(n, key) {
+      n.dispatchEvent(new KeyboardEvent("keydown", { key: key, bubbles: true, cancelable: true }));
+    }
+    try {
+      var prob = [];
+      UI.setModo("topologia");
+      UI.cargarTopologia(clonar(ejemploPorId("complejo").topologia));
+      var id = dispositivoConIp();
+      var origen = null;
+      UI.topologiaActual().dispositivos.forEach(function (d) { if (d.id === id) { origen = d; } });
+      UI.seleccionar(id);
+      var inf = document.querySelector(".siminf");
+
+      // Pestañas: → desde Simulación lleva el foco y la selección a Captura.
+      var tSim = document.getElementById("sim-tab-inf-simulacion");
+      tSim.click();
+      tSim = document.getElementById("sim-tab-inf-simulacion");
+      tSim.focus();
+      tecla(tSim, "ArrowRight");
+      var act = document.activeElement;
+      if (!act || act.id !== "sim-tab-inf-captura") { prob.push("→ no deja el foco en Captura"); }
+      else if (!act.classList.contains("activo") || act.getAttribute("aria-selected") !== "true") { prob.push("→ no elige Captura"); }
+      var panel = document.getElementById("sim-panel-inf");
+      if (!panel || panel.getAttribute("role") !== "tabpanel") { prob.push("la franja no tiene tabpanel"); }
+      tecla(document.activeElement, "Home");
+      if (document.activeElement.id !== "sim-tab-inf-simulacion") { prob.push("Inicio no vuelve a Simulación"); }
+
+      // Captura en todos los cables y un ping al gateway del equipo.
+      document.getElementById("sim-tab-inf-captura").click();
+      var bIni = botonCon(inf, "Iniciar captura");
+      if (bIni) { bIni.click(); } else { prob.push("no está «Iniciar captura»"); }
+      document.getElementById("sim-tab-inf-simulacion").click();
+      var destino = null;
+      inf.querySelectorAll("label").forEach(function (l) { if (l.textContent === "Destino") { destino = document.getElementById(l.htmlFor); } });
+      var bPing = inf.querySelector(".simctrl button.primario");
+      if (!destino || !bPing || !origen) { prob.push("no se encontró el formulario del ping"); }
+      else {
+        destino.value = origen.gateway;
+        bPing.click();
+        // Alternar las tramas conserva el foco en el botón, aunque se redibuje.
+        var bTr = inf.querySelector("[data-foco=tramas]");
+        if (!bTr) { prob.push("no está el botón de tramas"); }
+        else {
+          bTr.focus();
+          bTr.click();
+          act = document.activeElement;
+          if (!act || act.getAttribute("data-foco") !== "tramas" || act === bTr) { prob.push("alternar tramas pierde el foco"); }
+        }
+      }
+
+      // Elegir un paquete con Space conserva el foco en la fila.
+      document.getElementById("sim-tab-inf-captura").click();
+      var filas = inf.querySelectorAll(".tablacap tbody tr");
+      if (filas.length < 2) { prob.push("la captura tiene " + filas.length + " paquetes"); }
+      else {
+        var clave = filas[1].getAttribute("data-foco");
+        filas[1].focus();
+        tecla(filas[1], " ");
+        act = document.activeElement;
+        if (!act || act.getAttribute("data-foco") !== clave) { prob.push("elegir un paquete pierde el foco"); }
+        else if (act.getAttribute("aria-selected") !== "true") { prob.push("la fila elegida no tiene aria-selected"); }
+      }
+      var bLim = botonCon(inf, "Limpiar");
+      if (bLim) { bLim.click(); }
+      var bDet = botonCon(inf, "Detener");
+      if (bDet) { bDet.click(); }
+
+      // Ninguna regla le quita el contorno al cable enfocado.
+      var hoja = document.getElementById("sim-estilos");
+      var reglas = hoja && hoja.sheet ? hoja.sheet.cssRules : [];
+      for (var i = 0; i < reglas.length; i++) {
+        var r = reglas[i];
+        if (r.selectorText && /\.enlace:focus(?!-visible)/.test(r.selectorText) && r.style.outlineStyle === "none") {
+          prob.push("una regla le quita el anillo de foco al cable");
+        }
+      }
+
+      // Hoja del celular: modal, con el fondo inerte mientras está abierta.
+      var bConf = botonCon(document.querySelector(".simacciones"), "Configurar");
+      var sec = document.querySelector(".simhoja");
+      if (!bConf || !sec) { prob.push("no están la barra del celular o la hoja"); }
+      else {
+        bConf.click();
+        if (sec.getAttribute("aria-modal") !== "true") { prob.push("la hoja no es modal"); }
+        if (!document.querySelector(".simcuerpo").inert) { prob.push("el fondo no queda inerte con la hoja abierta"); }
+        sec.querySelector(".cabhoja button").click();
+        if (document.querySelector(".simraiz [inert]")) { prob.push("queda fondo inerte al cerrar la hoja"); }
+      }
+      document.getElementById("sim-tab-inf-simulacion").click();
+
+      if (prob.length === 0) {
+        return fila(25, nombre, true, "Flechas e Inicio en las pestañas; foco conservado al alternar tramas y al elegir un paquete; hoja modal; anillo del cable intacto.");
+      }
+      return fila(25, nombre, false, "Falla: " + prob.join("; ") + ".");
+    } catch (e) {
+      return fila(25, nombre, false, "Excepción: " + e.message);
+    } finally {
+      try { UI.setModo(previo); } catch (e2) { /* se sigue igual */ }
+    }
+  }
+
+  var CRITERIOS_TECNICOS = [crit01, crit09, crit10, crit11, crit13, crit14, crit15, crit16, crit24, crit25];
 
   function correr(opciones) {
     var tecnico = !!(opciones && opciones.tecnico);
