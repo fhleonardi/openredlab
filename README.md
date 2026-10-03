@@ -44,6 +44,7 @@ En [`escenarios/`](escenarios/) hay archivos para abrir con **Importar** o arras
 | `lab1-ALUMNO.json` | Lab 1: un solo problema |
 | `lab2-ALUMNO.json` | Lab 2: tres problemas |
 | `lab3-ALUMNO.json` | Lab 3: el problema invisible |
+| `lab4-ALUMNO.json` | Lab 4: la oficina sin servicios (intranet, DNS e internet) |
 | `desafio-complejo-termal.json` | Desafío VLSM: Complejo Termal Río Verde, sin direccionar |
 
 ## Para docentes

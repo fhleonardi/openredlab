@@ -56,7 +56,7 @@ Un laboratorio es una red **sana** a la que se le plantan **fallas**, con **obje
 - **Exigí la causa cuando importa.** Un objetivo que espera una falla puede indicar el código: «el huésped *no* tiene que llegar al servidor, y tiene que ser por una regla de filtrado (D27)». Si falla por otra razón, no se cumple.
 - **Los laboratorios no avisan.** En una red con objetivos, el simulador no muestra los avisos de configuración en ningún modo: encontrar la falla es el ejercicio. En una red común, en cambio, la pestaña Estado de cada equipo avisa los errores que detecta.
 
-**Laboratorios incluidos.** En [`escenarios/`](../escenarios/) están las versiones del alumno de tres laboratorios sobre el complejo turístico: un problema, tres problemas y «el problema invisible». Las versiones docentes no se publican, para que los alumnos no tengan las soluciones a mano; si sos docente y las necesitás, pedíselas al autor ([fhleonardi en GitHub](https://github.com/fhleonardi)).
+**Laboratorios incluidos.** En [`escenarios/`](../escenarios/) están las versiones del alumno de tres laboratorios sobre el complejo turístico (un problema, tres problemas y «el problema invisible») y uno sobre la oficina con DNS propio («la oficina sin servicios»: dos fallas que producen tres síntomas distintos, D31, D30 y D28). Las versiones docentes no se publican, para que los alumnos no tengan las soluciones a mano; si sos docente y las necesitás, pedíselas al autor ([fhleonardi en GitHub](https://github.com/fhleonardi)).
 
 ## 3. Armar un desafío de diseño VLSM
 
@@ -119,17 +119,31 @@ Es el escenario del ejemplo *Complejo roto*. Un objetivo también puede esperar 
 | `ip-duplicada` | `dispositivo`, `copiarDe` | Le pone al equipo la IP de otro. |
 | `interfaz-deshabilitada` | `dispositivo`, `interfaz` | Deshabilita ese puerto. |
 | `enlace-caido` | `enlace` | Marca ese cable como caído. |
+| `nat-faltante` | `dispositivo`, `interfaz` | Saca el NAT de ese puerto del router (D28). |
+| `dns-incorrecto` | `dispositivo`, `dns` | Cambia el servidor DNS del equipo (por ejemplo, la IP del router: D29). |
+| `registro-dns-borrado` | `dispositivo`, `nombre`, `tipoRegistro` (opcional) | Borra ese registro del servidor DNS (D25). |
+| `servicio-detenido` | `dispositivo`, `protocolo`, `puerto` | El servidor deja de atender ese puerto (D31); UDP 53 apaga su DNS. |
+| `regla-agregada` | `dispositivo`, `regla`, `posicion` (opcional) | Agrega una regla de filtrado, por defecto en el primer lugar (D27). |
 
 **Objetivos:**
 
 | Campo | Valor |
 |---|---|
-| `tipo` | Siempre `"ping"`. |
+| `tipo` | `"ping"`, `"conectar"` o `"resolver"`. |
 | `origen` | `id` del equipo que hace el ping. |
 | `destino` | IP (o nombre, como `google.com`) a la que se hace el ping. |
 | `esperado` | `"exito"` si tiene que llegar, `"falla"` si no. |
 | `codigo` | Opcional, con `"falla"`: el diagnóstico exigido (por ejemplo `"D27"`). |
 | `descripcion` | Opcional: una frase para el alumno, que se muestra debajo del objetivo. |
+| `protocolo`, `puerto` | Sólo en `conectar`: `"tcp"` o `"udp"` y el puerto (el `destino` puede ser una IP o un nombre). |
+| `nombre`, `tipoRegistro`, `valor` | Sólo en `resolver`: el nombre, el tipo de registro (`A` si no se indica) y, opcional, el valor que tiene que dar. |
+
+Por ejemplo, para exigir que la intranet responda y que un nombre de afuera se resuelva:
+
+```json
+{ "tipo": "conectar", "origen": "pc1", "destino": "www.oficina.local", "protocolo": "tcp", "puerto": 80, "esperado": "exito" },
+{ "tipo": "resolver", "origen": "pc2", "nombre": "google.com", "esperado": "exito" }
+```
 
 ### Desafío VLSM
 
