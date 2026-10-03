@@ -45,7 +45,7 @@ var UI = (function () {
     deshacer: [],
     rehacer: [],
     presentacion: false,
-    tema: "claro",
+    tema: null, // hasta que se aplica uno, el del sistema
     velocidad: "normal",
     animToken: 0,
     inicioMs: Date.now(),
@@ -301,24 +301,38 @@ var UI = (function () {
 
   /* ---------------- CSS inyectado ---------------- */
 
+  // «Celular»: pantalla angosta, o táctil con poca altura (un celular en
+  // horizontal pasa los 640 px de ancho). La usan el CSS y esCelular().
+  var MQ_CELULAR = "(max-width:640px),(max-height:500px) and (pointer:coarse)";
+
+  // Lo que el tema cambia fuera de la raíz: la barra del navegador
+  // (theme-color, igual a la cabecera) y el fondo de la página (igual a --sim-fondo).
+  var TEMAS = {
+    claro: { meta: "#13355e", fondo: "#f7f9fb", esquema: "light" },
+    oscuro: { meta: "#0e1a2b", fondo: "#12171e", esquema: "dark" }
+  };
+
   var CSS = [
-    ".simraiz{font-family:system-ui,'Segoe UI',Roboto,Arial,sans-serif;display:flex;flex-direction:column;width:100%;max-width:100vw;height:100%;min-height:520px;overflow:hidden;background:var(--sim-fondo);color:var(--sim-texto);color-scheme:light;--sim-fondo:#f7f9fb;--sim-texto:#14181f;--sim-tenue:#5a6472;--sim-panel:#ffffff;--sim-borde:#c9d1dc;--sim-acento:#1a5fb4;--sim-ok:#1e7a34;--sim-okfondo:#e7f4ea;--sim-mal:#b3261e;--sim-malfondo:#fbeae8;--sim-aviso:#8a5a00;--sim-cabecera:#13355e;}",
-    ".simraiz.oscuro{color-scheme:dark;--sim-fondo:#12171e;--sim-texto:#e8eef4;--sim-tenue:#9aa5b4;--sim-panel:#1b232d;--sim-borde:#3a4a5a;--sim-acento:#5aa9e6;--sim-ok:#4cc38a;--sim-okfondo:#15301f;--sim-mal:#f0726a;--sim-malfondo:#3a1a1a;--sim-aviso:#e0a63c;--sim-cabecera:#0e1a2b;}",
+    ".simraiz{font-family:system-ui,'Segoe UI',Roboto,Arial,sans-serif;display:flex;flex-direction:column;width:100%;max-width:100vw;height:100%;min-height:520px;overflow:hidden;background:var(--sim-fondo);color:var(--sim-texto);color-scheme:light;--sim-fondo:#f7f9fb;--sim-texto:#14181f;--sim-tenue:#5a6472;--sim-panel:#ffffff;--sim-borde:#c9d1dc;--sim-acento:#1a5fb4;--sim-ok:#1e7a34;--sim-okfondo:#e7f4ea;--sim-mal:#b3261e;--sim-malfondo:#fbeae8;--sim-aviso:#8a5a00;--sim-cabecera:#13355e;--sim-sobreacento:#ffffff;}",
+    ".simraiz.oscuro{color-scheme:dark;--sim-fondo:#12171e;--sim-texto:#e8eef4;--sim-tenue:#9aa5b4;--sim-panel:#1b232d;--sim-borde:#3a4a5a;--sim-acento:#5aa9e6;--sim-ok:#4cc38a;--sim-okfondo:#15301f;--sim-mal:#f0726a;--sim-malfondo:#3a1a1a;--sim-aviso:#e0a63c;--sim-cabecera:#0e1a2b;--sim-sobreacento:#0e1a2b;}",
     ".simraiz button,.simraiz select,.simraiz input{font:inherit;font-size:13px;color:var(--sim-texto);background:var(--sim-panel);border:1px solid var(--sim-borde);border-radius:6px;touch-action:manipulation;}",
     ".simraiz button{padding:4px 10px;cursor:pointer;}",
     ".simraiz button:hover:not(:disabled),.simraiz select:hover{border-color:var(--sim-acento);}",
     ".simraiz button:disabled{opacity:.45;cursor:not-allowed;}",
     ".simraiz button:focus-visible,.simraiz select:focus-visible,.simraiz input:focus-visible,svg .nodo:focus-visible,svg .puerto:focus-visible,svg .enlace:focus-visible,svg.lienzo:focus-visible{outline:3px solid var(--sim-acento);outline-offset:2px;}",
-    ".simraiz button.primario{background:var(--sim-acento);border-color:var(--sim-acento);color:#fff;font-weight:600;padding:6px 22px;}",
-    ".simraiz button.activo{background:var(--sim-acento);color:#fff;border-color:var(--sim-acento);}",
+    ".simraiz button.primario{background:var(--sim-acento);border-color:var(--sim-acento);color:var(--sim-sobreacento);font-weight:600;padding:6px 22px;}",
+    ".simraiz button.activo{background:var(--sim-acento);color:var(--sim-sobreacento);border-color:var(--sim-acento);}",
     ".oculto-visual{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0;}",
     ".simbarra{display:flex;gap:8px;align-items:center;padding:6px 12px;background:var(--sim-cabecera);color:#fff;flex-wrap:wrap;}",
     ".simbarra h1{font-size:16px;margin:0 8px 0 0;font-weight:700;color:#fff;}",
     ".simbarra .modos{display:flex;gap:4px;}",
     ".simbarra button,.simbarra select{background:transparent;color:#fff;border-color:rgba(255,255,255,.28);}",
+    ".simbarra button:hover:not(:disabled),.simbarra select:hover{background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.6);}",
     ".simbarra select option{color:#14181f;background:#fff;}",
     ".simbarra select{max-width:260px;min-width:0;}",
-    ".simbarra button.activo{background:#fff;color:var(--sim-cabecera);border-color:#fff;}",
+    ".simbarra button.activo,.simbarra button.activo:hover{background:#fff;color:var(--sim-cabecera);border-color:#fff;}",
+    ".saltar{position:absolute;left:8px;top:-48px;z-index:30;background:var(--sim-panel);color:var(--sim-acento);border:2px solid var(--sim-acento);border-radius:6px;padding:6px 12px;font-weight:600;text-decoration:none;}",
+    ".saltar:focus{top:8px;}",
     ".simbarra .espacio{flex:1;}",
     ".simbarra .enpres{display:none;font-size:13px;opacity:.85;}",
     ".simcuerpo{flex:1;display:flex;min-height:0;}",
@@ -445,7 +459,7 @@ var UI = (function () {
     ".filaif select{max-width:120px;}",
     ".simbarra h1 .logo{width:28px;height:28px;vertical-align:-7px;margin-right:8px;}",
     ".simbarra h1 .subtitulo{font-weight:400;font-size:.72em;opacity:.8;margin-left:6px;}",
-    "@media (max-width:640px){.simbarra h1 .subtitulo{display:none;}}",
+    "@media " + MQ_CELULAR + "{.simbarra h1 .subtitulo{display:none;}}",
     ".ayuda{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:8px;padding:2px 0;font-size:12px;line-height:1.3;}",
     ".ayuda section{background:var(--sim-fondo);border:1px solid var(--sim-borde);border-radius:10px;padding:4px 10px;min-width:0;}",
     ".ayuda h3{margin:0 0 3px;font-size:12.5px;color:var(--sim-acento);}",
@@ -467,13 +481,13 @@ var UI = (function () {
     ".tablacap tr.p-icmp{background:rgba(252,224,255,.35);}",
     ".tablacap tr.p-tcp{background:rgba(231,230,255,.45);}",
     ".tablacap tr.p-udp{background:rgba(218,238,255,.45);}",
-    ".tablacap tr.sel{background:var(--sim-acento);color:#fff;}",
+    ".tablacap tr.sel{background:var(--sim-acento);color:var(--sim-sobreacento);}",
     ".tablacap tr:focus{outline:none;}",
     ".tablacap tr:focus-visible{outline:2px solid var(--sim-acento);outline-offset:-2px;}",
-    ".tablacap tr.sel:focus-visible{outline-color:var(--sim-texto);}",
+    ".tablacap tr.sel:focus-visible{outline-color:var(--sim-sobreacento);}",
     ".detallecap{border:1px solid var(--sim-borde);border-radius:8px;padding:8px 10px;font-size:12px;line-height:1.6;overflow:auto;}",
     ".detallecap b{color:var(--sim-acento);}",
-    ".modosim button.activo{background:var(--sim-acento);color:#fff;}",
+    ".modosim button.activo{background:var(--sim-acento);color:var(--sim-sobreacento);}",
     ".simctrl{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;}",
     ".simctrl label{font-size:12px;color:var(--sim-tenue);}",
     ".simctrl .flecha{color:var(--sim-tenue);}",
@@ -565,11 +579,11 @@ var UI = (function () {
     ".gridagregar button{display:flex;flex-direction:column;align-items:center;gap:6px;padding:12px 4px;font-size:13px;}",
     ".gridagregar svg{width:34px;height:34px;}",
     ".simhoja h3{font-size:12px;color:var(--sim-tenue);margin:4px 0 8px;}",
-    ".simaviso{position:absolute;left:50%;top:10px;transform:translateX(-50%);background:var(--sim-acento);color:#fff;border-radius:10px;padding:6px 12px;font-size:13px;z-index:6;pointer-events:none;max-width:90%;text-align:center;}",
+    ".simaviso{position:absolute;left:50%;top:10px;transform:translateX(-50%);background:var(--sim-acento);color:var(--sim-sobreacento);border-radius:10px;padding:6px 12px;font-size:13px;z-index:6;pointer-events:none;max-width:90%;text-align:center;}",
     ".pista{position:absolute;left:10px;bottom:10px;background:var(--sim-panel);border:1px solid var(--sim-borde);border-radius:8px;padding:6px 10px;font-size:13px;color:var(--sim-tenue);}",
     ".diagnostico .irconfig{margin-top:8px;border-color:var(--sim-mal);color:var(--sim-mal);}",
     "@media (max-width:900px){.simpaleta{width:140px;flex-basis:140px;}.palgrid{grid-template-columns:1fr;}.simprop{width:240px;flex-basis:240px;}.simbarra{gap:5px;padding:5px 6px;}.simbarra button{padding:4px 7px;}}",
-    "@media (max-width:640px){" +
+    "@media " + MQ_CELULAR + "{" +
       ".simraiz{min-height:0;}" +
       ".simbarra{flex-wrap:nowrap;padding:8px 10px;gap:8px;}" +
       ".simbarra h1{font-size:16px;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:0;}" +
@@ -839,6 +853,15 @@ var UI = (function () {
     S.raiz.classList.add("simraiz");
     S.inicioMs = Date.now();
 
+    // Primer Tab: saltear la cabecera y la paleta e ir directo al lienzo.
+    var saltar = el("a", "saltar", "Saltar al lienzo");
+    saltar.href = "#sim-lienzo";
+    saltar.addEventListener("click", function (ev) {
+      ev.preventDefault();
+      if (S.svg) { S.svg.focus(); }
+    });
+    S.raiz.appendChild(saltar);
+
     var barra = el("div", "simbarra");
     var bMenu = boton("☰", "menucel");
     bMenu.setAttribute("aria-label", "Menú");
@@ -895,6 +918,7 @@ var UI = (function () {
     bTema.setAttribute("aria-pressed", "false");
     bTema.addEventListener("click", alternarTema);
     S.botonTema = bTema;
+    aplicarTema(S.tema || temaDelSistema());
     var bPres = boton("Presentación (F)");
     bPres.setAttribute("aria-pressed", "false");
     bPres.addEventListener("click", alternarPresentacion);
@@ -903,7 +927,7 @@ var UI = (function () {
     barra.appendChild(bTema); barra.appendChild(bPres);
     S.raiz.appendChild(barra);
 
-    var cuerpo = el("div", "simcuerpo");
+    var cuerpo = el("main", "simcuerpo");
     var pal = el("div", "simpaleta");
     pal.setAttribute("aria-label", "Paleta de dispositivos");
     var cab = el("div", "palcab");
@@ -968,6 +992,7 @@ var UI = (function () {
     var svgNS = "http://www.w3.org/2000/svg";
     var svg = document.createElementNS(svgNS, "svg");
     svg.setAttribute("class", "lienzo");
+    svg.id = "sim-lienzo";
     svg.setAttribute("tabindex", "0");
     svg.setAttribute("role", "application");
     svg.setAttribute("aria-label", "Lienzo de la topología. Flechas: desplazar. Más y menos: zoom. Tab recorre equipos y enlaces.");
@@ -983,7 +1008,7 @@ var UI = (function () {
     [["deshacer", "Deshacer"], ["rehacer", "Rehacer"], ["menos", "−"], ["porc", "100%"], ["mas", "+"], ["ajustar", "Ajustar"]].forEach(function (par) {
       var b = boton(par[1]);
       b.setAttribute("data-h", par[0]);
-      b.setAttribute("aria-label", par[0] === "menos" ? "Alejar" : par[0] === "mas" ? "Acercar" : par[0] === "porc" ? "Restablecer zoom" : par[1]);
+      b.setAttribute("aria-label", par[0] === "menos" ? "Alejar" : par[0] === "mas" ? "Acercar" : par[0] === "porc" ? "Restablecer zoom al 100%" : par[1]);
       b.addEventListener("click", function () { accionLienzo(par[0]); });
       tools.appendChild(b);
     });
@@ -1070,7 +1095,7 @@ var UI = (function () {
     S.raiz.appendChild(hoja);
     S.hojaEl = hoja; S.hojaTitulo = tituloHoja; S.hojaCuerpo = cuerpoHoja; S.hojaCerrar = bCerrar;
     try {
-      var mq = window.matchMedia("(max-width:640px)");
+      var mq = window.matchMedia(MQ_CELULAR);
       var alCambiar = function () { if (!mq.matches) { cerrarHoja(); } };
       if (mq.addEventListener) { mq.addEventListener("change", alCambiar); } else if (mq.addListener) { mq.addListener(alCambiar); }
     } catch (e) { /* sin matchMedia: no hay hojas */ }
@@ -1733,7 +1758,7 @@ var UI = (function () {
   /* ---------------- Celular: hojas inferiores ---------------- */
 
   function esCelular() {
-    try { return !!(window.matchMedia && window.matchMedia("(max-width:640px)").matches); }
+    try { return !!(window.matchMedia && window.matchMedia(MQ_CELULAR).matches); }
     catch (e) { return false; }
   }
 
@@ -2261,12 +2286,34 @@ var UI = (function () {
   }
 
   function alternarTema() {
-    S.tema = (S.tema === "claro") ? "oscuro" : "claro";
-    S.raiz.classList.toggle("oscuro", S.tema === "oscuro");
-    if (S.botonTema) {
-      S.botonTema.textContent = S.tema === "oscuro" ? "Tema claro" : "Tema oscuro";
-      S.botonTema.setAttribute("aria-pressed", String(S.tema === "oscuro"));
+    aplicarTema(S.tema === "oscuro" ? "claro" : "oscuro");
+    // Desde acá el tema ya no es el del sistema (lo mira el Autotest).
+    if (S.botonTema) { S.botonTema.setAttribute("data-elegido", "1"); }
+  }
+
+  // El tema del sistema sólo decide al empezar: después manda el botón.
+  function temaDelSistema() {
+    try {
+      return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "oscuro" : "claro";
+    } catch (e) {
+      return "claro";
     }
+  }
+
+  // Única entrada para cambiar el tema: la raíz, el botón y lo que queda
+  // fuera de la raíz (la barra del navegador y el fondo de la página).
+  function aplicarTema(tema) {
+    var t = TEMAS[tema] ? tema : "claro";
+    S.tema = t;
+    S.raiz.classList.toggle("oscuro", t === "oscuro");
+    if (S.botonTema) {
+      S.botonTema.textContent = t === "oscuro" ? "Tema claro" : "Tema oscuro";
+      S.botonTema.setAttribute("aria-pressed", String(t === "oscuro"));
+    }
+    var meta = document.querySelector("meta[name=theme-color]");
+    if (meta) { meta.setAttribute("content", TEMAS[t].meta); }
+    document.documentElement.style.colorScheme = TEMAS[t].esquema;
+    document.documentElement.style.background = TEMAS[t].fondo;
   }
 
   /* ---------------- Panel derecho ---------------- */
