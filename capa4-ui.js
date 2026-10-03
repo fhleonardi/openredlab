@@ -465,6 +465,7 @@ var UI = (function () {
     ".ayuda h3{margin:0 0 3px;font-size:12.5px;color:var(--sim-acento);}",
     ".ayuda ul,.ayuda ol{margin:0;padding-left:18px;}",
     ".ayuda li{margin:0;}",
+    ".siminf .tabs .version{font-size:12px;color:var(--sim-tenue);white-space:nowrap;margin-right:16px;padding-right:16px;border-right:1px solid var(--sim-borde);}",
     ".ayuda .teclas{display:grid;grid-template-columns:auto 1fr;gap:1px 10px;align-items:baseline;}",
     ".ayuda .teclas span:nth-child(odd){white-space:nowrap;}",
     ".ayuda kbd{font-family:ui-monospace,Consolas,monospace;font-size:11px;background:var(--sim-panel);border:1px solid var(--sim-borde);border-bottom-width:2px;border-radius:4px;padding:0 4px;}",
@@ -3102,6 +3103,8 @@ var UI = (function () {
     var idPanel = armarPestañas(lista, pestañas, S.pestañaInf, "inf", function (clave) { S.pestañaInf = clave; renderInferior(); });
     barra.appendChild(lista);
     barra.appendChild(el("span", "espacio"));
+    // La versión va en esta fila y no en el panel: la Ayuda entra justa, sin scroll.
+    if (S.pestañaInf === "ayuda") { barra.appendChild(el("span", "version", "OpenRedLab " + escapar(Escenarios.VERSION_APP))); }
     var selV = document.createElement("select");
     selV.innerHTML = "<option value='lenta'>lenta</option><option value='normal'>normal</option><option value='rapida'>rápida</option>";
     selV.value = S.velocidad;

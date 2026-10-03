@@ -86,6 +86,15 @@ Para probar, abrí `index.html` en el navegador. El botón **Autotest** muestra 
 | [`herramientas/`](herramientas/) | El ensamblador de `index.html` |
 | [`img/`](img/) | Logo (color y blanco), marca y favicons |
 
+## Versiones
+
+OpenRedLab numera sus versiones como MAYOR.MENOR.PARCHE. La versión actual figura al pie de la pestaña **Ayuda**, y en [`CHANGELOG.md`](CHANGELOG.md) está lo que trajo cada una. Cada versión publicada tiene su [release](https://github.com/fhleonardi/openredlab/releases).
+
+- **Archivos de red:** llevan el número de su formato (`version`, hoy 1) y la versión del simulador que los exportó (`generador`).
+  - El formato sólo cambia si un dato existente cambia o desaparece. Un archivo de un formato anterior se actualiza solo al abrirlo.
+  - Un archivo de un formato más nuevo no se abre: el simulador dice con qué versión se hizo.
+- **Para contribuir:** cada cambio a una capa sube la versión en `Escenarios.VERSION_APP` (`capa3-escenarios.js`) y suma su entrada al tope de `CHANGELOG.md`. Si no coinciden, `ensamblar.py` no arma el `index.html`. Al mergear, la versión se publica con su tag (`vX.Y.Z`) y su release.
+
 ## Simplificaciones
 
 Es una herramienta para aprender, no un emulador: las rutas se cargan a mano (no hay OSPF, BGP ni RIP), no hay VLAN ni IPv6, el NAT es sólo de salida (sin redirección de puertos), no hay retransmisiones ni control de congestión en TCP, DHCP reparte un rango por router y sin relay, y el wireless se modela por distancia. La pestaña **Ayuda** del simulador lista todas.
