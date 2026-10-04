@@ -9,3 +9,6 @@ escenarios-docente/
 
 # Especificación por capas, diseño y revisión de mensajes: sólo en el disco del autor
 desarrollo/
+
+# Configuración local de VS Code
+.vscode/
