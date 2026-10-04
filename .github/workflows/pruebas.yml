@@ -1,0 +1,32 @@
+# Bloquea el merge de un PR si el ensamblado no coincide con las capas o si
+# alguna autoprueba de las capas 1 a 3 falla. El nombre del job ("pruebas")
+# es el check que se exige en la protección de main.
+name: Pruebas
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  pruebas:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verificar que index.html coincide con las capas
+        run: python herramientas/ensamblar.py --verificar
+
+      - name: Autopruebas de las capas 1 a 3
+        run: node herramientas/pruebas/correr.js
