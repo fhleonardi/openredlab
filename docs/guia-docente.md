@@ -29,7 +29,7 @@ La forma más rápida de mostrar una idea es hacer un ping, mostrar el recorrido
 
 **El Autotest.** El botón **Autotest** también sirve de demostración: recorre diecisiete situaciones típicas (máscara mal elegida, ruta de vuelta faltante, mismo switch con subredes distintas, puerto cerrado, firewall con y sin estado, dos sitios por internet, servidor publicado…) y explica qué debe pasar en cada una.
 
-**Qué entregan los alumnos y cómo corregir.** La [guía del alumno](guia-rapida-alumno.md#qué-entregar) les pide capturas del recorrido, el registro de eventos (*Exportar registro*), su red corregida (*Exportar*, como `ApellidoNombre_lab.json`) y una línea por problema. Para corregir, abrí su `.json` con **Importar** (o arrastrándolo al lienzo) y apretá **Verificar**: en un laboratorio vas a ver qué objetivos cumple; en un desafío, el diseño sector por sector. El registro tiene la hora de cada acción, así que muestra cómo llegó a la solución.
+**Qué entregan los alumnos y cómo corregir.** La [guía del alumno](guia-rapida-alumno.md#qué-entregar) les pide capturas del recorrido, el registro de eventos (*Exportar registro*), su red corregida (*Exportar*, como `ApellidoNombre_lab.json`) y una línea por problema. Para corregir, abrí su `.json` con **Importar** (o arrastrándolo al lienzo) y apretá **Verificar**: en un laboratorio vas a ver qué objetivos cumple; en un desafío, el diseño sector por sector. El registro anota algunos eventos del simulador, como cambios de la red y resultados de pruebas, con hora; no es un historial completo. Conserva como máximo las últimas 400 entradas y, si descartó anteriores, el archivo exportado lo indica.
 
 ## 2. Qué mostrar en cada unidad
 
