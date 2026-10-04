@@ -33,9 +33,9 @@ jobs:
             echo "$TAG ya existe: nada que publicar."
             exit 0
           fi
-          NOTAS=$(awk -v v="$VERSION" 'index($0, "## " v " ") == 1 { f = 1; next } /^## / { f = 0 } f' CHANGELOG.md)
+          NOTAS=$(awk -v v="$VERSION" 'index($0, "## " v " ") == 1 { f = 1; next } /^## / { f = 0 } f' CHANGELOG.md | sed '/./,$!d')
           if [ -z "$NOTAS" ]; then
             echo "CHANGELOG.md no tiene sección para $VERSION: no se publica."
             exit 1
           fi
-          gh release create "$TAG" --target "$GITHUB_SHA" --title "$TAG" --notes "$NOTAS"
+          gh release create "$TAG" --target "$GITHUB_SHA" --title "OpenRedLab $VERSION" --notes "$NOTAS"
