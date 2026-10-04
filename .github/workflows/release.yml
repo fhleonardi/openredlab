@@ -1,0 +1,41 @@
+# Al llegar un cambio a main, publica la versión de la app si todavía no tiene tag.
+# La versión sale de VERSION_APP (capa3-escenarios.js) y las notas, de su sección
+# en CHANGELOG.md. Si el tag ya existe, no hace nada.
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verificar que index.html coincide con las capas
+        run: python herramientas/ensamblar.py --verificar
+
+      - name: Crear tag y release si la versión es nueva
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(sed -n 's/.*VERSION_APP = "\([^"]*\)".*/\1/p' capa3-escenarios.js | head -1)
+          TAG="v$VERSION"
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "$TAG ya existe: nada que publicar."
+            exit 0
+          fi
+          NOTAS=$(awk -v v="$VERSION" 'index($0, "## " v " ") == 1 { f = 1; next } /^## / { f = 0 } f' CHANGELOG.md)
+          if [ -z "$NOTAS" ]; then
+            echo "CHANGELOG.md no tiene sección para $VERSION: no se publica."
+            exit 1
+          fi
+          gh release create "$TAG" --target "$GITHUB_SHA" --title "$TAG" --notes "$NOTAS"
