@@ -9,7 +9,13 @@ var ctx = { console: console }; ctx.window = ctx; vm.createContext(ctx);
 });
 module.exports = ctx;
 if (require.main === module) {
+  // Sale con código 1 si alguna capa no tiene autopruebas o si alguna falla: lo usa el workflow de PR.
+  var hayFallos = false;
   ['Red', 'Motor', 'Escenarios'].forEach(function (n) {
-    if (ctx[n] && ctx[n].autopruebas) { var r = ctx[n].autopruebas(); console.log(n, JSON.stringify(r).slice(0, 2000)); }
+    if (!ctx[n] || !ctx[n].autopruebas) { console.log(n, 'sin autopruebas'); hayFallos = true; return; }
+    var r = ctx[n].autopruebas();
+    console.log(n, JSON.stringify(r).slice(0, 2000));
+    if (r.fallos.length || r.pasadas !== r.total) { hayFallos = true; }
   });
+  if (hayFallos) { process.exitCode = 1; }
 }
