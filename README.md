@@ -85,7 +85,7 @@ Para probar, abrí `index.html` en el navegador. El botón **Autotest** muestra 
 | raíz | `index.html` y las cinco capas |
 | [`docs/`](docs/) | Las guías para alumnos y docentes |
 | [`escenarios/`](escenarios/) | Laboratorios y desafíos para importar |
-| [`herramientas/`](herramientas/) | El ensamblador de `index.html` |
+| [`herramientas/`](herramientas/) | El ensamblador de `index.html` y las pruebas del simulador (`pruebas/`) |
 | [`img/`](img/) | Logo (color y blanco), marca y favicons |
 
 ## Versiones
