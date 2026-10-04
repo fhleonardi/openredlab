@@ -7,7 +7,7 @@
  *
  * Idea central: lo que se enseña no es que el ping ande, sino por qué no anda.
  * Por eso `ping` devuelve los pasos ejecutados uno por uno y un diagnóstico
- * del catálogo D01–D17 con las direcciones concretas del caso.
+ * del catálogo D01–D34 con las direcciones concretas del caso.
  */
 
 var Motor = (function () {
