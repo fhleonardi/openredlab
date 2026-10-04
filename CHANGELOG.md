@@ -10,6 +10,11 @@ Los números siguen la forma MAYOR.MENOR.PARCHE:
 
 Los archivos de red llevan el número de su formato (`version`) y la versión del simulador que los exportó (`generador`). Un archivo de un formato anterior se actualiza solo al abrirlo.
 
+## 1.2.2 — 2026-10-04
+
+- **El registro avisa cuando se truncó.** Conserva hasta 400 entradas; al copiarlo o exportarlo, una marca indica cuántas entradas anteriores se descartaron.
+- La documentación aclara que el registro contiene eventos seleccionados y no es un historial completo.
+
 ## 1.2.1 — 2026-10-03
 
 - **La consola tiene su propia columna.** Cuando el ping, la consulta DNS o la conexión salen bien, el panel de abajo muestra tres columnas: el recorrido, el resultado y la consola. Antes la consola quedaba debajo del resultado y, con una conexión TCP, no se veía. Si algo falla, la consola sigue plegada debajo del diagnóstico.

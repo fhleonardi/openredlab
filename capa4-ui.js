@@ -50,6 +50,7 @@ var UI = (function () {
     animToken: 0,
     inicioMs: Date.now(),
     registro: [],
+    registroDescartadas: 0,
     avisoGuardado: false,
     interfazEditada: {},
     contadores: { pc: 0, servidor: 0, router: 0, "switch-l2": 0, camara: 0, iot: 0 },
@@ -3474,7 +3475,7 @@ var UI = (function () {
       if (ev.key === "Enter") { ev.preventDefault(); hacerPing(); }
     });
     bCopiar.addEventListener("click", function () {
-      var texto = S.registro.join("\n");
+      var texto = textoRegistro();
       try {
         if (navigator.clipboard && navigator.clipboard.writeText) {
           navigator.clipboard.writeText(texto).then(function () {
@@ -3488,7 +3489,7 @@ var UI = (function () {
     });
     bExp.addEventListener("click", function () {
       try {
-        var blob = new Blob([S.registro.join("\n")], { type: "text/plain" });
+        var blob = new Blob([textoRegistro()], { type: "text/plain" });
         var a = document.createElement("a");
         a.href = URL.createObjectURL(blob);
         a.download = "registro-simulador.txt";
@@ -5168,10 +5169,22 @@ var UI = (function () {
   function registrar(codigo, texto) {
     var linea = "[" + momentoAbs() + " " + momentoRel() + "] " + codigo + " — " + texto;
     S.registro.push(linea);
-    if (S.registro.length > 400) { S.registro.shift(); }
+    if (S.registro.length > 400) {
+      S.registro.shift();
+      S.registroDescartadas++;
+    }
     if (typeof codigo === "string" && /^D\d/.test(codigo)) {
       consolaAgregar(codigo + " — " + texto, true);
     }
+  }
+
+  function textoRegistro() {
+    var lineas = S.registro.slice();
+    if (S.registroDescartadas > 0) {
+      lineas.unshift("[AVISO] Registro truncado: se descartaron " + S.registroDescartadas +
+        " entradas anteriores; sólo se conservan las últimas 400.");
+    }
+    return lineas.join("\n");
   }
 
   // Con el lienzo vacío se explica cómo empezar y, si quedó trabajo de la

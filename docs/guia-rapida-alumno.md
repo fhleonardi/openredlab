@@ -160,7 +160,7 @@ En la pestaña Simulación, el botón de verificar cambia de nombre según la re
 ## Qué entregar
 
 - Captura del recorrido paso a paso con el diagnóstico, por cada problema que hayas encontrado.
-- El registro de eventos: botón **Exportar registro** en la pestaña Simulación.
+- El registro de eventos: botón **Exportar registro** en la pestaña Simulación. Anota algunos eventos del simulador con hora, pero no es un historial completo. Conserva como máximo las últimas 400 entradas; si se descartaron anteriores, el archivo lo indica.
 - Tu topología corregida: botón **Exportar** de la barra de arriba. Nombrala `ApellidoNombre_lab.json`.
 - Una línea por problema explicando qué estaba mal y cómo lo arreglaste. El código del diagnóstico no alcanza como explicación.
 
