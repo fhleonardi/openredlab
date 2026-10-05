@@ -29,7 +29,7 @@ var Escenarios = (function () {
 
   // Versión de la app (semver). Cada PR que toca una capa la sube y suma su
   // entrada en CHANGELOG.md; el ensamblador controla que coincidan.
-  var VERSION_APP = "1.2.5";
+  var VERSION_APP = "1.3.0";
 
   // Versión del formato de archivo que escribe esta capa. Sube sólo si un
   // campo existente cambia o desaparece, y cada subida trae su migración.
@@ -140,7 +140,7 @@ var Escenarios = (function () {
    * servicios.dns = { zona, recursivo, registros: [{ nombre, tipo, valor,
    * prioridad?, ttl? }] }. El servidor es autoritativo de su zona: los
    * registros tienen que ser de esa zona. */
-  var TIPOS_REGISTRO = ["A", "CNAME", "MX", "NS"];
+  var TIPOS_REGISTRO = ["A", "CNAME", "MX", "NS", "PTR"];
 
   function esNombreDominio(texto) {
     return typeof texto === "string" &&

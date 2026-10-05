@@ -10,6 +10,11 @@ Los números siguen la forma MAYOR.MENOR.PARCHE:
 
 Los archivos de red llevan el número de su formato (`version`) y la versión del simulador que los exportó (`generador`). Un archivo de un formato anterior se actualiza solo al abrirlo.
 
+## 1.3.0 — 2026-10-05
+
+- **DNS inverso.** Un servidor puede tener una zona inversa (por ejemplo `1.168.192.in-addr.arpa`) con registros PTR, y Consultar DNS acepta una IP con tipo PTR: el simulador la convierte en su nombre `in-addr.arpa` y muestra el paso.
+- **Una IP pública no inventa su nombre.** Si la IP no está en una zona inversa del lienzo, el diagnóstico dice que el simulador no tiene el árbol público de `in-addr.arpa` (D35). No dice que el nombre no existe.
+
 ## 1.2.5 — 2026-10-05
 
 - **«Puerta de enlace» en todo el simulador.** Los textos que decían «gateway» (la ayuda de laboratorio, la lista de lo que se borra al exportar para el alumno y el panel de cálculo) ahora dicen «puerta de enlace».

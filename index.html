@@ -566,7 +566,7 @@ var Red = (function () {
  *
  * Idea central: lo que se enseña no es que el ping ande, sino por qué no anda.
  * Por eso `ping` devuelve los pasos ejecutados uno por uno y un diagnóstico
- * del catálogo D01–D34 con las direcciones concretas del caso.
+ * del catálogo D01–D35 con las direcciones concretas del caso.
  */
 
 var Motor = (function () {
@@ -1033,6 +1033,24 @@ var Motor = (function () {
         return ctx.causa
           ? "Revisá la conexión del sitio de " + valor(ctx.equipo, "ese equipo") + " con internet: el cable y el router de borde, y que su puerto tenga una IP en la red de la nube."
           : "Conectá el sitio de " + valor(ctx.equipo, "ese equipo") + " a una nube de Internet con un router de borde.";
+      }
+    },
+    D35: {
+      titulo: "El simulador no tiene el árbol público de in-addr.arpa",
+      explicacion: function (ctx) {
+        ctx = ctx || {};
+        if (ctx.privada) {
+          return "Ninguna zona inversa del lienzo tiene el PTR de " + valor(ctx.ip, "esa IP") + ". Es una IP privada: su PTR lo carga " +
+            "el administrador de esa red, en la zona inversa de su propio servidor DNS. El simulador no lo puede inventar.";
+        }
+        return "Ninguna zona inversa del lienzo tiene el PTR de esa IP, y el simulador no tiene el árbol público de in-addr.arpa. " +
+          "En internet, el PTR lo administra el proveedor de la IP: por eso no se puede responder el nombre aquí.";
+      },
+      sugerencia: function (ctx) {
+        ctx = ctx || {};
+        return ctx.privada
+          ? "Cargá el PTR en la zona inversa del servidor DNS de esa red (pestaña DNS del servidor), o consultá una IP de una zona inversa del lienzo."
+          : "Cargá el PTR en un servidor DNS cuya zona inversa incluya esa IP (pestaña DNS del servidor), o consultá una IP de una zona inversa del lienzo.";
       }
     },
     D23: {
@@ -3249,7 +3267,7 @@ var Motor = (function () {
    * La nube trae la jerarquía armada: la raíz, los servidores de cada TLD y
    * los autoritativos de algunas zonas. Las IP de la raíz, de .com y de
    * ns1.google.com son las reales; las demás, ilustrativas. */
-  var TIPOS_REGISTRO = ["A", "CNAME", "MX", "NS"];
+  var TIPOS_REGISTRO = ["A", "CNAME", "MX", "NS", "PTR"];
   var TTL_DNS = 300;
   var JERARQUIA = {
     raiz: { nombre: "a.root-servers.net", ip: "198.41.0.4" },
@@ -3290,6 +3308,20 @@ var Motor = (function () {
     return nombre === zona || nombre.slice(-(zona.length + 1)) === "." + zona;
   }
 
+  // La IP al revés, con .in-addr.arpa: 10.45.7.122 → 122.7.45.10.in-addr.arpa.
+  function nombreInverso(ip) {
+    return ip.split(".").reverse().join(".") + ".in-addr.arpa";
+  }
+
+  function esArpaInverso(nombre) {
+    return /\.in-addr\.arpa$/.test(nombre);
+  }
+
+  // Lo inverso de nombreInverso: 122.7.45.10.in-addr.arpa → 10.45.7.122.
+  function ipDeArpa(nombre) {
+    return nombre.replace(/\.in-addr\.arpa$/, "").split(".").reverse().join(".");
+  }
+
   // Los registros que contestan nombre/tipo, siguiendo los CNAME dentro de
   // la misma lista. Devuelve null si el nombre no tiene ningún registro.
   function buscarRegistros(registros, nombre, tipo) {
@@ -3327,6 +3359,15 @@ var Motor = (function () {
     var tld = etiquetas[etiquetas.length - 1];
     var datosTld = JERARQUIA.tld[tld];
     var raiz = JERARQUIA.raiz;
+    // La zona inversa de una IP pública la administra su proveedor: el
+    // simulador no tiene ese árbol, y no debe decir que el nombre no existe.
+    if (esArpaInverso(nombre) && !zonaPublicaDe(nombre)) {
+      var ipArpa = ipDeArpa(nombre);
+      var privadaArpa = Red.esIpValida(ipArpa) && Red.clasificar(ipArpa) === "privada";
+      agregar("Preguntar a la raíz (consulta iterativa)", quien + " le pregunta por " + nombre + " (zona inversa). El simulador no tiene " +
+        "el árbol público de in-addr.arpa: no sabe qué PTR tiene esa IP.", false, raiz.ip);
+      return { fallo: { arpa: true, ip: ipArpa, privada: privadaArpa } };
+    }
     if (!datosTld) {
       agregar("Preguntar a la raíz (consulta iterativa)", quien + " le pregunta a " + raiz.nombre + " (" + raiz.ip + "), un servidor raíz, por " +
         nombre + ". La raíz responde que ." + tld + " no existe en internet.", false, raiz.ip);
@@ -3504,7 +3545,7 @@ var Motor = (function () {
     if (resultado.fallo) {
       var ctxFallo = resultado.fallo;
       ctxFallo.nombre = nombre;
-      return fallar("D25", ctxFallo);
+      return fallar(ctxFallo.arpa ? "D35" : "D25", ctxFallo);
     }
     cache[nombre + "|" + tipo] = { registros: resultado.registros, vence: ahora + ttlDe(resultado.registros) * 1000 };
     agregar("Responder al cliente", quien + " le contesta a " + nombreCliente + " (respuesta no autoritativa: la obtuvo de otros servidores) " +
@@ -3728,6 +3769,15 @@ var Motor = (function () {
     estado.ahora = opciones.ahora || Date.now();
     var texto = String(nombre === undefined || nombre === null ? "" : nombre).trim().toLowerCase().replace(/\.$/, "");
     var t = TIPOS_REGISTRO.indexOf(tipo) >= 0 ? tipo : "A";
+    // Una IP con tipo PTR se consulta por su nombre inverso, con un paso que lo dice.
+    if (t === "PTR" && Red.esIpValida(texto)) {
+      var arpa = nombreInverso(texto);
+      var inverso = resolverNombre(estado, idCliente, arpa, "PTR");
+      inverso.pasos = [{ n: 1, titulo: "Convertir la IP en su nombre de zona inversa",
+        detalle: texto + " se busca como " + arpa + ": la IP al revés, con .in-addr.arpa al final.", ok: true, capa: 7 }]
+        .concat(inverso.pasos.map(function (p) { return { n: p.n + 1, titulo: p.titulo, detalle: p.detalle, ok: p.ok, capa: p.capa }; }));
+      return inverso;
+    }
     if (!pareceNombre(texto)) {
       return {
         exito: false, pasos: [], respuesta: null, saltos: [],
@@ -5445,7 +5495,30 @@ var Motor = (function () {
       comparar("DNS: un servidor no recursivo no busca afuera", [noRec.diagnostico.codigo, /no busca nombres de afuera/.test(noRec.diagnostico.explicacion)], ["D25", true]);
       var pingNombre = ping(crearEstado(oficina()), "pc1", "intranet.oficina.local");
       comparar("DNS: ping a un nombre propio", [pingNombre.exito, pingNombre.ipResuelta], [true, "192.168.1.53"]);
-      comparar("DNS: tipos de registro", TIPOS_REGISTRO, ["A", "CNAME", "MX", "NS"]);
+      comparar("DNS: tipos de registro", TIPOS_REGISTRO, ["A", "CNAME", "MX", "NS", "PTR"]);
+
+      // DNS inverso: el servidor tiene la zona 1.168.192.in-addr.arpa.
+      var inv = oficina();
+      inv.dispositivos.filter(function (d) { return d.id === "srv"; })[0].servicios.dns = { zona: "1.168.192.in-addr.arpa", recursivo: true, registros: [
+        { nombre: "53.1.168.192.in-addr.arpa", tipo: "PTR", valor: "www.oficina.local" }
+      ] };
+      var estInv = crearEstado(inv);
+      var ptr = consultarDns(estInv, "pc1", "192.168.1.53", "PTR");
+      comparar("DNS inverso: la IP se consulta como su nombre in-addr.arpa",
+        [ptr.exito, ptr.respuesta && ptr.respuesta.registros[0].valor, ptr.pasos[0].titulo, /53\.1\.168\.192\.in-addr\.arpa/.test(ptr.pasos[0].detalle)],
+        [true, "www.oficina.local", "Convertir la IP en su nombre de zona inversa", true]);
+      comparar("DNS inverso: responde con autoridad de su zona", ptr.respuesta.autoritativa, true);
+      var sinPtr = consultarDns(estInv, "pc1", "192.168.1.54", "PTR");
+      comparar("DNS inverso: una IP sin PTR en la zona da D25 nombrando la zona",
+        [sinPtr.diagnostico.codigo, /1\.168\.192\.in-addr\.arpa/.test(sinPtr.diagnostico.explicacion)], ["D25", true]);
+      var publicaPtr = consultarDns(crearEstado(oficina()), "pc1", "8.8.8.8", "PTR");
+      var privadaSinZona = consultarDns(crearEstado(oficina()), "pc1", "192.168.1.54", "PTR");
+      comparar("DNS inverso: una IP privada sin zona da D35 sin culpar al proveedor",
+        [privadaSinZona.diagnostico.codigo, /proveedor/.test(privadaSinZona.diagnostico.explicacion), /privada/.test(privadaSinZona.diagnostico.explicacion)],
+        ["D35", false, true]);
+      comparar("DNS inverso: una IP pública da D35, no «el nombre no existe»",
+        [publicaPtr.diagnostico.codigo, /no existe/.test(publicaPtr.diagnostico.explicacion), /árbol público de in-addr\.arpa/.test(publicaPtr.diagnostico.titulo)],
+        ["D35", false, true]);
     })();
 
     // Hub y dominios: pc1 — sw1 — r1 === r2 — sw2 — pc2.
@@ -5834,7 +5907,7 @@ var Escenarios = (function () {
 
   // Versión de la app (semver). Cada PR que toca una capa la sube y suma su
   // entrada en CHANGELOG.md; el ensamblador controla que coincidan.
-  var VERSION_APP = "1.2.5";
+  var VERSION_APP = "1.3.0";
 
   // Versión del formato de archivo que escribe esta capa. Sube sólo si un
   // campo existente cambia o desaparece, y cada subida trae su migración.
@@ -5945,7 +6018,7 @@ var Escenarios = (function () {
    * servicios.dns = { zona, recursivo, registros: [{ nombre, tipo, valor,
    * prioridad?, ttl? }] }. El servidor es autoritativo de su zona: los
    * registros tienen que ser de esa zona. */
-  var TIPOS_REGISTRO = ["A", "CNAME", "MX", "NS"];
+  var TIPOS_REGISTRO = ["A", "CNAME", "MX", "NS", "PTR"];
 
   function esNombreDominio(texto) {
     return typeof texto === "string" &&
@@ -12205,7 +12278,7 @@ var UI = (function () {
       inNombre.type = "text"; inNombre.value = x.nombre || ""; inNombre.placeholder = "p. ej. www." + zona + "…"; inNombre.className = "nombre";
       inNombre.setAttribute("aria-label", "Nombre del registro " + (k + 1));
       var selTipo = document.createElement("select");
-      (Motor.TIPOS_REGISTRO || ["A", "CNAME", "MX", "NS"]).forEach(function (t) {
+      (Motor.TIPOS_REGISTRO || ["A", "CNAME", "MX", "NS", "PTR"]).forEach(function (t) {
         var op = document.createElement("option"); op.value = t; op.textContent = t; selTipo.appendChild(op);
       });
       selTipo.value = x.tipo || "A";
@@ -12736,7 +12809,7 @@ var UI = (function () {
       selD.value = S.ultimoNombre || "";
     }
     var selTipoDns = document.createElement("select");
-    ["A", "CNAME", "MX", "NS"].forEach(function (t) {
+    (Motor.TIPOS_REGISTRO || ["A", "CNAME", "MX", "NS", "PTR"]).forEach(function (t) {
       var op = document.createElement("option"); op.value = t; op.textContent = t; selTipoDns.appendChild(op);
     });
     selTipoDns.value = S.tipoDns || "A";
