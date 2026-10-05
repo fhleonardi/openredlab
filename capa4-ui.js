@@ -2790,7 +2790,7 @@ var UI = (function () {
       inNombre.type = "text"; inNombre.value = x.nombre || ""; inNombre.placeholder = "p. ej. www." + zona + "…"; inNombre.className = "nombre";
       inNombre.setAttribute("aria-label", "Nombre del registro " + (k + 1));
       var selTipo = document.createElement("select");
-      (Motor.TIPOS_REGISTRO || ["A", "CNAME", "MX", "NS"]).forEach(function (t) {
+      (Motor.TIPOS_REGISTRO || ["A", "CNAME", "MX", "NS", "PTR"]).forEach(function (t) {
         var op = document.createElement("option"); op.value = t; op.textContent = t; selTipo.appendChild(op);
       });
       selTipo.value = x.tipo || "A";
@@ -3321,7 +3321,7 @@ var UI = (function () {
       selD.value = S.ultimoNombre || "";
     }
     var selTipoDns = document.createElement("select");
-    ["A", "CNAME", "MX", "NS"].forEach(function (t) {
+    (Motor.TIPOS_REGISTRO || ["A", "CNAME", "MX", "NS", "PTR"]).forEach(function (t) {
       var op = document.createElement("option"); op.value = t; op.textContent = t; selTipoDns.appendChild(op);
     });
     selTipoDns.value = S.tipoDns || "A";

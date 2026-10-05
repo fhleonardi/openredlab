@@ -78,6 +78,7 @@ Cada paso lleva su **capa** (por ejemplo «Capa 2 · Enlace»): pasá el mouse p
 | **D32** | Se perdieron todos los paquetes | La pérdida (%) de los cables del recorrido |
 | **D33** | Nadie atiende en esa IP de internet | Que la IP de destino exista |
 | **D34** | Internet no llega hasta ese equipo | La conexión del otro sitio con su nube: el cable, el router de borde y su IP en la red de la nube |
+| **D35** | El simulador no tiene el árbol público de in-addr.arpa | La zona inversa del servidor: que la IP tenga su PTR en una zona que el lienzo tenga cargada |
 
 ## La pestaña Cálculo de subred
 
