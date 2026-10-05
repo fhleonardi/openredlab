@@ -10,6 +10,11 @@ Los números siguen la forma MAYOR.MENOR.PARCHE:
 
 Los archivos de red llevan el número de su formato (`version`) y la versión del simulador que los exportó (`generador`). Un archivo de un formato anterior se actualiza solo al abrirlo.
 
+## 1.2.5 — 2026-10-05
+
+- **«Puerta de enlace» en todo el simulador.** Los textos que decían «gateway» (la ayuda de laboratorio, la lista de lo que se borra al exportar para el alumno y el panel de cálculo) ahora dicen «puerta de enlace».
+- **La Ayuda aclara la escala.** Al lado de la distancia máxima del wireless se indica que la escala del dibujo es aproximada.
+
 ## 1.2.4 — 2026-10-05
 
 - **Modos de radio con el mismo criterio en todo el simulador.** Donde antes decía «no se entienden», ahora dice «no combinan» y dice qué combinación falta: el diagnóstico del ping, el paso del recorrido y el aviso al importar usan el mismo texto.

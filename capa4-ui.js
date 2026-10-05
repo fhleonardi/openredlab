@@ -4386,7 +4386,7 @@ var UI = (function () {
       formularioItem(lado, it, catalogo, problemas[S.itemLab] || [], palabra, S.itemLab);
     } else {
       lado.appendChild(el("p", "tenue", palabra === "falla"
-        ? "Cada falla cambia algo de la red cuando se exporta para el alumno: un puerto, una ruta, un gateway, un servicio. " +
+        ? "Cada falla cambia algo de la red cuando se exporta para el alumno: un puerto, una ruta, una puerta de enlace, un servicio. " +
           "La red que ves sigue sana: es la solución."
         : "Los objetivos se verifican con el botón Verificar de Simulación (el alumno) y en la sección Verificar de acá (vos)."));
     }
@@ -4620,7 +4620,7 @@ var UI = (function () {
     lado.appendChild(campo);
     if (rev.bloque) { lado.appendChild(el("div", "", avisosHtml([rev.bloque]))); }
     lado.appendChild(el("p", "tenue", "Armá la red con tu solución y probala. Al exportar para el alumno, la red sale " +
-      "<b>sin direccionar</b>: se borran IP, máscaras, gateways, rutas, DHCP y DNS (la nube de Internet queda como está). " +
+      "<b>sin direccionar</b>: se borran IP, máscaras, puertas de enlace, rutas, DHCP y DNS (la nube de Internet queda como está). " +
       "El alumno reparte el bloque entre los sectores y lo verifica en el modo Desafío."));
     cuerpo.appendChild(lado);
   }
@@ -4757,7 +4757,7 @@ var UI = (function () {
     html += "</section>";
     // El AND de la propia IP se muestra siempre; la comparación con el
     // gateway, sólo si el equipo tiene uno.
-    html += "<section><h3>¿Tu puerta de enlace (gateway) está en tu red?</h3>";
+    html += "<section><h3>¿Tu puerta de enlace está en tu red?</h3>";
     html += "Tu IP " + escapar(det.ip) + " «AND» máscara → " + escapar((det.gateway && det.gateway.andIp) || det.direccionDeRed) + "<br>";
     if (det.gateway) {
       html += "Puerta de enlace " + escapar(det.gateway.ip) + " «AND» máscara → " + escapar(det.gateway.andGateway || "?") +
@@ -4943,7 +4943,7 @@ var UI = (function () {
     caja.appendChild(el("section", "",
       "<h3>Qué simplifica el simulador</h3><ul>" +
       "<li>Rutas a mano (sin OSPF, BGP ni RIP); sin STP, VLAN ni IPv6.</li>" +
-      "<li>NAT de salida y redirección de puertos; DHCP, un rango por router; wireless, sólo distancia (" + alcance + " m).</li>" +
+      "<li>NAT de salida y redirección de puertos; DHCP, un rango por router; wireless, sólo distancia (" + alcance + " m; la escala del dibujo es aproximada).</li>" +
       "<li>Reglas: red, protocolo, puerto y entrada.</li>" +
       "<li>TCP sin retransmisiones ni congestión; la QoS es latencia, jitter y pérdida por cable.</li>" +
       "<li>Sin colisiones en el hub; la captura no muestra ARP ni DHCP.</li>" +

@@ -789,7 +789,7 @@ var Autotest = (function () {
   }
 
   function crit13() {
-    var nombre = "El panel de cálculo muestra los 32 bits de IP y máscara, con bits de red y de host diferenciados, y el bloque del AND del gateway";
+    var nombre = "El panel de cálculo muestra los 32 bits de IP y máscara, con bits de red y de host diferenciados, y el bloque del AND de la puerta de enlace";
     var previo = modoActualDom();
     try {
       var id = dispositivoConIp();
@@ -812,7 +812,7 @@ var Autotest = (function () {
       var bits = caja.querySelectorAll(".binario .red, .binario .host");
       var texto = caja.textContent || "";
       var tieneAnd = texto.indexOf("AND") >= 0;
-      var hablaGateway = texto.toLowerCase().indexOf("gateway") >= 0;
+      var hablaGateway = texto.toLowerCase().indexOf("puerta de enlace") >= 0;
       var problemas = [];
       if (bits.length < 64) {
         problemas.push("se esperaban al menos 64 bits pintados (32 de IP + 32 de máscara) y hay " + bits.length);
@@ -827,10 +827,10 @@ var Autotest = (function () {
         problemas.push("no aparece el bloque del AND");
       }
       if (!hablaGateway) {
-        problemas.push("no aparece el bloque del gateway");
+        problemas.push("no aparece el bloque de la puerta de enlace");
       }
       if (problemas.length === 0) {
-        return fila(13, nombre, true, "Panel de " + id + " con " + bits.length + " bits en dos colores y bloque AND del gateway.");
+        return fila(13, nombre, true, "Panel de " + id + " con " + bits.length + " bits en dos colores y bloque AND de la puerta de enlace.");
       }
       return fila(13, nombre, false, "Panel incompleto en " + id + ": " + problemas.join("; ") + ".");
     } catch (e) {
