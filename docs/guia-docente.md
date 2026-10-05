@@ -38,7 +38,7 @@ La forma más rápida de mostrar una idea es hacer un ping, mostrar el recorrido
 | 7 | Topologías y alcance | *Estrella*, *Bus*, *Malla*, *Dos LAN unidas por una WAN* | Cable caído (D02) |
 | 7 | Dispositivos y dominios | Cualquiera, con el selector **Dominios** | Cambiar un switch por un hub |
 | 8 | Modelos de capas y encapsulamiento | *Dos subredes*, *Complejo turístico* | — (se trabaja con *Cómo viaja el paquete*) |
-| 9 | Direccionamiento, subnetting y VLSM | *Complejo turístico*, *Desafío VLSM (complejo)* | Máscara incorrecta, gateway incorrecto, ruta faltante, IP duplicada |
+| 9 | Direccionamiento, subnetting y VLSM | *Complejo turístico*, *Desafío VLSM (complejo)* | Máscara incorrecta, puerta de enlace incorrecta, ruta faltante, IP duplicada |
 | 9 | Direcciones privadas y NAT | *Oficina con DNS propio* | Sin NAT (D28) |
 | 9 | DNS | *Oficina con DNS propio* | DNS incorrecto (D29), registro borrado (D25) |
 | 9 | Proveedores e interconexión | *Dos ISP: peering y tránsito* | Cable de peering caído |
@@ -99,7 +99,7 @@ Un laboratorio es una red **sana** a la que se le plantan **fallas**, con **obje
 6. **Cambiá el nombre de la red** (se usa para nombrar el archivo del alumno), **exportá la versión docente** con *Exportar* y guardala: es la solución.
 7. **Apretá Exportar para el alumno.** Se descarga `<nombre-de-la-red>-ALUMNO.json`, con las fallas ya aplicadas y sin la lista. Repartí ese.
 
-Si borrás o renombrás un equipo que una falla u objetivo usaba, el ítem queda marcado con ⚠ y la explicación («el equipo pc9 no está en la red»): corregilo o quitalo antes de exportar. Una falla que no cambiaría nada (quitar el NAT de un puerto que no lo tiene, un gateway igual al que ya está) también se marca. Todo se deshace con Ctrl+Z.
+Si borrás o renombrás un equipo que una falla u objetivo usaba, el ítem queda marcado con ⚠ y la explicación («el equipo pc9 no está en la red»): corregilo o quitalo antes de exportar. Una falla que no cambiaría nada (quitar el NAT de un puerto que no lo tiene, una puerta de enlace igual a la que ya está) también se marca. Todo se deshace con Ctrl+Z.
 
 **Recomendaciones:**
 
@@ -120,7 +120,7 @@ En un desafío, el alumno recibe una red **sin direccionar**, un **bloque** para
 1. **Armá la red con tu solución**: direccionada y funcionando (o partí del ejemplo **Complejo turístico**).
 2. En modo Docente, pestaña **Laboratorio**, sección **Desafío VLSM**: apretá **Armar desde la red** (un sector por cada puerto de router con lo que cuelga de él), poné un nombre a cada sector y los **hosts** que necesita, y cargá el **bloque a repartir**. Los equipos y puertos de cada sector se agregan o se sacan con las fichas.
 3. En **Verificar**, tu solución tiene que cumplir el diseño VLSM.
-4. **Exportá la versión docente** (es la solución) y después **Exportar para el alumno**: el archivo del alumno sale **sin direccionar** (se borran IP, máscaras, gateways, rutas, DHCP y DNS; la nube de Internet queda como está), con los sectores y el bloque.
+4. **Exportá la versión docente** (es la solución) y después **Exportar para el alumno**: el archivo del alumno sale **sin direccionar** (se borran IP, máscaras, puertas de enlace, rutas, DHCP y DNS; la nube de Internet queda como está), con los sectores y el bloque.
 5. Comprobá la versión del alumno: importala y apretá **Verificar diseño VLSM**; todos los sectores tienen que decir «Ningún equipo de este sector tiene IP todavía».
 
 Un desafío puede llevar también objetivos (por ejemplo, «el huésped llega al servidor»): el alumno los cumple cuando termina de direccionar.
@@ -225,7 +225,7 @@ Las fallas de servicios cambian campos de los equipos. Se cargan desde la interf
 - `reglas` y `politica` son el filtrado (`regla-agregada` suma una).
 - En el servidor, `servicios.escuchando` son los puertos abiertos (`servicio-detenido` saca uno) y `servicios.dns`, su zona: `zona`, `recursivo` y `registros` con `nombre`, `tipo`, `valor` y, en un MX, `prioridad` (`registro-dns-borrado` saca un registro).
 
-(Los ejemplos están recortados: un equipo completo tiene también nombre, posición, gateway, DNS y el resto de sus puertos.)
+(Los ejemplos están recortados: un equipo completo tiene también nombre, posición, puerta de enlace, DNS y el resto de sus puertos.)
 
 ### Desafío VLSM
 

@@ -46,6 +46,10 @@ Cada paso lleva su **capa** (por ejemplo «Capa 2 · Enlace»): pasá el mouse p
 |---|---|---|
 | **D01** | El equipo está apagado o su interfaz está deshabilitada | Panel derecho, pestaña Interfaces |
 | **D02** | No hay conexión física | Mirá el cable en el lienzo: rojo y cortado es caído |
+| **D03** | El cable no corresponde a los puertos | Mirá el tipo de cada puerto (cobre, fibra o inalámbrico) y el del cable |
+| **D04** | El equipo no tiene dirección IP | Panel derecho, pestaña Configuración |
+| **D05** | La máscara no es válida | Panel derecho, pestaña Configuración: el campo de máscara |
+| **D06** | Esa IP no se puede asignar a un equipo | Pestaña Cálculo de subred: el rango asignable |
 | **D07** | Dos equipos tienen la misma IP | Comparalas en el lienzo |
 | **D08** | Falta la puerta de enlace | Panel derecho, puerta de enlace |
 | **D09** | La puerta de enlace está fuera de tu red | Pestaña Cálculo de subred: fijate en el «AND» |
@@ -55,10 +59,13 @@ Cada paso lleva su **capa** (por ejemplo «Capa 2 · Enlace»): pasá el mouse p
 | **D13** | El equipo de destino está apagado | Encendelo o habilitá su puerto |
 | **D14** | Equipos de la misma red con máscaras distintas | Compará los prefijos: cada uno calcula una red diferente |
 | **D15** | Están en el mismo switch, pero en subredes distintas | Ni un switch ni un punto de acceso enrutan: hace falta un router |
+| **D16** | No se obtuvo una IP por DHCP | Pestaña DHCP del router de esa red: que esté habilitado y con direcciones libres |
 | **D17** | El equipo está fuera del alcance inalámbrico | Acercalo a su punto de acceso |
 | **D18** | Los modos de radio no son compatibles | Un cliente se asocia a un punto de acceso, no a otro cliente |
 | **D19** | El equipo inalámbrico no está conectado a un punto de acceso | Que el AP esté encendido y con su radio en modo ap |
 | **D20** | Nadie tiene esa IP en tu red | Que la IP de destino esté bien escrita y el equipo exista |
+| **D21** | El destino es la dirección de broadcast | Hacé ping a la IP de un equipo concreto de esa red |
+| **D22** | La ruta apunta a un router que no está al alcance | Pestaña Rutas del router: el siguiente salto de esa ruta |
 | **D23** | El paquete quedó dando vueltas entre routers | La ruta hacia ese destino en cada router del recorrido |
 | **D24** | El equipo no tiene servidor DNS | Panel derecho, Configuración: el campo DNS |
 | **D25** | El nombre no existe | Cómo está escrito, y si el servidor DNS que preguntás conoce esa zona |
@@ -76,7 +83,7 @@ Cada paso lleva su **capa** (por ejemplo «Capa 2 · Enlace»): pasá el mouse p
 
 Es la que más te conviene tener abierta mientras configurás. Seleccioná un equipo y vas a ver su dirección en binario, la **clase** de la IP (A, B o C, si es privada o pública, y qué máscara le daba el sistema de clases frente al prefijo CIDR que usás de verdad), con los bits de red en un color y los de host en otro, y la línea donde corta la máscara. Cambiás el prefijo y la línea se mueve: eso es exactamente lo que hace la máscara.
 
-A la derecha está **«¿Tu puerta de enlace (gateway) está en tu red?»**: muestra el «AND» de tu IP y el «AND» de tu puerta de enlace, uno debajo del otro. Si los dos resultados no son iguales, tu equipo no puede hablar con su propia puerta de enlace, y ahí está el problema. Ese cálculo es el mismo que hacés a mano en el TP.
+A la derecha está **«¿Tu puerta de enlace está en tu red?»**: muestra el «AND» de tu IP y el «AND» de tu puerta de enlace, uno debajo del otro. Si los dos resultados no son iguales, tu equipo no puede hablar con su propia puerta de enlace, y ahí está el problema. Ese cálculo es el mismo que hacés a mano en el TP.
 
 ## Cómo viaja el paquete
 
