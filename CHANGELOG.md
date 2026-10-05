@@ -10,6 +10,11 @@ Los números siguen la forma MAYOR.MENOR.PARCHE:
 
 Los archivos de red llevan el número de su formato (`version`) y la versión del simulador que los exportó (`generador`). Un archivo de un formato anterior se actualiza solo al abrirlo.
 
+## 1.2.3 — 2026-10-05
+
+- **Mensajes de archivos más claros.** Si un equipo es de un tipo que no existe, el mensaje ahora incluye «servidor» en la lista de tipos válidos.
+- **Enlaces inalámbricos con modos incompatibles.** El mensaje dice qué falta según el caso: dos clientes necesitan un punto de acceso; dos puntos de acceso se unen en bridge.
+
 ## 1.2.2 — 2026-10-04
 
 - **El registro avisa cuando se truncó.** Conserva hasta 400 entradas; al copiarlo o exportarlo, una marca indica cuántas entradas anteriores se descartaron.
