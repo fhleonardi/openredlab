@@ -254,7 +254,7 @@ var Motor = (function () {
           return a + " y " + b + " están los dos en modo punto de acceso, y dos puntos de acceso no se conectan entre sí: " +
             "un cliente se conecta a un punto de acceso.";
         }
-        return "El enlace inalámbrico entre " + a + " y " + b + " une modos que no se entienden (" + valor(ctx.modoA, "?") +
+        return "El enlace inalámbrico entre " + a + " y " + b + " une modos que no combinan (" + valor(ctx.modoA, "?") +
           " con " + valor(ctx.modoB, "?") + "): solo funcionan cliente con ap, o bridge con bridge.";
       },
       sugerencia: "Poné uno de los dos en modo ap o, para unirlos punto a punto, los dos en modo bridge (pestaña Interfaces)."
@@ -453,7 +453,7 @@ var Motor = (function () {
         var prot = String(ctx.protocolo || "tcp").toUpperCase();
         return "El paquete llega a internet" + (ctx.nube ? " por " + ctx.nube : "") + ", pero en " + valor(ctx.ip, "esa IP") +
           " no hay ningún equipo que atienda " + prot + " " + valor(ctx.puerto, "?") + ". " + (prot === "TCP"
-            ? "El SYN no recibe respuesta, ni siquiera un RST, y el cliente abandona por tiempo agotado."
+            ? "El pedido de conexión (SYN) no recibe respuesta, ni siquiera un RST, y el cliente abandona por tiempo agotado."
             : "El datagrama se pierde sin respuesta, ni siquiera un ICMP.") +
           " (En el simulador, la nube contesta el ping a cualquier IP pública que no sea de un equipo del lienzo: que el ping responda no prueba que ahí haya un servidor.)";
       },
@@ -1622,7 +1622,7 @@ var Motor = (function () {
               nombreB: (otroOrigen && (otroOrigen.nombre || otroOrigen.id)) || modosOrigen.otroDispositivo
             },
             titulo: "Revisar los modos de radio",
-            detalle: mayuscula(cableEntre(estado, candOrigen)) + " une modos de radio que no se entienden (" +
+            detalle: mayuscula(cableEntre(estado, candOrigen)) + " une modos de radio que no combinan (" +
               modosOrigen.mio + " con " + modosOrigen.ajeno + ")."
           };
         }
@@ -2560,7 +2560,7 @@ var Motor = (function () {
                 nombreA: router.nombre || router.id,
                 nombreB: (otroEg && (otroEg.nombre || otroEg.id)) || modosEg.otroDispositivo
               },
-              detalle: mayuscula(cableEntre(estado, candEg)) + " une modos de radio que no se entienden (" +
+              detalle: mayuscula(cableEntre(estado, candEg)) + " une modos de radio que no combinan (" +
                 modosEg.mio + " con " + modosEg.ajeno + ")."
             };
           }
@@ -3059,7 +3059,7 @@ var Motor = (function () {
     var tramasConexion = [];
     if (!Red.esIpValida(texto)) {
       if (!pareceNombre(texto)) {
-        return fallo({ codigo: "ENTRADA", titulo: "El destino no es válido", explicacion: "\"" + texto + "\" no es una IP ni un nombre.", sugerencia: "Escribí una IP o un nombre como www.google.com." });
+        return fallo({ codigo: "ENTRADA", titulo: "La dirección de destino no es válida", explicacion: "\"" + texto + "\" no es una dirección IP ni un nombre válido. Una IP tiene cuatro números del 0 al 255 separados por puntos, por ejemplo 10.45.7.122.", sugerencia: "Escribí una IP o un nombre como www.google.com." });
       }
       var resuelto = resolverNombre(estado, idCliente, texto, "A");
       Array.prototype.push.apply(pasos, resuelto.pasos);

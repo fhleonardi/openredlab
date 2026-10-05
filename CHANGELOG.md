@@ -10,6 +10,12 @@ Los números siguen la forma MAYOR.MENOR.PARCHE:
 
 Los archivos de red llevan el número de su formato (`version`) y la versión del simulador que los exportó (`generador`). Un archivo de un formato anterior se actualiza solo al abrirlo.
 
+## 1.2.4 — 2026-10-05
+
+- **Modos de radio con el mismo criterio en todo el simulador.** Donde antes decía «no se entienden», ahora dice «no combinan» y dice qué combinación falta: el diagnóstico del ping, el paso del recorrido y el aviso al importar usan el mismo texto.
+- **Entrada de destino con un solo título.** Un destino que no es una IP ni un nombre válido se titula «La dirección de destino no es válida», igual que en el ping.
+- **Falla de internet más precisa.** El diagnóstico de un servidor sin servicio en internet aclara que el «SYN» es el pedido de conexión.
+
 ## 1.2.3 — 2026-10-05
 
 - **Mensajes de archivos más claros.** Si un equipo es de un tipo que no existe, el mensaje ahora incluye «servidor» en la lista de tipos válidos.
