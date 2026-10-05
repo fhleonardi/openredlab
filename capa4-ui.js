@@ -2541,6 +2541,18 @@ var UI = (function () {
         d.dns = v.trim() === "" ? null : v.trim();
         reconstruirEstado();
       }, function (v) { return v.trim() === "" || Red.esIpValida(v.trim()); }, true);
+      if (d.tipo === "router") {
+        // Como en una red hogareña: el router recibe las consultas y las pasa a su DNS.
+        var labReenvio = el("label", "enlinea");
+        var chkReenvio = document.createElement("input");
+        chkReenvio.type = "checkbox"; chkReenvio.checked = d.reenviaDns === true;
+        chkReenvio.addEventListener("change", function () {
+          empujarHistorial(); d.reenviaDns = chkReenvio.checked; reconstruirEstado();
+        });
+        labReenvio.appendChild(chkReenvio);
+        labReenvio.appendChild(document.createTextNode("Reenviar consultas DNS a su servidor DNS"));
+        c.appendChild(labReenvio);
+      }
     }
     var labE = el("label", "enlinea");
     var chk = document.createElement("input");

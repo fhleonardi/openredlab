@@ -966,7 +966,7 @@ var Motor = (function () {
           (ctx.equipo ? " (" + ctx.equipo + ")" : "") + ". Esa IP responde, pero no da el servicio de DNS: nadie contesta la consulta. " +
           "En una red hogareña el router suele reenviar el DNS; acá ese papel lo cumple un servidor.";
       },
-      sugerencia: "En Configuración, poné como DNS la IP de un servidor con el servicio DNS, o un DNS público como 8.8.8.8."
+      sugerencia: "En Configuración, poné como DNS la IP de un servidor con el servicio DNS, o un DNS público como 8.8.8.8. Si la IP es la de un router, activá allí «Reenviar consultas DNS»."
     },
     D30: {
       titulo: "El servidor DNS no llega a internet",
@@ -3418,7 +3418,8 @@ var Motor = (function () {
   /* Resolución completa de un nombre desde un equipo. La consulta del
    * cliente a su servidor es recursiva (pide la respuesta final); las del
    * servidor a la jerarquía son iterativas (cada una lo deriva a otra). */
-  function resolverNombre(estado, idCliente, nombre, tipo) {
+  // reenvios: cuántos routers ya reenviaron esta consulta (corta los bucles).
+  function resolverNombre(estado, idCliente, nombre, tipo, reenvios) {
     var pasos = [];
     function agregar(titulo, detalle, ok) {
       pasos.push({ n: pasos.length + 1, titulo: titulo, detalle: detalle, ok: !!ok, capa: 7 });
@@ -3457,14 +3458,17 @@ var Motor = (function () {
     // ¿Quién atiende en esa IP? El equipo al que llegó la consulta.
     var servidor = atiendeEn(estado, viaje, dnsIp);
     var servicio = servidor && servidor.tipo === "servidor" && servidor.servicios && servidor.servicios.dns;
+    // Un router que reenvía DNS (como una red hogareña) responde por su propio DNS.
+    var reenvia = !servicio && servidor && servidor.tipo === "router" && servidor.reenviaDns === true && (reenvios || 0) < 3;
     var publico = !servidor && RESOLVERS_PUBLICOS[dnsIp];
-    if (!servicio && !publico) {
+    if (!servicio && !publico && !reenvia) {
       agregar(titulo, nombreCliente + " le pregunta a " + dnsIp + " por " + nombre + ". La IP responde, pero ahí no hay un servidor DNS.", false);
       return fallar("D29", { origen: nombreCliente, nombre: nombre, dns: dnsIp, equipo: servidor ? (servidor.nombre || servidor.id) : null });
     }
-    var quien = servicio ? (servidor.nombre || servidor.id) : dnsIp + " (" + publico + ")";
+    var quien = servicio || reenvia ? (servidor.nombre || servidor.id) : dnsIp + " (" + publico + ")";
     agregar(titulo, nombreCliente + " le pregunta a su servidor DNS, " + quien + ", por " + nombre + " (tipo " + tipo + "). " +
       "Es una consulta recursiva: le pide la respuesta final.", true);
+    if (reenvia) { return reenviarDns(); }
 
     function responder(registros, autoritativa, desdeCache) {
       var textoResp = registros.map(function (x) { return x.tipo + " " + x.valor; }).join(", ");
@@ -3474,6 +3478,26 @@ var Motor = (function () {
         exito: true, pasos: pasos, diagnostico: null, saltos: viaje.saltos, tramas: tramasDns,
         respuesta: { registros: registros, servidor: quien, autoritativa: autoritativa, desdeCache: desdeCache }
       };
+    }
+
+    // El router reenvía: la consulta la resuelve su propio DNS, con sus pasos
+    // y sus tramas, y el cliente recibe esa respuesta como no autoritativa.
+    function reenviarDns() {
+      agregar("Reenviar la consulta", quien + " no es el servidor de " + nombre + ": le pasa la consulta a su propio DNS (" +
+        (servidor.dns || "sin servidor DNS") + ").", true);
+      var arriba = resolverNombre(estado, servidor.id, nombre, tipo, (reenvios || 0) + 1);
+      arriba.pasos.forEach(function (p) {
+        pasos.push({ n: pasos.length + 1, titulo: p.titulo, detalle: p.detalle, ok: p.ok, capa: p.capa });
+      });
+      Array.prototype.push.apply(tramasDns, arriba.tramas || []);
+      if (!arriba.exito) {
+        agregar("Reenviar la consulta", quien + " no obtuvo respuesta de su DNS, así que no puede contestarle a " + nombreCliente + ".", false);
+        Array.prototype.push.apply(tramasDns, tramasCon(vueltaDe(viaje),
+          dnsUdp(53, puertoDns, "Respuesta: no se pudo resolver " + nombre)));
+        return { exito: false, pasos: pasos, respuesta: null, diagnostico: arriba.diagnostico, saltos: viaje.saltos, tramas: tramasDns };
+      }
+      agregar("Responder al cliente", quien + " le contesta a " + nombreCliente + " con la respuesta de su DNS (no autoritativa).", true);
+      return responder(arriba.respuesta.registros, false, false);
     }
 
     // Servidor propio: autoritativo de su zona.
@@ -5516,7 +5540,31 @@ var Motor = (function () {
       comparar("DNS inverso: una IP privada sin zona da D35 sin culpar al proveedor",
         [privadaSinZona.diagnostico.codigo, /proveedor/.test(privadaSinZona.diagnostico.explicacion), /privada/.test(privadaSinZona.diagnostico.explicacion)],
         ["D35", false, true]);
-      comparar("DNS inverso: una IP pública da D35, no «el nombre no existe»",
+      // Router que reenvía DNS: la PC le pregunta al router, y el router resuelve con su DNS.
+      var reenT = conInternet(porDefecto, "192.168.1.1", false);
+      var rLan = reenT.dispositivos.filter(function (d) { return d.id === "r1"; })[0];
+      rLan.reenviaDns = true;
+      rLan.dns = "8.8.8.8";
+      var reenvio = consultarDns(crearEstado(reenT), "pc1", "google.com", "A");
+      comparar("DNS reenviado: el router resuelve con su DNS y responde al cliente",
+        [reenvio.exito, reenvio.respuesta && reenvio.respuesta.registros[0].valor, reenvio.respuesta && reenvio.respuesta.autoritativa], [true, "142.250.79.46", false]);
+      comparar("DNS reenviado: el paso dice que el router reenvía su consulta",
+        titulos(reenvio).indexOf("Reenviar la consulta") >= 0, true);
+      comparar("DNS reenviado: la respuesta viene del router, no de un servidor DNS propio",
+        reenvio.respuesta && /r1|R1/.test(reenvio.respuesta.servidor), true);
+      var sinReenvio = conInternet(porDefecto, "192.168.1.1", false);
+      var consulta = consultarDns(crearEstado(sinReenvio), "pc1", "google.com", "A");
+      comparar("DNS sin reenvío: el router no es servidor DNS (D29)", consulta.diagnostico && consulta.diagnostico.codigo, "D29");
+      // Un router que reenvía a su propia IP no puede recursar sin fin: da un diagnóstico.
+      var bucleT = conInternet(porDefecto, "192.168.1.1", false);
+      var rBucle = bucleT.dispositivos.filter(function (d) { return d.id === "r1"; })[0];
+      rBucle.reenviaDns = true;
+      rBucle.dns = "192.168.1.1";
+      var bucle = null;
+      try { bucle = consultarDns(crearEstado(bucleT), "pc1", "google.com", "A"); } catch (e) { bucle = { error: String(e) }; }
+      comparar("DNS reenviado en bucle: da un diagnóstico, sin error de pila",
+        [!!bucle.diagnostico, bucle.error === undefined, bucle.diagnostico && bucle.diagnostico.codigo], [true, true, "D29"]);
+      comparar("DNS: una IP pública da D35, no «el nombre no existe»",
         [publicaPtr.diagnostico.codigo, /no existe/.test(publicaPtr.diagnostico.explicacion), /árbol público de in-addr\.arpa/.test(publicaPtr.diagnostico.titulo)],
         ["D35", false, true]);
     })();
@@ -5907,7 +5955,7 @@ var Escenarios = (function () {
 
   // Versión de la app (semver). Cada PR que toca una capa la sube y suma su
   // entrada en CHANGELOG.md; el ensamblador controla que coincidan.
-  var VERSION_APP = "1.3.0";
+  var VERSION_APP = "1.4.0";
 
   // Versión del formato de archivo que escribe esta capa. Sube sólo si un
   // campo existente cambia o desaparece, y cada subida trae su migración.
@@ -6527,6 +6575,14 @@ var Escenarios = (function () {
       if (d.dns !== undefined && d.dns !== null && String(d.dns).trim() !== "") {
         if (!Red.esIpValida(String(d.dns))) {
           anotar(etiqueta + ".dns", "El servidor DNS del equipo \"" + d.id + "\" no es una IP válida (" + JSON.stringify(d.dns) + ").");
+        }
+      }
+      // Reenvío de DNS: sólo un router lo puede hacer, y es un sí o un no.
+      if (d.reenviaDns !== undefined && d.reenviaDns !== null) {
+        if (typeof d.reenviaDns !== "boolean") {
+          anotar(etiqueta + ".reenviaDns", "El equipo \"" + d.id + "\" no indica bien si reenvía el DNS (va true o false).");
+        } else if (d.reenviaDns && d.tipo !== "router") {
+          anotar(etiqueta + ".reenviaDns", "Sólo un router reenvía el DNS, y \"" + d.id + "\" es " + d.tipo + ".");
         }
       }
       validarServiciosDns(d, etiqueta, anotar);
@@ -9351,6 +9407,15 @@ var Escenarios = (function () {
       buscarInterfaz(buscarDispositivo(puente, "pc-wifi"), "wlan0").modoRadio = "bridge";
       // El puerto bridge de r1 sostiene dos enlaces: tampoco pasa.
       comparar("bridge con dos enlaces no pasa", validarTopologia(puente).ok, false);
+      // Reenvío de DNS: sólo un router, y con true o false.
+      var reenvPc = clonar(complejo);
+      buscarDispositivo(reenvPc, "pc-admin").reenviaDns = true;
+      comparar("reenvío de DNS en una PC no pasa",
+        validarTopologia(reenvPc).errores.some(function (x) { return x.mensaje.indexOf("Sólo un router reenvía el DNS") >= 0; }), true);
+      var reenvRouter = clonar(complejo);
+      buscarDispositivo(reenvRouter, "r1").reenviaDns = true;
+      comparar("reenvío de DNS en un router pasa la validación",
+        validarTopologia(reenvRouter).errores.some(function (x) { return /reenvía el DNS/.test(x.mensaje); }), false);
     })();
 
     // La celda Wi-Fi del complejo en acción.
@@ -12029,6 +12094,18 @@ var UI = (function () {
         d.dns = v.trim() === "" ? null : v.trim();
         reconstruirEstado();
       }, function (v) { return v.trim() === "" || Red.esIpValida(v.trim()); }, true);
+      if (d.tipo === "router") {
+        // Como en una red hogareña: el router recibe las consultas y las pasa a su DNS.
+        var labReenvio = el("label", "enlinea");
+        var chkReenvio = document.createElement("input");
+        chkReenvio.type = "checkbox"; chkReenvio.checked = d.reenviaDns === true;
+        chkReenvio.addEventListener("change", function () {
+          empujarHistorial(); d.reenviaDns = chkReenvio.checked; reconstruirEstado();
+        });
+        labReenvio.appendChild(chkReenvio);
+        labReenvio.appendChild(document.createTextNode("Reenviar consultas DNS a su servidor DNS"));
+        c.appendChild(labReenvio);
+      }
     }
     var labE = el("label", "enlinea");
     var chk = document.createElement("input");
