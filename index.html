@@ -5834,7 +5834,7 @@ var Escenarios = (function () {
 
   // Versión de la app (semver). Cada PR que toca una capa la sube y suma su
   // entrada en CHANGELOG.md; el ensamblador controla que coincidan.
-  var VERSION_APP = "1.2.2";
+  var VERSION_APP = "1.2.3";
 
   // Versión del formato de archivo que escribe esta capa. Sube sólo si un
   // campo existente cambia o desaparece, y cada subida trae su migración.
@@ -6331,7 +6331,7 @@ var Escenarios = (function () {
 
       if (TIPOS_VALIDOS.indexOf(d.tipo) < 0) {
         anotar(etiqueta + ".tipo", "El equipo \"" + d.id + "\" es de un tipo que el simulador no conoce (" + JSON.stringify(d.tipo) + "). " +
-          "Los tipos válidos son PC, router, switch, cámara, IoT, punto de acceso e internet.");
+          "Los tipos válidos son PC, router, switch, cámara, IoT, punto de acceso, servidor e internet.");
         continue;
       }
       if (typeof d.encendido !== "boolean") {
@@ -6624,8 +6624,16 @@ var Escenarios = (function () {
             (modoA === "cliente" && modoB === "ap") ||
             (modoA === "bridge" && modoB === "bridge");
           if (!parOk) {
-            anotar("enlaces." + idE, "El enlace inalámbrico \"" + idE + "\" une dos equipos en modos que no se entienden (" +
-              modoA + " con " + modoB + "): solo funcionan cliente con ap, o bridge con bridge.");
+            // Un texto por par, igual que la explicación de D18 en capa 2.
+            if (modoA === "cliente" && modoB === "cliente") {
+              anotar("enlaces." + idE, "El enlace inalámbrico \"" + idE + "\" une dos equipos en modo cliente: uno tiene que ser punto de acceso (ap).");
+            } else if (modoA === "ap" && modoB === "ap") {
+              anotar("enlaces." + idE, "El enlace inalámbrico \"" + idE + "\" une dos puntos de acceso (ap): un cliente se conecta a un punto de acceso, " +
+                "pero dos puntos no se conectan entre sí. Para unirlos punto a punto, los dos en modo bridge.");
+            } else {
+              anotar("enlaces." + idE, "El enlace inalámbrico \"" + idE + "\" une modos que no combinan (" +
+                modoA + " con " + modoB + "): solo funcionan cliente con ap, o bridge con bridge.");
+            }
           }
         }
       }
@@ -9254,11 +9262,17 @@ var Escenarios = (function () {
       var resCli = validarTopologia(cliCli);
       comparar("cliente-cliente no pasa", resCli.ok, false);
       comparar("cliente-cliente habla de modos",
-        resCli.errores.some(function (x) { return x.mensaje.indexOf("modos que no se entienden") >= 0; }), true);
+        resCli.errores.some(function (x) { return x.mensaje.indexOf("uno tiene que ser punto de acceso") >= 0; }), true);
       var apAp = clonar(complejo);
       buscarInterfaz(buscarDispositivo(apAp, "pc-wifi"), "wlan0").modoRadio = "ap";
       var resAp = validarTopologia(apAp);
       comparar("ap-ap no pasa", resAp.ok, false);
+      comparar("ap-ap habla de dos puntos de acceso",
+        resAp.errores.some(function (x) { return x.mensaje.indexOf("dos puntos de acceso") >= 0; }), true);
+      var tipoX = clonar(complejo);
+      buscarDispositivo(tipoX, "r1").tipo = "firewall";
+      comparar("tipo desconocido nombra servidor",
+        validarTopologia(tipoX).errores.some(function (x) { return x.mensaje.indexOf("servidor") >= 0; }), true);
       var puente = clonar(complejo);
       buscarInterfaz(buscarDispositivo(puente, "r1"), "wlan0").modoRadio = "bridge";
       buscarInterfaz(buscarDispositivo(puente, "pc-wifi"), "wlan0").modoRadio = "bridge";
