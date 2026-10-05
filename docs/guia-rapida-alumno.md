@@ -72,7 +72,7 @@ Cada paso lleva su **capa** (por ejemplo «Capa 2 · Enlace»): pasá el mouse p
 | **D26** | El servidor DNS no responde | Que la PC llegue a la IP de su servidor DNS (es un ping como cualquier otro) |
 | **D27** | Una regla de filtrado bloqueó el paquete | Pestaña Filtrado del router o firewall: el orden de las reglas |
 | **D28** | Falta NAT: la respuesta no puede volver de internet | Casilla NAT del puerto del router que va a internet |
-| **D29** | Esa IP no es un servidor DNS | El DNS de la PC tiene que ser un servidor con DNS o un público como 8.8.8.8 |
+| **D29** | Esa IP no es un servidor DNS | El DNS de la PC tiene que ser un servidor con DNS, un público como 8.8.8.8, o un router con «Reenviar consultas DNS» |
 | **D30** | El servidor DNS no llega a internet | La salida a internet del servidor: puerta de enlace, rutas y NAT |
 | **D31** | Puerto cerrado: la red llega, pero nadie atiende ese servicio | Pestaña Servicios del servidor, y el puerto y protocolo elegidos |
 | **D32** | Se perdieron todos los paquetes | La pérdida (%) de los cables del recorrido |

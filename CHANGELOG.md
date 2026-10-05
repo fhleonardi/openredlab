@@ -10,6 +10,10 @@ Los números siguen la forma MAYOR.MENOR.PARCHE:
 
 Los archivos de red llevan el número de su formato (`version`) y la versión del simulador que los exportó (`generador`). Un archivo de un formato anterior se actualiza solo al abrirlo.
 
+## 1.4.0 — 2026-10-05
+
+- **El router puede reenviar el DNS, como en una red hogareña.** En la configuración de un router hay una casilla «Reenviar consultas DNS a su servidor DNS». Con ella activada, las PC que usan la IP del router como DNS reciben la respuesta que el router consigue con su propio DNS, y el recorrido muestra el reenvío. Sin la casilla, el diagnóstico D29 sigue diciendo que la IP no es un servidor DNS, y su sugerencia menciona la opción.
+
 ## 1.3.0 — 2026-10-05
 
 - **DNS inverso.** Un servidor puede tener una zona inversa (por ejemplo `1.168.192.in-addr.arpa`) con registros PTR, y Consultar DNS acepta una IP con tipo PTR: el simulador la convierte en su nombre `in-addr.arpa` y muestra el paso.

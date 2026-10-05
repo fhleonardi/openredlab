@@ -29,7 +29,7 @@ var Escenarios = (function () {
 
   // Versión de la app (semver). Cada PR que toca una capa la sube y suma su
   // entrada en CHANGELOG.md; el ensamblador controla que coincidan.
-  var VERSION_APP = "1.3.0";
+  var VERSION_APP = "1.4.0";
 
   // Versión del formato de archivo que escribe esta capa. Sube sólo si un
   // campo existente cambia o desaparece, y cada subida trae su migración.
@@ -649,6 +649,14 @@ var Escenarios = (function () {
       if (d.dns !== undefined && d.dns !== null && String(d.dns).trim() !== "") {
         if (!Red.esIpValida(String(d.dns))) {
           anotar(etiqueta + ".dns", "El servidor DNS del equipo \"" + d.id + "\" no es una IP válida (" + JSON.stringify(d.dns) + ").");
+        }
+      }
+      // Reenvío de DNS: sólo un router lo puede hacer, y es un sí o un no.
+      if (d.reenviaDns !== undefined && d.reenviaDns !== null) {
+        if (typeof d.reenviaDns !== "boolean") {
+          anotar(etiqueta + ".reenviaDns", "El equipo \"" + d.id + "\" no indica bien si reenvía el DNS (va true o false).");
+        } else if (d.reenviaDns && d.tipo !== "router") {
+          anotar(etiqueta + ".reenviaDns", "Sólo un router reenvía el DNS, y \"" + d.id + "\" es " + d.tipo + ".");
         }
       }
       validarServiciosDns(d, etiqueta, anotar);
@@ -3473,6 +3481,15 @@ var Escenarios = (function () {
       buscarInterfaz(buscarDispositivo(puente, "pc-wifi"), "wlan0").modoRadio = "bridge";
       // El puerto bridge de r1 sostiene dos enlaces: tampoco pasa.
       comparar("bridge con dos enlaces no pasa", validarTopologia(puente).ok, false);
+      // Reenvío de DNS: sólo un router, y con true o false.
+      var reenvPc = clonar(complejo);
+      buscarDispositivo(reenvPc, "pc-admin").reenviaDns = true;
+      comparar("reenvío de DNS en una PC no pasa",
+        validarTopologia(reenvPc).errores.some(function (x) { return x.mensaje.indexOf("Sólo un router reenvía el DNS") >= 0; }), true);
+      var reenvRouter = clonar(complejo);
+      buscarDispositivo(reenvRouter, "r1").reenviaDns = true;
+      comparar("reenvío de DNS en un router pasa la validación",
+        validarTopologia(reenvRouter).errores.some(function (x) { return /reenvía el DNS/.test(x.mensaje); }), false);
     })();
 
     // La celda Wi-Fi del complejo en acción.
