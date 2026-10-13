@@ -14784,12 +14784,9 @@ var UI = (function () {
 
   /* ----------- AnimadorPaquetes: paquetes que viajan sobre la topología ---------- */
 
-  // Colores de las tramas: pedido azul, respuesta verde, ARP naranja.
+  // Colores de las tramas: el pedido va en azul y la respuesta en verde.
   function colorDeTrama(t) {
-    var m = String(t.mensaje || "");
-    if (/^ARP/i.test(m)) { return "#d95926"; }
-    if (/reply|respuesta/i.test(m)) { return "#0ca30c"; }
-    return /^ICMP/i.test(m) ? "#3987e5" : "#a78bfa";
+    return /reply|respuesta/i.test(String(t.mensaje || "")) ? "#0ca30c" : "#3987e5";
   }
 
   function AnimadorPaquetes() {
