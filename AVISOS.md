@@ -1,10 +1,10 @@
 # Avisos de terceros
 
-OpenRedLab incluye, copiados dentro de `capa4-ui.js` (y por lo tanto de `index.html`), los trazados de varios iconos de **Tabler Icons** v3.49.0 (https://tabler.io/icons), publicados con licencia MIT:
+OpenRedLab incluye, copiados dentro de `capa4-ui.js` (y por lo tanto de `index.html`), los trazados de varios iconos de **Tabler Icons** v3.49.0 (https://tabler.io/icons), publicados con licencia MIT. Se usan sin modificar los trazados; sólo se escalan y se pintan con el color de cada tipo de equipo:
 
 `device-desktop`, `server`, `wall`, `cloud`, `device-cctv`, `access-point` y `cpu`.
 
-Los símbolos de router, switch y hub son propios.
+Los símbolos de router, switch y hub, y el recuadro redondeado de todos los iconos, son propios.
 
 ## Tabler Icons: licencia
 
