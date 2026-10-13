@@ -10,6 +10,10 @@ Los números siguen la forma MAYOR.MENOR.PARCHE:
 
 Los archivos de red llevan el número de su formato (`version`) y la versión del simulador que los exportó (`generador`). Un archivo de un formato anterior se actualiza solo al abrirlo.
 
+## 1.5.1 — 2026-10-13
+
+- **Iconos de equipos más modernos.** Cada equipo se dibuja ahora dentro de un recuadro redondeado con el color de su tipo y un glifo de trazo parejo. PC, servidor, firewall, internet, cámara, punto de acceso e IoT usan iconos de Tabler Icons (licencia MIT, detallada en `AVISOS.md`). El router, el switch y el hub mantienen sus símbolos clásicos de diagrama de redes, redibujados con el mismo estilo.
+
 ## 1.5.0 — 2026-10-13
 
 - **El ping se ve viajar por la topología.** Al hacer un ping, un paquete recorre el lienzo trama por trama, pasando por los equipos intermedios: azul para el pedido (request) y verde para la respuesta (reply). Si el ping se corta, el paquete llega hasta donde pudo, queda en rojo y marca con una cruz el equipo donde paró.
