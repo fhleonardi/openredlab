@@ -40,6 +40,8 @@ var UI = (function () {
     pestañaInf: "simulacion",
     pestañaProps: "config",
     herramientaCable: null,
+    herramientaFalla: null,
+    fallasVivas: { enlaces: {}, equipos: {} },
     cableTipo: "ethernet",
     cableOrigen: null,
     colocando: null,
@@ -294,9 +296,52 @@ var UI = (function () {
     return id;
   }
 
+  // Fallas en vivo: una capa transitoria sobre el diseño. Llegan al Motor como cable caído o equipo
+  // apagado, pero no pasan por S.topologia: no entran al historial, a la sesión guardada ni a lo que
+  // se exporta, y «Verificar diseño» sigue juzgando el diseño.
+  function enlaceEnFalla(e) { return !!(e && S.fallasVivas.enlaces[e.id]); }
+  function equipoEnFalla(d) { return !!(d && S.fallasVivas.equipos[d.id]); }
+  function enlaceCaido(e) { return e.estado !== "up" || enlaceEnFalla(e); }
+  function equipoApagado(d) { return !d.encendido || equipoEnFalla(d); }
+
+  function hayFallasVivas() {
+    return Object.keys(S.fallasVivas.enlaces).length + Object.keys(S.fallasVivas.equipos).length > 0;
+  }
+
+  // Descarta las fallas de cables y equipos que ya no existen (se borraron o se cambió de red).
+  function podarFallasVivas() {
+    var enlaces = {}, equipos = {};
+    (S.topologia.enlaces || []).forEach(function (e) { if (S.fallasVivas.enlaces[e.id]) { enlaces[e.id] = true; } });
+    (S.topologia.dispositivos || []).forEach(function (d) { if (S.fallasVivas.equipos[d.id]) { equipos[d.id] = true; } });
+    S.fallasVivas = { enlaces: enlaces, equipos: equipos };
+  }
+
+  function topologiaSimulada() {
+    var topo = clonar(S.topologia);
+    (topo.enlaces || []).forEach(function (e) { if (S.fallasVivas.enlaces[e.id]) { e.estado = "down"; } });
+    (topo.dispositivos || []).forEach(function (d) { if (S.fallasVivas.equipos[d.id]) { d.encendido = false; } });
+    return topo;
+  }
+
+  // Lo que el Motor devuelve al diseño (las concesiones DHCP) lleva las fallas aplicadas: vuelve al
+  // valor real que tenía el diseño.
+  function restaurarFallasVivas(nueva, anterior) {
+    Object.keys(S.fallasVivas.enlaces).forEach(function (id) {
+      var n = (nueva.enlaces || []).filter(function (e) { return e.id === id; })[0];
+      var a = (anterior.enlaces || []).filter(function (e) { return e.id === id; })[0];
+      if (n && a) { n.estado = a.estado; }
+    });
+    Object.keys(S.fallasVivas.equipos).forEach(function (id) {
+      var n = (nueva.dispositivos || []).filter(function (d) { return d.id === id; })[0];
+      var a = (anterior.dispositivos || []).filter(function (d) { return d.id === id; })[0];
+      if (n && a) { n.encendido = a.encendido; }
+    });
+  }
+
   function reconstruirEstado() {
+    podarFallasVivas();
     try {
-      S.estado = Motor.crearEstado(S.topologia);
+      S.estado = Motor.crearEstado(topologiaSimulada());
     } catch (e) {
       S.estado = null;
     }
@@ -365,6 +410,7 @@ var UI = (function () {
     ".simpaleta .palgrid + h2{margin-top:8px;}",
     ".simlienzo{flex:1;position:relative;min-width:0;background:var(--sim-fondo);}",
     ".simlienzo svg.lienzo{width:100%;height:100%;display:block;touch-action:none;}",
+    ".simlienzo svg.lienzo.modo-falla .enlace,.simlienzo svg.lienzo.modo-falla .nodo{cursor:crosshair;}",
     ".simtools select{font-size:12px;}",
     ".simtools .cuentadom{align-self:center;font-size:12px;font-weight:600;padding:0 4px;color:var(--sim-texto);}",
     ".simtools .cuentadom:empty{display:none;}",
@@ -963,7 +1009,7 @@ var UI = (function () {
     var selCable = document.createElement("select");
     selCable.id = idCampo("tipo-cable");
     selCable.innerHTML = "<option value='ethernet'>ethernet (cobre)</option><option value='fibra'>fibra</option><option value='wireless'>wireless</option>";
-    selCable.addEventListener("change", function () { S.cableTipo = selCable.value; S.herramientaCable = true; renderLienzo(); });
+    selCable.addEventListener("change", function () { S.cableTipo = selCable.value; S.herramientaCable = true; S.herramientaFalla = null; renderLienzo(); });
     S.selectCable = selCable;
     // El título "Cable" ya lo nombra a la vista; el rótulo queda para lectores de pantalla.
     var labCable = etiqueta("Tipo de cable", selCable);
@@ -975,6 +1021,7 @@ var UI = (function () {
     bCable.setAttribute("aria-pressed", "false");
     bCable.addEventListener("click", function () {
       S.herramientaCable = !S.herramientaCable; S.cableOrigen = null;
+      if (S.herramientaCable) { S.herramientaFalla = null; }
       bCable.classList.toggle("activo", S.herramientaCable);
       bCable.setAttribute("aria-pressed", String(S.herramientaCable));
       registrar("cable", S.herramientaCable ? "Herramienta de cable activada (" + S.cableTipo + ")." : "Herramienta de cable desactivada.");
@@ -983,6 +1030,23 @@ var UI = (function () {
     pal.appendChild(bCable);
     S.botonCable = bCable;
     pal.appendChild(el("p", "leyenda", "Cobre: lleno · fibra: grueso · wireless: puntos. Verde: activo · rojo y cortado: caído."));
+    pal.appendChild(el("h2", "titulopal", "Fallas en vivo"));
+    var bCortar = boton("\u26A1 Cortar un cable", "herramienta");
+    bCortar.title = "Clic en un cable para cortarlo; otro clic lo restaura (Esc sale)";
+    bCortar.setAttribute("aria-pressed", "false");
+    bCortar.addEventListener("click", function () { alternarModoFalla("enlace"); });
+    var bApagar = boton("\u26A1 Apagar un equipo", "herramienta");
+    bApagar.title = "Clic en un equipo para apagarlo; otro clic lo enciende (Esc sale)";
+    bApagar.setAttribute("aria-pressed", "false");
+    bApagar.addEventListener("click", function () { alternarModoFalla("equipo"); });
+    var bRestaurar = boton("Restaurar todo");
+    bRestaurar.addEventListener("click", restaurarTodasLasFallas);
+    pal.appendChild(bCortar); pal.appendChild(bApagar); pal.appendChild(bRestaurar);
+    var leyFallas = el("p", "leyenda", "");
+    leyFallas.setAttribute("aria-live", "polite");
+    pal.appendChild(leyFallas);
+    S.leyendaFallas = leyFallas;
+    S.botonCortar = bCortar; S.botonApagar = bApagar; S.botonRestaurar = bRestaurar;
     var bCol = boton("Colapsar");
     bCol.setAttribute("aria-expanded", "true");
     bCol.addEventListener("click", function () {
@@ -1218,7 +1282,7 @@ var UI = (function () {
     return { x: disp.x - dp.anchoAbajo / 2 + (j + 0.5) * (dp.anchoAbajo / abajo), y: disp.y + h / 2 };
   }
 
-  function colorEnlace(e) { return e.estado === "up" ? "#1a7f37" : "#b42318"; }
+  function colorEnlace(e) { return enlaceCaido(e) ? "#b42318" : "#1a7f37"; }
 
   /* Centro del puerto de una interfaz, en coordenadas de mundo: el mismo
    * punto donde se dibuja el rectángulo del puerto sobre cada nodo. Si la
@@ -1241,6 +1305,7 @@ var UI = (function () {
       S.botonCable.classList.toggle("activo", !!S.herramientaCable);
       S.botonCable.setAttribute("aria-pressed", String(!!S.herramientaCable));
     }
+    actualizarHerramientasFalla();
     var svgNS = "http://www.w3.org/2000/svg";
     while (S.capaEnlaces.firstChild) { S.capaEnlaces.removeChild(S.capaEnlaces.firstChild); }
     while (S.capaNodos.firstChild) { S.capaNodos.removeChild(S.capaNodos.firstChild); }
@@ -1282,7 +1347,7 @@ var UI = (function () {
       g.setAttribute("class", "enlace");
       g.setAttribute("tabindex", "0");
       g.setAttribute("role", "button");
-      g.setAttribute("aria-label", mayus(cableTexto(e)) + ", " + palabraCable(e.tipo) + ", " + (e.estado === "up" ? "activo" : "caído") +
+      g.setAttribute("aria-label", mayus(cableTexto(e)) + ", " + palabraCable(e.tipo) + ", " + (enlaceEnFalla(e) ? "cortado en vivo" : (e.estado === "up" ? "activo" : "caído")) +
         ", del " + puertoTexto(e.a.dispositivo, e.a.interfaz).replace(/^el /, "") +
         " al " + puertoTexto(e.b.dispositivo, e.b.interfaz).replace(/^el /, ""));
       var pa = puntoPuerto(a, e.a.interfaz);
@@ -1320,7 +1385,7 @@ var UI = (function () {
       }
       // El estado no depende sólo del color (verde y rojo se confunden con
       // daltonismo): un enlace caído además se dibuja con guiones largos.
-      if (e.estado !== "up" && e.tipo !== "wireless") {
+      if (enlaceCaido(e) && e.tipo !== "wireless") {
         dib.setAttribute("stroke-dasharray", "12 8");
         dib.setAttribute("stroke-linecap", "butt");
         if (brillo) { brillo.setAttribute("stroke-dasharray", "12 8"); brillo.setAttribute("stroke-linecap", "butt"); }
@@ -1331,9 +1396,9 @@ var UI = (function () {
       mid.setAttribute("x", (x1 + x2) / 2 + 6); mid.setAttribute("y", (y1 + y2) / 2 - 6);
       mid.setAttribute("font-size", S.presentacion ? String(Math.round(15 * escalaRotulos())) : "12");
       mid.setAttribute("fill", colorEnlace(e));
-      mid.textContent = e.id + (e.estado === "down" ? " (caído)" : "");
+      mid.textContent = e.id + (enlaceEnFalla(e) ? " \u26A1 cortado en vivo" : (e.estado === "down" ? " (caído)" : ""));
       // Al proyectar, los nombres de enlace sólo estorban: quedan los caídos.
-      if (!S.presentacion || e.estado === "down") { g.appendChild(mid); }
+      if (!S.presentacion || enlaceCaido(e)) { g.appendChild(mid); }
       g.addEventListener("pointerenter", function (ev) { mostrarTipEnlace(ev, e); });
       g.addEventListener("pointerleave", ocultarTip);
       g.addEventListener("focus", function () { mostrarTipEnlace(puntoDe(g), e); });
@@ -1341,12 +1406,16 @@ var UI = (function () {
       if (S.moviendoExtremo && S.moviendoExtremo.enlace === e.id) { g.setAttribute("opacity", "0.35"); }
       g.addEventListener("click", function (ev) {
         ev.stopPropagation();
+        if (S.herramientaFalla === "enlace") { alternarFalla("enlace", e.id); return; }
         if (S.moviendoExtremo) { return; }
         seleccionarEnlace(e.id);
         if (esCelular()) { abrirHoja("configurar"); }
       });
       g.addEventListener("keydown", function (ev) {
-        if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); ev.stopPropagation(); seleccionarEnlace(e.id); }
+        if (ev.key === "Enter" || ev.key === " ") {
+          ev.preventDefault(); ev.stopPropagation();
+          if (S.herramientaFalla === "enlace") { alternarFalla("enlace", e.id); } else { seleccionarEnlace(e.id); }
+        }
       });
       S.capaEnlaces.appendChild(g);
     });
@@ -1359,7 +1428,7 @@ var UI = (function () {
       g.setAttribute("role", "button");
       g.setAttribute("data-id", d.id);
       g.setAttribute("aria-label", (d.nombre || d.id) + ", " + nombreTipo(claveDe(d)) + ", " + lineasResumen(d).join(", ") +
-        (d.encendido ? "" : ", apagado") + ". Flechas: mover.");
+        (equipoEnFalla(d) ? ", apagado en vivo" : (d.encendido ? "" : ", apagado")) + ". Flechas: mover.");
       g.setAttribute("transform", "translate(" + d.x + " " + d.y + ")");
       var halo = null;
       if (S.seleccionado === d.id) {
@@ -1375,8 +1444,17 @@ var UI = (function () {
       }
       var cuerpo = document.createElementNS(svgNS, "g");
       cuerpo.innerHTML = icono(claveDe(d));
-      if (!d.encendido) { cuerpo.setAttribute("opacity", "0.4"); }
+      if (equipoApagado(d)) { cuerpo.setAttribute("opacity", "0.4"); }
       g.appendChild(cuerpo);
+      if (equipoEnFalla(d)) {
+        var rayo = document.createElementNS(svgNS, "text");
+        rayo.setAttribute("x", -26); rayo.setAttribute("y", -12);
+        rayo.setAttribute("font-size", "18"); rayo.setAttribute("fill", "#b42318");
+        rayo.setAttribute("stroke", "#fff"); rayo.setAttribute("stroke-width", "3");
+        rayo.setAttribute("paint-order", "stroke");
+        rayo.textContent = "\u26A1";
+        g.appendChild(rayo);
+      }
 
       (d.interfaces || []).forEach(function (iface, idx) {
         var p = posicionPuerto({ x: 0, y: 0, tipo: d.tipo, modelo: d.modelo }, idx, d.interfaces.length);
@@ -1411,10 +1489,14 @@ var UI = (function () {
         c.addEventListener("blur", ocultarTip);
         c.addEventListener("click", function (ev) {
           ev.stopPropagation();
+          if (S.herramientaFalla === "equipo") { alternarFalla("equipo", d.id); return; }
           clicPuerto(d, iface);
         });
         c.addEventListener("keydown", function (ev) {
-          if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); clicPuerto(d, iface); }
+          if (ev.key === "Enter" || ev.key === " ") {
+            ev.preventDefault();
+            if (S.herramientaFalla === "equipo") { alternarFalla("equipo", d.id); } else { clicPuerto(d, iface); }
+          }
         });
         // Con la herramienta de cable activa, cada puerto suma un área de
         // toque invisible más grande (10 px es poco para un dedo). Mide 28 px
@@ -1453,6 +1535,7 @@ var UI = (function () {
       g.addEventListener("blur", ocultarTip);
       g.addEventListener("click", function (ev) {
         ev.stopPropagation();
+        if (S.herramientaFalla === "equipo") { alternarFalla("equipo", d.id); return; }
         // En modo cableado, tocar el equipo fuera de sus puertos es salir del
         // modo: se selecciona el equipo y se avisa.
         if ((S.herramientaCable || S.cableOrigen) && !S.colocando && !S.moviendoExtremo) {
@@ -1465,7 +1548,11 @@ var UI = (function () {
       });
       g.addEventListener("keydown", function (ev) {
         if (ev.target !== g) { return; }
-        if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); seleccionar(d.id); enfocarNodo(d.id); return; }
+        if (ev.key === "Enter" || ev.key === " ") {
+          ev.preventDefault();
+          if (S.herramientaFalla === "equipo") { alternarFalla("equipo", d.id); } else { seleccionar(d.id); enfocarNodo(d.id); }
+          return;
+        }
         if (moverConTeclado(d, ev)) { ev.preventDefault(); ev.stopPropagation(); }
       });
       g.addEventListener("pointerdown", function (ev) { arrastreNodo(ev, d, g); });
@@ -1605,7 +1692,7 @@ var UI = (function () {
     var prim = primeraIp(d);
     S.tooltip.innerHTML = "<b>" + escapar(d.nombre || d.id) + "</b> (" + escapar(d.tipo) + ")<br>" +
       (prim ? escapar(prim.ip + "/" + prim.prefijo) : "sin IP") + "<br>" +
-      (d.encendido ? "encendido" : "apagado");
+      (equipoEnFalla(d) ? "apagado en vivo" : (d.encendido ? "encendido" : "apagado"));
     S.tooltip.style.display = "block";
     posicionarTip(ev);
   }
@@ -1630,7 +1717,7 @@ var UI = (function () {
     }
     S.tooltip.innerHTML = "<b>" + escapar(e.id) + "</b> " + escapar(e.tipo) + "<br>" +
       "velocidad " + escapar(String(e.velocidadMbps)) + " Mbps, retardo " +
-      escapar(String(e.retardoMs)) + " ms<br>estado " + escapar(e.estado) + d;
+      escapar(String(e.retardoMs)) + " ms<br>estado " + (enlaceEnFalla(e) ? "cortado en vivo" : escapar(e.estado)) + d;
     S.tooltip.style.display = "block";
     posicionarTip(ev);
   }
@@ -1679,6 +1766,7 @@ var UI = (function () {
 
   function armarColocacion(tipo, item) {
     S.colocando = tipo;
+    S.herramientaFalla = null;
     var todos = S.paleta.querySelectorAll(".palitem");
     for (var i = 0; i < todos.length; i++) { todos[i].classList.remove("armado"); }
     if (item) { item.classList.add("armado"); }
@@ -1690,7 +1778,7 @@ var UI = (function () {
     ev.stopPropagation();
     var inicio = { x: ev.clientX, y: ev.clientY, dx: d.x, dy: d.y };
     var movio = false;
-    if (S.colocando || S.herramientaCable) { return; }
+    if (S.colocando || S.herramientaCable || S.herramientaFalla === "equipo") { return; }
     function mover(e2) {
       var rect = S.svg.getBoundingClientRect();
       var k = S.vista.k;
@@ -1721,11 +1809,13 @@ var UI = (function () {
       if (ev.button === 1 || ev.target === svg) {
         S.abajo = { x: ev.clientX, y: ev.clientY, vx: S.vista.x, vy: S.vista.y };
         S.arrastrandoFondo = true;
+        S.huboPaneo = false;
       }
     });
     window.addEventListener("pointermove", function (ev) {
       if (S.moviendoExtremo) { actualizarLineaTemporal(ev); }
       if (S.abajo) {
+        if (Math.abs(ev.clientX - S.abajo.x) > 3 || Math.abs(ev.clientY - S.abajo.y) > 3) { S.huboPaneo = true; }
         S.vista.x = S.abajo.vx + (ev.clientX - S.abajo.x);
         S.vista.y = S.abajo.vy + (ev.clientY - S.abajo.y);
         aplicarVista();
@@ -1746,6 +1836,15 @@ var UI = (function () {
     });
     svg.addEventListener("click", function () {
       if (S.moviendoExtremo) { cancelarMovimiento(); return; }
+      if (S.herramientaFalla) {
+        // El clic con que termina un paneo no es una salida.
+        if (S.huboPaneo) { S.huboPaneo = false; return; }
+        S.herramientaFalla = null;
+        registrar("falla", "Herramienta de falla en vivo desactivada al tocar el fondo.");
+        avisar("Saliste de la herramienta de fallas. Las fallas aplicadas siguen; «Restaurar todo» las quita.");
+        renderLienzo();
+        return;
+      }
       if (!S.herramientaCable && !S.colocando) { seleccionar(null); }
     });
     // Alternativa de teclado al paneo y al zoom con el mouse.
@@ -1804,7 +1903,7 @@ var UI = (function () {
         var b = boton("");
         b.innerHTML = "<svg viewBox='-24 -20 48 40' aria-hidden='true' focusable='false'>" + c[2] + "</svg><span>" + c[1] + "</span>";
         b.addEventListener("click", function () {
-          S.cableTipo = c[0]; S.herramientaCable = true; S.cableOrigen = null; S.colocando = null;
+          S.cableTipo = c[0]; S.herramientaCable = true; S.herramientaFalla = null; S.cableOrigen = null; S.colocando = null;
           cerrarHoja();
           renderLienzo();
           avisar("Cable " + c[1].toLowerCase() + " armado · tocá dos puertos");
@@ -1883,6 +1982,93 @@ var UI = (function () {
     }
   }
 
+  // Aviso para el panel de propiedades: lo que dice el diseño y lo que simula la falla en vivo no
+  // coinciden, y el diseño no se toca desde ahí.
+  function avisoFallaEnVivo(tipo, id) {
+    var mapa = tipo === "enlace" ? S.fallasVivas.enlaces : S.fallasVivas.equipos;
+    if (!mapa[id]) { return null; }
+    var caja = el("div", "advertencia",
+      "\u26A1 " + (tipo === "enlace" ? "Cortado" : "Apagado") + " en vivo: la simulación lo trata como " +
+      (tipo === "enlace" ? "caído" : "apagado") + ", aunque el diseño diga otra cosa. ");
+    var b = boton("Restaurar");
+    b.addEventListener("click", function () { alternarFalla(tipo, id); renderPropiedades(); });
+    caja.appendChild(b);
+    return caja;
+  }
+
+  function actualizarHerramientasFalla() {
+    if (S.botonCortar) {
+      S.botonCortar.classList.toggle("activo", S.herramientaFalla === "enlace");
+      S.botonCortar.setAttribute("aria-pressed", String(S.herramientaFalla === "enlace"));
+      S.botonApagar.classList.toggle("activo", S.herramientaFalla === "equipo");
+      S.botonApagar.setAttribute("aria-pressed", String(S.herramientaFalla === "equipo"));
+      S.botonRestaurar.disabled = !hayFallasVivas();
+      var ahora = Object.keys(S.fallasVivas.enlaces).map(function (id) { return id + " cortado"; })
+        .concat(Object.keys(S.fallasVivas.equipos).map(function (id) { return nombreDe(id) + " apagado"; }));
+      S.leyendaFallas.textContent = ahora.length
+        ? "⚡ En vivo: " + ahora.join(", ") + ". El diseño no cambió."
+        : "No cambian el diseño: sólo lo que simulás.";
+    }
+    if (S.svg) { S.svg.classList.toggle("modo-falla", !!S.herramientaFalla); }
+  }
+
+  function alternarModoFalla(tipo) {
+    S.herramientaFalla = S.herramientaFalla === tipo ? null : tipo;
+    if (S.herramientaFalla) { S.herramientaCable = false; S.cableOrigen = null; S.colocando = null; }
+    registrar("falla", S.herramientaFalla
+      ? "Herramienta de falla en vivo activada: " + (tipo === "enlace" ? "cortar cables" : "apagar equipos") + "."
+      : "Herramienta de falla en vivo desactivada.");
+    if (S.herramientaFalla) {
+      avisar(tipo === "enlace" ? "Hacé clic en un cable para cortarlo; otro clic lo restaura." : "Hacé clic en un equipo para apagarlo; otro clic lo enciende.");
+    }
+    renderLienzo();
+  }
+
+  // Corta o restaura un cable (tipo «enlace») o apaga o enciende un equipo (tipo «equipo»), sólo en la
+  // simulación. Devuelve true si cambió algo.
+  function alternarFalla(tipo, id) {
+    var esEnlace = tipo === "enlace";
+    var elem = esEnlace ? buscarEnlace(id) : buscarDisp(id);
+    if (!elem) { return false; }
+    var mapa = esEnlace ? S.fallasVivas.enlaces : S.fallasVivas.equipos;
+    var quien = esEnlace ? cableTexto(elem) : (elem.nombre || elem.id);
+    var hora = new Date().toLocaleTimeString();
+    var texto, esFalla;
+    if (mapa[id]) {
+      delete mapa[id];
+      var sigueCaido = esEnlace ? elem.estado !== "up" : !elem.encendido;
+      esFalla = false;
+      texto = "\u26A1 " + (esEnlace ? mayus(quien) + " restaurado" : quien + " encendido") + " (" + hora + ")" +
+        (sigueCaido ? ", pero sigue " + (esEnlace ? "caído" : "apagado") + " en el diseño" : "");
+    } else {
+      if (esEnlace ? elem.estado !== "up" : !elem.encendido) {
+        avisar((esEnlace ? mayus(quien) + " ya está caído" : quien + " ya está apagado") + " en el diseño: no hace falta cortarlo.");
+        return false;
+      }
+      mapa[id] = true;
+      esFalla = true;
+      texto = "\u26A1 " + (esEnlace ? mayus(quien) + " cortado" : quien + " apagado") + " (" + hora + ")";
+    }
+    reconstruirEstado();
+    renderLienzo();
+    registrar("falla", texto);
+    consolaAgregar(texto, esFalla);
+    avisar(texto + (esFalla ? ". Repetí la prueba para ver el efecto." : ""));
+    return true;
+  }
+
+  function restaurarTodasLasFallas() {
+    if (!hayFallasVivas()) { return; }
+    var cuantas = Object.keys(S.fallasVivas.enlaces).length + Object.keys(S.fallasVivas.equipos).length;
+    S.fallasVivas = { enlaces: {}, equipos: {} };
+    reconstruirEstado();
+    renderLienzo();
+    var texto = "\u26A1 Se restauraron las fallas en vivo (" + cuantas + ") (" + new Date().toLocaleTimeString() + ")";
+    registrar("falla", texto);
+    consolaAgregar(texto, false);
+    avisar(texto);
+  }
+
   function salirModoCable(d) {
     var pendiente = S.cableOrigen ? buscarDisp(S.cableOrigen.dispositivo) : null;
     S.herramientaCable = false; S.cableOrigen = null;
@@ -1894,7 +2080,7 @@ var UI = (function () {
   }
 
   function cancelarHerramientas() {
-    S.colocando = null; S.herramientaCable = false; S.cableOrigen = null;
+    S.colocando = null; S.herramientaCable = false; S.herramientaFalla = null; S.cableOrigen = null;
     var todos = S.paleta ? S.paleta.querySelectorAll(".palitem") : [];
     for (var i = 0; i < todos.length; i++) { todos[i].classList.remove("armado"); }
     renderLienzo();
@@ -1988,7 +2174,7 @@ var UI = (function () {
 
   function iniciarMovimiento(idEnlace, lado) {
     S.moviendoExtremo = { enlace: idEnlace, lado: lado };
-    S.herramientaCable = false; S.cableOrigen = null; S.colocando = null;
+    S.herramientaCable = false; S.herramientaFalla = null; S.cableOrigen = null; S.colocando = null;
     renderLienzo();
     avisar("Hacé clic en el puerto nuevo para esta punta del cable (Esc cancela).");
   }
@@ -2260,7 +2446,7 @@ var UI = (function () {
     if (ev.key === "Escape") {
       if (S.moviendoExtremo) { cancelarMovimiento(); return; }
       if (S.hoja) { cerrarHoja(); return; }
-      S.colocando = null; S.cableOrigen = null; S.herramientaCable = false;
+      S.colocando = null; S.cableOrigen = null; S.herramientaCable = false; S.herramientaFalla = null;
       renderLienzo(); return;
     }
     if (ev.key.toLowerCase() === "f" && !mod && !ev.altKey) {
@@ -2339,6 +2525,8 @@ var UI = (function () {
       if (!e) { S.enlaceSel = null; }
       else {
         c.appendChild(el("h2", "", escapar(mayus(cableTexto(e)))));
+        var avisoCable = avisoFallaEnVivo("enlace", e.id);
+        if (avisoCable) { c.appendChild(avisoCable); }
         var sel = document.createElement("select");
         sel.innerHTML = "<option value='up'>activo</option><option value='down'>caído</option>";
         sel.value = e.estado;
@@ -2557,6 +2745,8 @@ var UI = (function () {
         c.appendChild(labReenvio);
       }
     }
+    var avisoEquipo = avisoFallaEnVivo("equipo", d.id);
+    if (avisoEquipo) { c.appendChild(avisoEquipo); }
     var labE = el("label", "enlinea");
     var chk = document.createElement("input");
     chk.type = "checkbox"; chk.checked = !!d.encendido;
@@ -3129,7 +3319,7 @@ var UI = (function () {
       escapar((function () {
         if (!prim) { return "sin interfaz con IP"; }
         var e = enlaceEnPuerto(d.id, prim.id);
-        return e ? (e.id + " (" + e.estado + ")") : "sin cable";
+        return e ? (e.id + " (" + (enlaceEnFalla(e) ? "cortado en vivo" : e.estado) + ")") : "sin cable";
       })())));
     if (S.estado) {
       var arp = [];
@@ -4924,7 +5114,9 @@ var UI = (function () {
     try { res = Motor.dhcpSolicitar(S.estado, idDisp, idIf); }
     catch (e) { registrar("D16", "DHCP falló: " + e.message); avisar("DHCP falló: " + e.message); return null; }
     empujarHistorial();
+    var topologiaAnterior = S.topologia;
     S.topologia = clonar(S.estado.topologia);
+    restaurarFallasVivas(S.topologia, topologiaAnterior);
     reconstruirEstado();
     S.dhcpSel = { equipo: idDisp, interfaz: idIf };
     S.ultimoDhcp = { equipo: idDisp, interfaz: idIf, res: res };
@@ -5790,6 +5982,8 @@ var UI = (function () {
 
   function cargarTopologia(topologia) {
     S.topologia = clonar(topologia);
+    S.fallasVivas = { enlaces: {}, equipos: {} };
+    S.herramientaFalla = null;
     S.seleccionado = null; S.enlaceSel = null;
     S.deshacer = []; S.rehacer = [];
     reconstruirEstado();
@@ -5841,6 +6035,12 @@ var UI = (function () {
     // Suma tramas a la captura activa, como cualquier ping o conexión; lo usa el Autotest.
     capturarTramas: capturarTramas,
     setModo: setModo,
+    // Cortar o restaurar un cable ("enlace") o apagar o encender un equipo ("equipo") en la simulación,
+    // sin tocar el diseño; lo usa el Autotest.
+    alternarFalla: alternarFalla,
+    fallasEnVivo: function () {
+      return { enlaces: Object.keys(S.fallasVivas.enlaces), equipos: Object.keys(S.fallasVivas.equipos) };
+    },
     registrar: registrar
   };
 })();
