@@ -13,6 +13,8 @@
  *   binario en dos colores y la línea de corte en vivo.
  * - `animarPing` y `animarDhcp` animan sobre la topología real, con
  *   velocidad configurable y cancelación, sin bloquear (`requestAnimationFrame`).
+ *   `AnimadorPaquetes` anima el ping trama por trama a partir de `tramas` del
+ *   Motor y, si no puede, `animarPing` queda como respaldo.
  */
 
 var UI = (function () {
@@ -505,6 +507,10 @@ var UI = (function () {
     ".recorrido .cab .ok{color:var(--sim-ok);font-weight:400;}",
     ".recorrido .cab .mal{color:var(--sim-mal);font-weight:400;}",
     ".recorrido .pasos{flex:1;min-height:0;overflow:auto;padding:4px 10px;}",
+    ".recorrido .trama{cursor:pointer;}",
+    ".recorrido .trama.actual{background:rgba(245,158,11,.18);outline:1px solid #f59e0b;border-radius:4px;}",
+    ".recorrido .ctl-anim{display:inline-flex;align-items:center;gap:6px;font-style:normal;}",
+    ".recorrido .ctl-anim select,.recorrido .ctl-anim button{font-size:12px;padding:2px 6px;}",
     ".recorrido .pie{display:flex;align-items:center;gap:8px;padding:4px 10px 6px;font-size:12px;color:var(--sim-tenue);font-style:italic;}",
     ".linpaso{font-size:13px;padding:2px 0;}",
     ".capa{display:inline-block;min-width:92px;color:var(--sim-tenue);border:1px solid var(--sim-borde);font-size:11px;border-radius:4px;padding:0 5px;margin-right:6px;text-align:center;vertical-align:1px;cursor:help;}",
@@ -3479,8 +3485,16 @@ var UI = (function () {
         qos = Motor.pingRepetido(S.estado, selO.value, selD.value.trim(), { cantidad: Number(selCant.value), semilla: S.semillaPing });
         res = qos.res;
       } catch (e) { registrar("error", "El ping falló por un error interno: " + e.message); return; }
+      animador.detener();
       pintarPing(selO.value, selD.value.trim(), res, qos);
-      animarPing(res);
+      var animado = false;
+      try {
+        var saltos = res.saltos || [];
+        animado = animador.animar(res.tramas, res.exito || !saltos.length ? null : { falla: saltos[saltos.length - 1] });
+      } catch (e) {
+        registrar("animacion", "Error en animación: " + e.message);
+      }
+      if (!animado) { animarPing(res); }
     }
     bPing.addEventListener("click", hacerPing);
     selD.addEventListener("keydown", function (ev) {
@@ -3847,7 +3861,7 @@ var UI = (function () {
       "TTL: cuántos routers más puede cruzar el paquete (cada router le resta uno)."));
     var anterior = {};
     var cuenta = { ida: 0, vuelta: 0 };
-    tramas.forEach(function (t) {
+    tramas.forEach(function (t, iTrama) {
       cuenta[t.sentido] += 1;
       var prev = anterior[t.sentido];
       var cambiaMac = !prev || prev.macOrigen !== t.macOrigen || prev.macDestino !== t.macDestino;
@@ -3875,6 +3889,13 @@ var UI = (function () {
       var fila = el("div", "trama",
         "<span class='sent'>" + (t.sentido === "ida" ? "Ida " : "Vuelta ") + cuenta[t.sentido] + "</span>" + partes.join(" · "));
       fila.tabIndex = 0;
+      fila.setAttribute("data-trama", String(iTrama));
+      fila.setAttribute("role", "button");
+      fila.title = "Clic para ver esta trama en la animación";
+      fila.addEventListener("click", function () { animador.irATrama(iTrama); });
+      fila.addEventListener("keydown", function (ev) {
+        if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); animador.irATrama(iTrama); }
+      });
       fila.addEventListener("mouseenter", function () { resaltarTrama(t); });
       fila.addEventListener("focus", function () { resaltarTrama(t); });
       fila.addEventListener("mouseleave", quitarResalteTrama);
@@ -3893,6 +3914,36 @@ var UI = (function () {
       }
       anterior[t.sentido] = t;
     });
+    marcarTramaActual(animador.tramaActual());
+  }
+
+  function marcarTramaActual(idxTrama) {
+    if (!S.raiz) { return; }
+    var filas = S.raiz.querySelectorAll(".recorrido .trama");
+    for (var i = 0; i < filas.length; i++) {
+      filas[i].classList.toggle("actual", idxTrama >= 0 && filas[i].getAttribute("data-trama") === String(idxTrama));
+    }
+  }
+
+  function controlesAnimacion() {
+    var caja = el("span", "ctl-anim", "");
+    var bPausa = boton(animador.pausado ? "\u25B6 Reanudar" : "\u23F8 Pausar");
+    bPausa.setAttribute("data-foco", "pausa");
+    bPausa.addEventListener("click", function () { animador.alternarPausa(); });
+    var bRep = boton("\u21BB Repetir");
+    bRep.setAttribute("data-foco", "repetir");
+    bRep.addEventListener("click", function () { animador.repetir(); });
+    var sel = document.createElement("select");
+    sel.setAttribute("aria-label", "Velocidad de la animación");
+    [0.5, 1, 2, 4].forEach(function (f) {
+      var o = document.createElement("option");
+      o.value = String(f); o.textContent = "\u00D7" + f;
+      if (f === animador.velocidad) { o.selected = true; }
+      sel.appendChild(o);
+    });
+    sel.addEventListener("change", function () { animador.establecerVelocidad(Number(sel.value)); });
+    caja.appendChild(bPausa); caja.appendChild(bRep); caja.appendChild(sel);
+    return caja;
   }
 
   function renderRecorrido(res) {
@@ -3949,6 +4000,7 @@ var UI = (function () {
     if (!res.exito && fallo >= 0 && !S.verTodos && !enTramas) {
       pie.appendChild(el("span", "", "los pasos siguientes no se llegaron a verificar"));
     }
+    if (tramas.length && !movimientoReducido()) { pie.appendChild(controlesAnimacion()); }
     if (tramas.length) {
       var bTramas = boton(enTramas ? "Ver los pasos" : "Cómo viaja el paquete (" + tramas.length + (tramas.length === 1 ? " trama)" : " tramas)"));
       bTramas.setAttribute("data-foco", "tramas");
@@ -4976,6 +5028,7 @@ var UI = (function () {
   }
 
   function limpiarAnim() {
+    if (animador) { animador.detener(); }
     while (S.capaAnim.firstChild) { S.capaAnim.removeChild(S.capaAnim.firstChild); }
   }
 
@@ -5175,6 +5228,222 @@ var UI = (function () {
     S.pestañaInf = "dhcp";
     return pedirDhcp(idDisp, idIf);
   }
+
+  /* ----------- AnimadorPaquetes: paquetes que viajan sobre la topología ---------- */
+
+  // Colores de las tramas: el pedido va en azul y la respuesta en verde.
+  function colorDeTrama(t) {
+    return /reply|respuesta/i.test(String(t.mensaje || "")) ? "#0ca30c" : "#3987e5";
+  }
+
+  function AnimadorPaquetes() {
+    this.tramas = [];
+    this.timeline = [];
+    this.marca = null;
+    this.cruz = null;
+    this.falla = null;
+    this.avisado = -1;
+    this.alCambiar = null;
+    this.alEstado = null;
+    this.miToken = 0;
+    this.activo = false;
+    this.pausado = false;
+    this.tActual = 0;
+    this.velocidad = 1;
+    this.idxActual = 0;
+  }
+
+  // Las tramas del Motor traen de/a (y `atraviesa`); los pasos textuales no.
+  AnimadorPaquetes.prototype.parsear = function (tramas) {
+    var self = this;
+    var seg = msVelocidad();
+    var t = 0;
+    this.timeline = [];
+    (tramas || []).forEach(function (tr, idx) {
+      if (!tr || !tr.de || !tr.a) { return; }
+      var ids = [tr.de.dispositivo].concat((tr.atraviesa || []).map(function (x) {
+        return x && typeof x === "object" ? x.dispositivo : x;
+      })).concat([tr.a.dispositivo]);
+      var puntos = [];
+      ids.forEach(function (id) {
+        var d = buscarDisp(id);
+        if (d) { puntos.push(puntoEn(d)); }
+      });
+      if (puntos.length < 2) { return; }
+      var dur = seg * (puntos.length - 1);
+      self.timeline.push({ idx: idx, color: colorDeTrama(tr), puntos: puntos, tiempoInicio: t, tiempoFin: t + dur });
+      t += dur;
+    });
+  };
+
+  AnimadorPaquetes.prototype.dibujarEn = function (idx, avance) {
+    var item = this.timeline[idx];
+    if (!item || !S.capaAnim) { return; }
+    var svgNS = "http://www.w3.org/2000/svg";
+    if (!this.marca || this.marca.parentNode !== S.capaAnim) {
+      this.marca = document.createElementNS(svgNS, "circle");
+      this.marca.setAttribute("r", 6);
+      this.marca.setAttribute("stroke", "#fff");
+      this.marca.setAttribute("stroke-width", 1.5);
+      this.marca.setAttribute("class", "paquete-anim");
+      S.capaAnim.appendChild(this.marca);
+    }
+    var tramos = item.puntos.length - 1;
+    var pos = Math.max(0, Math.min(avance, 1)) * tramos;
+    var i = Math.min(Math.floor(pos), tramos - 1);
+    var f = pos - i;
+    var a = item.puntos[i], b = item.puntos[i + 1];
+    this.marca.setAttribute("fill", item.color);
+    this.marca.setAttribute("cx", a.x + (b.x - a.x) * f);
+    this.marca.setAttribute("cy", a.y + (b.y - a.y) * f - 30);
+  };
+
+  // Devuelve true si tomó a su cargo la animación del ping. Con `opciones.falla`
+  // el paquete termina en rojo y con ✗ en el último equipo que alcanzó.
+  AnimadorPaquetes.prototype.animar = function (tramas, opciones) {
+    this.tramas = tramas || [];
+    this.falla = opciones && opciones.falla ? opciones.falla : null;
+    S.animToken++;
+    limpiarAnim();
+    this.parsear(this.tramas);
+    if (!this.timeline.length) { return false; }
+    this.tActual = 0;
+    this.idxActual = 0;
+    this.avisado = -1;
+    if (movimientoReducido()) {
+      this.idxActual = this.timeline.length - 1;
+      this.dibujarEn(this.idxActual, 1);
+      this.marcarFalla();
+      this.avisar(this.idxActual);
+      return true;
+    }
+    this.arrancar();
+    registrar("animacion", "Animación de " + this.timeline.length + " tramas sobre la topología.");
+    return true;
+  };
+
+  AnimadorPaquetes.prototype.arrancar = function () {
+    var self = this;
+    var miToken = ++this.miToken;
+    this.activo = true;
+    var total = this.timeline[this.timeline.length - 1].tiempoFin;
+    var ultimo = null;
+    function cuadro(t) {
+      if (miToken !== self.miToken || !self.activo) { return; }
+      try {
+        if (ultimo === null) { ultimo = t; }
+        // Con la pestaña oculta rAF se frena: sin tope, al volver saltaría al final.
+        if (!self.pausado) { self.tActual += Math.min(t - ultimo, 100) * self.velocidad; }
+        ultimo = t;
+        var tt = Math.min(self.tActual, total);
+        var idx = self.timeline.length - 1;
+        for (var i = 0; i < self.timeline.length; i++) {
+          if (tt < self.timeline[i].tiempoFin) { idx = i; break; }
+        }
+        self.idxActual = idx;
+        var it = self.timeline[idx];
+        self.dibujarEn(idx, (tt - it.tiempoInicio) / (it.tiempoFin - it.tiempoInicio));
+        self.avisar(idx);
+        if (self.tActual >= total) {
+          self.activo = false;
+          self.marcarFalla();
+          return;
+        }
+      } catch (e) {
+        self.detener();
+        registrar("animacion", "Error en animación: " + e.message);
+        return;
+      }
+      requestAnimationFrame(cuadro);
+    }
+    requestAnimationFrame(cuadro);
+  };
+
+  AnimadorPaquetes.prototype.avisar = function (pos) {
+    if (pos === this.avisado) { return; }
+    this.avisado = pos;
+    if (this.alCambiar) { this.alCambiar(this.timeline[pos] ? this.timeline[pos].idx : -1); }
+  };
+
+  // Un ping que se cortó termina como siempre: marca roja y ✗ en el equipo donde paró.
+  AnimadorPaquetes.prototype.marcarFalla = function () {
+    var ult = this.timeline[this.timeline.length - 1];
+    if (!this.falla || !S.capaAnim || !ult) { return; }
+    var d = ult.puntos[ult.puntos.length - 1];
+    var svgNS = "http://www.w3.org/2000/svg";
+    if (this.marca) { this.marca.setAttribute("fill", "#b42318"); }
+    this.quitarCruz();
+    var cruz = document.createElementNS(svgNS, "text");
+    cruz.setAttribute("x", d.x + 10); cruz.setAttribute("y", d.y - 24);
+    cruz.setAttribute("font-size", "18"); cruz.setAttribute("fill", "#b42318");
+    cruz.textContent = "\u2717";
+    S.capaAnim.appendChild(cruz);
+    this.cruz = cruz;
+  };
+
+  AnimadorPaquetes.prototype.quitarCruz = function () {
+    if (this.cruz && this.cruz.parentNode) { this.cruz.parentNode.removeChild(this.cruz); }
+    this.cruz = null;
+  };
+
+  AnimadorPaquetes.prototype.alternarPausa = function () {
+    if (this.timeline.length) { this.pausado = !this.pausado; }
+    this.avisarEstado();
+    return this.pausado;
+  };
+
+  AnimadorPaquetes.prototype.avisarEstado = function () {
+    if (this.alEstado) { this.alEstado(); }
+  };
+
+  AnimadorPaquetes.prototype.establecerVelocidad = function (factor) { this.velocidad = factor > 0 ? factor : 1; };
+
+  // Salta al inicio de una trama (índice dentro de res.tramas) y sigue desde ahí.
+  AnimadorPaquetes.prototype.irATrama = function (idxTrama) {
+    for (var pos = 0; pos < this.timeline.length; pos++) {
+      if (this.timeline[pos].idx !== idxTrama) { continue; }
+      this.quitarCruz();
+      if (this.marca) { this.marca.setAttribute("fill", this.timeline[pos].color); }
+      this.idxActual = pos;
+      this.tActual = this.timeline[pos].tiempoInicio;
+      this.dibujarEn(pos, 0);
+      this.avisar(pos);
+      // Con movimiento reducido sólo se muestra el cuadro de esa trama.
+      if (!this.activo && !movimientoReducido()) {
+        this.pausado = false;
+        this.arrancar();
+      }
+      this.avisarEstado();
+      return;
+    }
+  };
+
+  AnimadorPaquetes.prototype.repetir = function () {
+    if (this.tramas.length) { this.animar(this.tramas, { falla: this.falla }); }
+  };
+
+  AnimadorPaquetes.prototype.tramaActual = function () {
+    var it = this.timeline[this.idxActual];
+    return it ? it.idx : -1;
+  };
+
+  AnimadorPaquetes.prototype.detener = function () {
+    this.miToken++;
+    this.activo = false;
+    this.pausado = false;
+    if (this.marca && this.marca.parentNode) { this.marca.parentNode.removeChild(this.marca); }
+    this.marca = null;
+    this.quitarCruz();
+    this.timeline = [];
+    this.avisarEstado();
+  };
+
+  var animador = new AnimadorPaquetes();
+  animador.alCambiar = marcarTramaActual;
+  animador.alEstado = function () {
+    var b = S.raiz && S.raiz.querySelector('.recorrido [data-foco="pausa"]');
+    if (b) { b.textContent = animador.pausado ? "\u25B6 Reanudar" : "\u23F8 Pausar"; }
+  };
 
   /* ---------------- Registro, persistencia, importar/exportar ---------------- */
 
