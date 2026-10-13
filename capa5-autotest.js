@@ -1751,6 +1751,10 @@ var Autotest = (function () {
       if (pingPorLaInterfaz() !== true) { prob.push("el ping de partida no responde"); }
       if (UI.alternarFalla("enlace", "l-r1-r2") !== true) { prob.push("no se pudo cortar el cable"); }
       if (pingPorLaInterfaz() !== false) { prob.push("con el cable cortado el ping responde igual"); }
+      // Un error también muestra la consola, en su propia columna y a la vista.
+      var resError = document.querySelector(".siminf .simres");
+      if (!resError || !resError.querySelector(".colconsola .consola")) { prob.push("con un error la consola no tiene su columna"); }
+      else if (resError.children.length !== 3) { prob.push("con un error el resultado no está en tres columnas"); }
       if (cable("l-r1-r2").estado !== "up") { prob.push("el corte entró al diseño"); }
       if (UI.fallasEnVivo().enlaces.join() !== "l-r1-r2") { prob.push("no registra el corte"); }
       if (ariaDelCable().indexOf("cortado en vivo") < 0) { prob.push("el cable no dice «cortado en vivo»"); }

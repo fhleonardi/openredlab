@@ -75,7 +75,6 @@ var UI = (function () {
     // acumula lo que pasa por ahí, numerado, hasta detenerla o limpiarla.
     captura: { activa: false, enlace: "", paquetes: [], filtro: "", sel: null, n: 0, descartados: 0 },
     verEncabezados: false,
-    consolaAbierta: false,
     lineasConsola: [],
     presExpandida: false,
     origenElegido: null,
@@ -561,8 +560,9 @@ var UI = (function () {
     ".recorrido .pasos{flex:1;min-height:0;overflow:auto;padding:4px 10px;}",
     ".recorrido .trama{cursor:pointer;}",
     ".recorrido .trama.actual{background:rgba(245,158,11,.18);outline:1px solid #f59e0b;border-radius:4px;}",
-    ".simctrl label.dnsreal{display:inline-flex;align-items:center;gap:4px;font-size:12px;}",
-    ".simctrl .dnsreal-nota{flex:1 0 100%;margin:0;font-size:12px;color:var(--sim-tenue);}",
+    ".tabs .dnsreal{display:inline-flex;align-items:center;gap:8px;margin-right:12px;font-size:12px;color:var(--sim-tenue);}",
+    ".tabs .dnsreal label{display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--sim-tenue);white-space:nowrap;}",
+    ".tabs .dnsreal-nota{color:var(--sim-aviso,#b45309);font-weight:600;white-space:nowrap;}",
     ".ctl-anim{display:inline-flex;align-items:center;gap:6px;font-style:normal;flex-wrap:wrap;}",
     ".ctl-anim select,.ctl-anim button{font-size:12px;padding:2px 6px;}",
     ".ctl-anim .ley{display:inline-flex;align-items:center;gap:3px;font-size:12px;color:var(--sim-tenue);}",
@@ -600,7 +600,6 @@ var UI = (function () {
     ".advertencia{border:1px solid var(--sim-aviso);border-radius:8px;padding:6px;margin:6px 0;font-size:12px;}",
     ".consola{background:#0d1117;color:#d6f0d6;font-family:ui-monospace,Consolas,monospace;font-size:12px;border-radius:8px;padding:8px;flex:1;min-height:0;overflow:auto;white-space:pre-wrap;margin:0;}",
     ".consola .error{color:#ff8a80;}",
-    ".consolabtn{text-align:left;font-family:ui-monospace,Consolas,monospace;font-size:12px;}",
     ".lienzovacio{position:absolute;left:50%;top:45%;transform:translate(-50%,-50%);width:min(440px,80%);text-align:center;color:var(--sim-tenue);font-size:14px;line-height:1.45;pointer-events:none;}",
     ".lienzovacio b{display:block;color:var(--sim-texto);font-size:17px;margin-bottom:4px;}",
     ".lienzovacio .recuperar{pointer-events:auto;margin-top:14px;padding:10px 12px;background:var(--sim-panel);border:1px solid var(--sim-borde);border-radius:10px;color:var(--sim-texto);}",
@@ -3369,6 +3368,40 @@ var UI = (function () {
     conFoco(S.inf, dibujarInferior);
   }
 
+  // «Resolver nombres reales»: va en la barra de pestañas, que tiene lugar, y no en la fila de
+  // controles del ping, que ya está justa. Dice qué sale a la red mientras está prendido.
+  function interruptorDnsReal() {
+    var caja = el("span", "dnsreal");
+    var chk = document.createElement("input");
+    chk.type = "checkbox"; chk.checked = S.dnsRealActivo;
+    chk.setAttribute("data-foco", "dnsreal");
+    chk.addEventListener("change", function () {
+      S.dnsRealActivo = chk.checked;
+      if (!S.dnsRealActivo) {
+        S.dnsRealGeneracion += 1; S.dnsRealOcupado = false; S.dnsReal = {};
+        reconstruirEstado();
+      }
+      registrar("DNS", S.dnsRealActivo
+        ? "DNS real activado: los nombres que la simulación no conozca se consultan a Cloudflare."
+        : "DNS real desactivado: no se hace ninguna consulta por la red.");
+      renderInferior();
+    });
+    var lab = el("label", "enlinea");
+    lab.appendChild(chk);
+    lab.appendChild(document.createTextNode(" Resolver nombres reales (requiere internet)"));
+    lab.title = "Los nombres que la simulación no conoce se consultan a Cloudflare (cloudflare-dns.com) por DNS sobre HTTPS. " +
+      "Es una consulta real por internet. Se apaga al recargar la página o al abrir otra red.";
+    caja.appendChild(lab);
+    if (S.dnsRealActivo) {
+      var nota = el("span", "dnsreal-nota", "⚠ consulta a Cloudflare por internet");
+      nota.id = idCampo("dnsreal-nota");
+      chk.setAttribute("aria-describedby", nota.id);
+      nota.title = lab.title;
+      caja.appendChild(nota);
+    }
+    return caja;
+  }
+
   function dibujarInferior() {
     var c = S.inf;
     c.innerHTML = "";
@@ -3393,6 +3426,7 @@ var UI = (function () {
       barra.appendChild(el("span", "version", "OpenRedLab " + escapar(Escenarios.VERSION_APP) +
         " · <a href='https://opentecnologia.ar' target='_blank' rel='noopener'>Open Tecnología</a>"));
     }
+    if (S.pestañaInf === "simulacion") { barra.appendChild(interruptorDnsReal()); }
     var selV = document.createElement("select");
     selV.innerHTML = "<option value='lenta'>lenta</option><option value='normal'>normal</option><option value='rapida'>rápida</option>";
     selV.value = S.velocidad;
@@ -3759,29 +3793,6 @@ var UI = (function () {
       });
       ctrl.appendChild(bVaciar);
     }
-    var chkReal = document.createElement("input");
-    chkReal.type = "checkbox"; chkReal.checked = S.dnsRealActivo;
-    chkReal.setAttribute("data-foco", "dnsreal");
-    chkReal.addEventListener("change", function () {
-      S.dnsRealActivo = chkReal.checked;
-      if (!S.dnsRealActivo) {
-        S.dnsRealGeneracion += 1; S.dnsRealOcupado = false; S.dnsReal = {};
-        reconstruirEstado();
-      }
-      registrar("DNS", S.dnsRealActivo
-        ? "DNS real activado: los nombres que la simulación no conozca se consultan a Cloudflare."
-        : "DNS real desactivado: no se hace ninguna consulta por la red.");
-      renderInferior();
-    });
-    var labReal = el("label", "enlinea dnsreal");
-    labReal.appendChild(chkReal);
-    labReal.appendChild(document.createTextNode(" Resolver nombres reales (requiere internet)"));
-    labReal.title = "Los nombres que la simulación no conoce se consultan a Cloudflare (cloudflare-dns.com) por DNS sobre HTTPS. Se apaga al recargar la página o al abrir otra red.";
-    ctrl.appendChild(labReal);
-    if (S.dnsRealActivo) {
-      ctrl.appendChild(el("p", "nota dnsreal-nota",
-        "\u26A0 Los nombres que la simulación no conozca se envían a Cloudflare (cloudflare-dns.com) por DNS sobre HTTPS: es una consulta real por internet. Se apaga al recargar."));
-    }
     ctrl.appendChild(el("span", "espacio"));
     // Los botones están siempre en el mismo lugar; si no aplican, quedan
     // deshabilitados en lugar de desaparecer.
@@ -4120,8 +4131,8 @@ var UI = (function () {
     var res = S.ultimo.res;
     cont.appendChild(renderRecorrido(res));
     var lado = el("div", "lado");
-    // Con el resultado a la vista, la consola va en su propia columna: debajo
-    // de la banda quedaba sin alto.
+    // Con el resultado a la vista, la consola va en su propia columna, sea un
+    // éxito o un diagnóstico: debajo de la tarjeta quedaba fuera de la vista.
     var conConsola = false;
     if (S.ultimo.conexion) {
       // El socket y los segmentos, uno por línea: → del cliente, ← del servidor.
@@ -4143,7 +4154,7 @@ var UI = (function () {
         var dgC = renderDiagnostico(res.diagnostico);
         if (lineas.length) { dgC.appendChild(el("div", "segmentos", lineas.join("<br>"))); }
         lado.appendChild(dgC);
-        lado.appendChild(renderConsolaPlegable());
+        conConsola = true;
       }
     } else if (S.ultimo.dns && res.exito) {
       // Respuesta como la de nslookup: quién respondió, si es autoritativa
@@ -4158,7 +4169,7 @@ var UI = (function () {
     } else if (res.exito && S.ultimo.qos && S.ultimo.qos.diagnostico) {
       // El camino existe, pero se perdieron todos los paquetes (D32).
       lado.appendChild(renderDiagnostico(S.ultimo.qos.diagnostico));
-      lado.appendChild(renderConsolaPlegable());
+      conConsola = true;
     } else if (res.exito) {
       var r = res.respuestas[0] || { ms: 1, ttl: 64 };
       var ruta = rutaNombres(res);
@@ -4173,8 +4184,7 @@ var UI = (function () {
       conConsola = true;
     } else {
       lado.appendChild(renderDiagnostico(res.diagnostico));
-      // Con un diagnóstico a la vista, la consola se pliega a una línea.
-      lado.appendChild(renderConsolaPlegable());
+      conConsola = true;
     }
     cont.appendChild(lado);
     if (conConsola) {
@@ -4578,22 +4588,6 @@ var UI = (function () {
     return cons;
   }
 
-  function renderConsolaPlegable() {
-    var cont = el("div", "");
-    cont.style.display = "flex";
-    cont.style.flexDirection = "column";
-    cont.style.minHeight = "0";
-    cont.style.flex = S.consolaAbierta ? "1" : "0 0 auto";
-    var b = boton("Consola · " + S.lineasConsola.length + " líneas " + (S.consolaAbierta ? "▾" : "▸"), "consolabtn");
-    b.setAttribute("aria-expanded", String(!!S.consolaAbierta));
-    b.setAttribute("data-foco", "consola");
-    b.addEventListener("click", function () { S.consolaAbierta = !S.consolaAbierta; renderInferior(); });
-    cont.appendChild(b);
-    if (S.consolaAbierta) { cont.appendChild(renderConsola()); }
-    else { S.consola = null; }
-    return cont;
-  }
-
   // La captura guarda los últimos MAX_CAPTURA paquetes: en una clase larga la
   // tabla se redibuja entera y, sin tope, la pestaña se pone lenta.
   var MAX_CAPTURA = 500;
@@ -4620,7 +4614,6 @@ var UI = (function () {
     S.panelRes = "ping";
     S.verTodos = false;
     S.verTramas = false;
-    S.consolaAbierta = false;
     if (res.exito && qos && qos.estadisticas) {
       var est = qos.estadisticas;
       var desde = res.ipResuelta || destino;
