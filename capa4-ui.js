@@ -3890,6 +3890,7 @@ var UI = (function () {
         "<span class='sent'>" + (t.sentido === "ida" ? "Ida " : "Vuelta ") + cuenta[t.sentido] + "</span>" + partes.join(" · "));
       fila.tabIndex = 0;
       fila.setAttribute("data-trama", String(iTrama));
+      fila.setAttribute("role", "button");
       fila.title = "Clic para ver esta trama en la animación";
       fila.addEventListener("click", function () { animador.irATrama(iTrama); });
       fila.addEventListener("keydown", function (ev) {
@@ -3928,12 +3929,10 @@ var UI = (function () {
     var caja = el("span", "ctl-anim", "");
     var bPausa = boton(animador.pausado ? "\u25B6 Reanudar" : "\u23F8 Pausar");
     bPausa.setAttribute("data-foco", "pausa");
-    bPausa.addEventListener("click", function () {
-      bPausa.textContent = animador.alternarPausa() ? "\u25B6 Reanudar" : "\u23F8 Pausar";
-    });
+    bPausa.addEventListener("click", function () { animador.alternarPausa(); });
     var bRep = boton("\u21BB Repetir");
     bRep.setAttribute("data-foco", "repetir");
-    bRep.addEventListener("click", function () { animador.repetir(); bPausa.textContent = "\u23F8 Pausar"; });
+    bRep.addEventListener("click", function () { animador.repetir(); });
     var sel = document.createElement("select");
     sel.setAttribute("aria-label", "Velocidad de la animación");
     [0.5, 1, 2, 4].forEach(function (f) {
@@ -4001,7 +4000,7 @@ var UI = (function () {
     if (!res.exito && fallo >= 0 && !S.verTodos && !enTramas) {
       pie.appendChild(el("span", "", "los pasos siguientes no se llegaron a verificar"));
     }
-    if (tramas.length) { pie.appendChild(controlesAnimacion()); }
+    if (tramas.length && !movimientoReducido()) { pie.appendChild(controlesAnimacion()); }
     if (tramas.length) {
       var bTramas = boton(enTramas ? "Ver los pasos" : "Cómo viaja el paquete (" + tramas.length + (tramas.length === 1 ? " trama)" : " tramas)"));
       bTramas.setAttribute("data-foco", "tramas");
@@ -5232,19 +5231,12 @@ var UI = (function () {
 
   /* ----------- AnimadorPaquetes: paquetes que viajan sobre la topología ---------- */
 
-  var COLORES_PROTOCOLO = {
-    "ICMP echo request": "#3987e5",
-    "ICMP echo reply": "#0ca30c",
-    "ARP request": "#d95926",
-    "ARP reply": "#d95926"
-  };
-
+  // Colores de las tramas: pedido azul, respuesta verde, ARP naranja.
   function colorDeTrama(t) {
     var m = String(t.mensaje || "");
-    if (COLORES_PROTOCOLO[m]) { return COLORES_PROTOCOLO[m]; }
     if (/^ARP/i.test(m)) { return "#d95926"; }
     if (/reply|respuesta/i.test(m)) { return "#0ca30c"; }
-    return /^ICMP/i.test(m) ? "#3987e5" : "#666";
+    return /^ICMP/i.test(m) ? "#3987e5" : "#a78bfa";
   }
 
   function AnimadorPaquetes() {
@@ -5255,10 +5247,10 @@ var UI = (function () {
     this.falla = null;
     this.avisado = -1;
     this.alCambiar = null;
+    this.alEstado = null;
     this.miToken = 0;
     this.activo = false;
     this.pausado = false;
-    this.t0 = null;
     this.tActual = 0;
     this.velocidad = 1;
     this.idxActual = 0;
@@ -5282,7 +5274,7 @@ var UI = (function () {
       });
       if (puntos.length < 2) { return; }
       var dur = seg * (puntos.length - 1);
-      self.timeline.push({ idx: idx, trama: tr, color: colorDeTrama(tr), puntos: puntos, tiempoInicio: t, tiempoFin: t + dur });
+      self.timeline.push({ idx: idx, color: colorDeTrama(tr), puntos: puntos, tiempoInicio: t, tiempoFin: t + dur });
       t += dur;
     });
   };
@@ -5309,10 +5301,9 @@ var UI = (function () {
     this.marca.setAttribute("cy", a.y + (b.y - a.y) * f - 30);
   };
 
-  // Devuelve true si tomó a su cargo la animación del ping. `opciones.falla`
-  // ({dispositivo}) marca con ✗ el equipo donde se cortó.
+  // Devuelve true si tomó a su cargo la animación del ping. Con `opciones.falla`
+  // el paquete termina en rojo y con ✗ en el último equipo que alcanzó.
   AnimadorPaquetes.prototype.animar = function (tramas, opciones) {
-    this.detener();
     this.tramas = tramas || [];
     this.falla = opciones && opciones.falla ? opciones.falla : null;
     S.animToken++;
@@ -5379,9 +5370,9 @@ var UI = (function () {
 
   // Un ping que se cortó termina como siempre: marca roja y ✗ en el equipo donde paró.
   AnimadorPaquetes.prototype.marcarFalla = function () {
-    if (!this.falla || !S.capaAnim) { return; }
-    var d = buscarDisp(this.falla.dispositivo);
-    if (!d) { return; }
+    var ult = this.timeline[this.timeline.length - 1];
+    if (!this.falla || !S.capaAnim || !ult) { return; }
+    var d = ult.puntos[ult.puntos.length - 1];
     var svgNS = "http://www.w3.org/2000/svg";
     if (this.marca) { this.marca.setAttribute("fill", "#b42318"); }
     this.quitarCruz();
@@ -5399,8 +5390,13 @@ var UI = (function () {
   };
 
   AnimadorPaquetes.prototype.alternarPausa = function () {
-    this.pausado = !this.pausado;
+    if (this.timeline.length) { this.pausado = !this.pausado; }
+    this.avisarEstado();
     return this.pausado;
+  };
+
+  AnimadorPaquetes.prototype.avisarEstado = function () {
+    if (this.alEstado) { this.alEstado(); }
   };
 
   AnimadorPaquetes.prototype.establecerVelocidad = function (factor) { this.velocidad = factor > 0 ? factor : 1; };
@@ -5415,7 +5411,12 @@ var UI = (function () {
       this.tActual = this.timeline[pos].tiempoInicio;
       this.dibujarEn(pos, 0);
       this.avisar(pos);
-      if (!this.activo) { this.arrancar(); }
+      // Con movimiento reducido sólo se muestra el cuadro de esa trama.
+      if (!this.activo && !movimientoReducido()) {
+        this.pausado = false;
+        this.arrancar();
+      }
+      this.avisarEstado();
       return;
     }
   };
@@ -5437,10 +5438,15 @@ var UI = (function () {
     this.marca = null;
     this.quitarCruz();
     this.timeline = [];
+    this.avisarEstado();
   };
 
   var animador = new AnimadorPaquetes();
   animador.alCambiar = marcarTramaActual;
+  animador.alEstado = function () {
+    var b = S.raiz && S.raiz.querySelector('.recorrido [data-foco="pausa"]');
+    if (b) { b.textContent = animador.pausado ? "\u25B6 Reanudar" : "\u23F8 Pausar"; }
+  };
 
   /* ---------------- Registro, persistencia, importar/exportar ---------------- */
 
