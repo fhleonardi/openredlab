@@ -1489,10 +1489,14 @@ var UI = (function () {
         c.addEventListener("blur", ocultarTip);
         c.addEventListener("click", function (ev) {
           ev.stopPropagation();
+          if (S.herramientaFalla === "equipo") { alternarFalla("equipo", d.id); return; }
           clicPuerto(d, iface);
         });
         c.addEventListener("keydown", function (ev) {
-          if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); clicPuerto(d, iface); }
+          if (ev.key === "Enter" || ev.key === " ") {
+            ev.preventDefault();
+            if (S.herramientaFalla === "equipo") { alternarFalla("equipo", d.id); } else { clicPuerto(d, iface); }
+          }
         });
         // Con la herramienta de cable activa, cada puerto suma un área de
         // toque invisible más grande (10 px es poco para un dedo). Mide 28 px
@@ -1805,11 +1809,13 @@ var UI = (function () {
       if (ev.button === 1 || ev.target === svg) {
         S.abajo = { x: ev.clientX, y: ev.clientY, vx: S.vista.x, vy: S.vista.y };
         S.arrastrandoFondo = true;
+        S.huboPaneo = false;
       }
     });
     window.addEventListener("pointermove", function (ev) {
       if (S.moviendoExtremo) { actualizarLineaTemporal(ev); }
       if (S.abajo) {
+        if (Math.abs(ev.clientX - S.abajo.x) > 3 || Math.abs(ev.clientY - S.abajo.y) > 3) { S.huboPaneo = true; }
         S.vista.x = S.abajo.vx + (ev.clientX - S.abajo.x);
         S.vista.y = S.abajo.vy + (ev.clientY - S.abajo.y);
         aplicarVista();
@@ -1831,6 +1837,8 @@ var UI = (function () {
     svg.addEventListener("click", function () {
       if (S.moviendoExtremo) { cancelarMovimiento(); return; }
       if (S.herramientaFalla) {
+        // El clic con que termina un paneo no es una salida.
+        if (S.huboPaneo) { S.huboPaneo = false; return; }
         S.herramientaFalla = null;
         registrar("falla", "Herramienta de falla en vivo desactivada al tocar el fondo.");
         avisar("Saliste de la herramienta de fallas. Las fallas aplicadas siguen; «Restaurar todo» las quita.");
@@ -2029,7 +2037,7 @@ var UI = (function () {
     if (mapa[id]) {
       delete mapa[id];
       var sigueCaido = esEnlace ? elem.estado !== "up" : !elem.encendido;
-      esFalla = sigueCaido;
+      esFalla = false;
       texto = "\u26A1 " + (esEnlace ? mayus(quien) + " restaurado" : quien + " encendido") + " (" + hora + ")" +
         (sigueCaido ? ", pero sigue " + (esEnlace ? "caído" : "apagado") + " en el diseño" : "");
     } else {
