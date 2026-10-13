@@ -3479,8 +3479,15 @@ var UI = (function () {
         qos = Motor.pingRepetido(S.estado, selO.value, selD.value.trim(), { cantidad: Number(selCant.value), semilla: S.semillaPing });
         res = qos.res;
       } catch (e) { registrar("error", "El ping falló por un error interno: " + e.message); return; }
+      animador.detener();
       pintarPing(selO.value, selD.value.trim(), res, qos);
-      animarPing(res);
+      var animado = false;
+      try {
+        animado = res.exito && animador.animar(res.tramas);
+      } catch (e) {
+        registrar("animacion", "Error en animación: " + e.message);
+      }
+      if (!animado) { animarPing(res); }
     }
     bPing.addEventListener("click", hacerPing);
     selD.addEventListener("keydown", function (ev) {
@@ -5175,6 +5182,144 @@ var UI = (function () {
     S.pestañaInf = "dhcp";
     return pedirDhcp(idDisp, idIf);
   }
+
+  /* ----------- AnimadorPaquetes: paquetes que viajan sobre la topología ---------- */
+
+  var COLORES_PROTOCOLO = {
+    "ICMP echo request": "#3987e5",
+    "ICMP echo reply": "#0ca30c",
+    "ARP request": "#d95926",
+    "ARP reply": "#d95926"
+  };
+
+  function colorDeTrama(t) {
+    var m = String(t.mensaje || "");
+    if (COLORES_PROTOCOLO[m]) { return COLORES_PROTOCOLO[m]; }
+    if (/^ARP/i.test(m)) { return "#d95926"; }
+    if (/reply|respuesta/i.test(m)) { return "#0ca30c"; }
+    return /^ICMP/i.test(m) ? "#3987e5" : "#666";
+  }
+
+  function AnimadorPaquetes() {
+    this.tramas = [];
+    this.timeline = [];
+    this.marca = null;
+    this.miToken = 0;
+    this.activo = false;
+    this.pausado = false;
+    this.t0 = null;
+    this.tActual = 0;
+    this.velocidad = 1;
+    this.idxActual = 0;
+  }
+
+  // Las tramas del Motor traen de/a (y `atraviesa`); los pasos textuales no.
+  AnimadorPaquetes.prototype.parsear = function (tramas) {
+    var self = this;
+    var seg = msVelocidad();
+    var t = 0;
+    this.timeline = [];
+    (tramas || []).forEach(function (tr, idx) {
+      if (!tr || !tr.de || !tr.a) { return; }
+      var ids = [tr.de.dispositivo].concat((tr.atraviesa || []).map(function (x) {
+        return x && typeof x === "object" ? x.dispositivo : x;
+      })).concat([tr.a.dispositivo]);
+      var puntos = [];
+      ids.forEach(function (id) {
+        var d = buscarDisp(id);
+        if (d) { puntos.push(puntoEn(d)); }
+      });
+      if (puntos.length < 2) { return; }
+      var dur = seg * (puntos.length - 1);
+      self.timeline.push({ idx: idx, trama: tr, color: colorDeTrama(tr), puntos: puntos, tiempoInicio: t, tiempoFin: t + dur });
+      t += dur;
+    });
+  };
+
+  AnimadorPaquetes.prototype.dibujarEn = function (idx, avance) {
+    var item = this.timeline[idx];
+    if (!item || !S.capaAnim) { return; }
+    var svgNS = "http://www.w3.org/2000/svg";
+    if (!this.marca || this.marca.parentNode !== S.capaAnim) {
+      this.marca = document.createElementNS(svgNS, "circle");
+      this.marca.setAttribute("r", 6);
+      this.marca.setAttribute("stroke", "#fff");
+      this.marca.setAttribute("stroke-width", 1.5);
+      this.marca.setAttribute("class", "paquete-anim");
+      S.capaAnim.appendChild(this.marca);
+    }
+    var tramos = item.puntos.length - 1;
+    var pos = Math.max(0, Math.min(avance, 1)) * tramos;
+    var i = Math.min(Math.floor(pos), tramos - 1);
+    var f = pos - i;
+    var a = item.puntos[i], b = item.puntos[i + 1];
+    this.marca.setAttribute("fill", item.color);
+    this.marca.setAttribute("cx", a.x + (b.x - a.x) * f);
+    this.marca.setAttribute("cy", a.y + (b.y - a.y) * f - 30);
+  };
+
+  // Devuelve true si tomó a su cargo la animación del ping.
+  AnimadorPaquetes.prototype.animar = function (tramas) {
+    var self = this;
+    this.detener();
+    var miToken = ++this.miToken;
+    this.tramas = tramas || [];
+    this.parsear(this.tramas);
+    if (!this.timeline.length) { return false; }
+    S.animToken++;
+    limpiarAnim();
+    if (movimientoReducido()) {
+      this.dibujarEn(this.timeline.length - 1, 1);
+      return true;
+    }
+    this.activo = true;
+    this.t0 = null;
+    this.tActual = 0;
+    this.idxActual = 0;
+    var total = this.timeline[this.timeline.length - 1].tiempoFin;
+    var ultimo = null;
+    function cuadro(t) {
+      if (miToken !== self.miToken || !self.activo) { return; }
+      if (ultimo === null) { ultimo = t; }
+      if (!self.pausado) { self.tActual += (t - ultimo) * self.velocidad; }
+      ultimo = t;
+      var tt = Math.min(self.tActual, total);
+      var idx = self.timeline.length - 1;
+      for (var i = 0; i < self.timeline.length; i++) {
+        if (tt < self.timeline[i].tiempoFin) { idx = i; break; }
+      }
+      self.idxActual = idx;
+      var it = self.timeline[idx];
+      self.dibujarEn(idx, (tt - it.tiempoInicio) / (it.tiempoFin - it.tiempoInicio));
+      if (self.tActual >= total) { self.activo = false; return; }
+      requestAnimationFrame(cuadro);
+    }
+    requestAnimationFrame(cuadro);
+    registrar("animacion", "Animación de " + this.timeline.length + " tramas sobre la topología.");
+    return true;
+  };
+
+  AnimadorPaquetes.prototype.pausar = function () { this.pausado = true; };
+  AnimadorPaquetes.prototype.play = function () { this.pausado = false; };
+  AnimadorPaquetes.prototype.establecerVelocidad = function (factor) { this.velocidad = factor || 1; };
+
+  AnimadorPaquetes.prototype.irAPaso = function (idx) {
+    if (idx < 0 || idx >= this.timeline.length) { return; }
+    this.idxActual = idx;
+    this.tActual = this.timeline[idx].tiempoInicio;
+    this.dibujarEn(idx, 0);
+  };
+
+  AnimadorPaquetes.prototype.detener = function () {
+    this.miToken++;
+    this.activo = false;
+    this.pausado = false;
+    if (this.marca && this.marca.parentNode) { this.marca.parentNode.removeChild(this.marca); }
+    this.marca = null;
+    this.timeline = [];
+  };
+
+  var animador = new AnimadorPaquetes();
 
   /* ---------------- Registro, persistencia, importar/exportar ---------------- */
 
