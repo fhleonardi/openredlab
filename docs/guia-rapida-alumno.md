@@ -96,6 +96,20 @@ Después de un ping, el botón **Cómo viaja el paquete** cambia los pasos por l
 
 Los switches y puntos de acceso aparecen como «pasa por… sin cambiar la trama»: trabajan con la MAC y no la modifican. **Ver los encabezados** muestra cada trama con lo que lleva adentro: la trama (MAC), el paquete IP (IP y TTL) y el mensaje ICMP del ping, con lo que cambió resaltado. Al pasar el mouse por una línea se resalta su cable en el lienzo.
 
+### El paquete en movimiento
+
+Cuando hacés un ping, un punto recorre la topología siguiendo esas mismas tramas: **azul** es el pedido (el ping que sale) y **verde** es la respuesta que vuelve. Pasa por los switches y los routers del camino, igual que en la lista.
+
+Debajo del recorrido tenés los controles:
+
+- **Pausar / Reanudar** detiene el punto donde está, para mirar con calma.
+- **Repetir** lo vuelve a largar desde el principio.
+- **×0.5, ×1, ×2, ×4** cambia la velocidad.
+
+En *Cómo viaja el paquete*, hacé clic en una línea (o Enter con el teclado) y el punto salta a ese tramo; la línea que se está mostrando queda resaltada.
+
+Si el ping **no llega**, el punto avanza hasta donde pudo, se pone **rojo** y marca con una ✗ el último equipo que alcanzó: ahí está el problema. Si tu sistema tiene activada la opción de reducir movimiento, no se anima: se muestra el último punto y no aparecen los botones.
+
 ## Internet y NAT
 
 La nube **Internet** representa todas las direcciones públicas. Una IP privada (10.x, 172.16–31.x, 192.168.x) no viaja por internet: para salir y para que te encuentren desde afuera hace falta NAT.
