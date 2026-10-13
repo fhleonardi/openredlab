@@ -12,7 +12,9 @@ Los archivos de red llevan el número de su formato (`version`) y la versión de
 
 ## 1.5.0 — 2026-10-13
 
-- **El ping se ve viajar por la topología.** Al hacer un ping exitoso, un paquete recorre el lienzo trama por trama, pasando por los equipos intermedios: azul para el pedido (request) y verde para la respuesta (reply). Si el ping falla, se mantiene la animación de siempre con la cruz en el punto donde se cortó.
+- **El ping se ve viajar por la topología.** Al hacer un ping, un paquete recorre el lienzo trama por trama, pasando por los equipos intermedios: azul para el pedido (request) y verde para la respuesta (reply). Si el ping se corta, el paquete llega hasta donde pudo, queda en rojo y marca con una cruz el equipo donde paró.
+
+- **Se puede pausar, repetir y cambiar la velocidad.** Debajo del recorrido hay botones para pausar o reanudar, repetir la animación y elegir la velocidad (×0.5, ×1, ×2, ×4). En «Cómo viaja el paquete», un clic en una trama salta a ese tramo de la animación, y la trama que se está mostrando queda resaltada.
 
 ## 1.4.0 — 2026-10-05
 
