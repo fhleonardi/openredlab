@@ -10,6 +10,11 @@ Los números siguen la forma MAYOR.MENOR.PARCHE:
 
 Los archivos de red llevan el número de su formato (`version`) y la versión del simulador que los exportó (`generador`). Un archivo de un formato anterior se actualiza solo al abrirlo.
 
+## 1.7.0 — 2026-10-13
+
+- **Fallas en vivo: cortar un cable o apagar un equipo con un clic.** En la paleta, debajo de «Conectar con un cable», hay una sección **Fallas en vivo** con **Cortar un cable**, **Apagar un equipo** y **Restaurar todo**. Con una herramienta activa, un clic en un cable (o en un equipo) lo cae y otro clic lo restaura; Esc sale. El cable cortado se ve rojo y punteado con ⚡ y el equipo apagado, atenuado con ⚡. Después se repite el ping, la consulta DNS, la conexión o el DORA para ver el efecto, con el diagnóstico de siempre («el cable… está marcado como caído»).
+- **No cambian el diseño.** Una falla en vivo vale sólo para lo que se simula: no entra en Deshacer, ni en la sesión guardada, ni en lo que se exporta, y «Verificar diseño» sigue juzgando el diseño. Si algo ya está caído o apagado en el diseño, la herramienta avisa que ya lo está. Al abrir otra red se limpian. Cada falla y cada recuperación se anota en la consola con la hora, y la paleta dice qué está fallado ahora.
+
 ## 1.6.0 — 2026-10-13
 
 - **Consultar DNS y Conectar también se ven viajar.** Cada consulta y cada conexión recorre el lienzo trama por trama, igual que el ping, con los mismos botones (pausar, repetir y velocidad) y con el salto al hacer clic en una trama. En DNS se ve la consulta recursiva y las tres consultas iterativas (raíz, TLD y autoritativo) con sus respuestas. En TCP cada fase tiene su color: apertura (SYN, SYN-ACK y ACK), datos (pedido y respuesta) y cierre (FIN), y un rechazo (RST, o un «no existe» de DNS) sale en rojo con una ✗ en el equipo que lo dio. Debajo de los botones, una leyenda dice qué significa cada color.

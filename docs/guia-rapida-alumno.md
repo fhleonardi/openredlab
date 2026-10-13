@@ -177,6 +177,18 @@ El alcance es limitado: si alejás un cliente de su punto de acceso, el ping fal
 
 En las propiedades de un cable podés cargar su **latencia** (lo que tarda en cruzarlo), su **jitter** (cuánto varía ese tiempo) y su **pérdida** (el porcentaje de paquetes que no llegan). El ping manda 4 paquetes por defecto (podés elegir 1, 10 o 50) y, como el ping real, muestra cada respuesta o «Tiempo de espera agotado», los perdidos y el tiempo mínimo, medio y máximo. La pérdida se aplica cada vez que el paquete cruza el cable: a la ida y a la vuelta. Si no vuelve ninguno, el diagnóstico es **D32**.
 
+### ¿Qué pasa si se cae?
+
+En la paleta, debajo de *Conectar con un cable*, está **Fallas en vivo**:
+
+- **⚡ Cortar un cable:** hacé clic en un cable y se corta (rojo, punteado y con ⚡). Otro clic lo restaura.
+- **⚡ Apagar un equipo:** hacé clic en un equipo y se apaga (atenuado, con ⚡). Otro clic lo enciende.
+- **Restaurar todo** deja todo como estaba. **Esc** sale de la herramienta.
+
+Después de cortar algo, **repetí el ping** (o la consulta DNS, o la conexión): el recorrido se detiene donde corresponde y el diagnóstico te dice qué pasó. Probá cortar un cable que no sea el del camino y fijate que el ping sigue funcionando: así se ve qué enlaces son imprescindibles y cuáles no.
+
+Estas fallas **no cambian tu diseño**: no se guardan, no se exportan y no cuentan al verificar tu trabajo. Si abrís otra red, desaparecen. Si un cable ya está caído en el diseño, el simulador te avisa y no hace nada.
+
 ## Verificar tu trabajo
 
 En la pestaña Simulación, el botón de verificar cambia de nombre según la red abierta:

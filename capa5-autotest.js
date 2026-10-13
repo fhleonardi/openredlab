@@ -1701,7 +1701,71 @@ var Autotest = (function () {
     }
   }
 
-  var CRITERIOS_TECNICOS = [crit01, crit09, crit10, crit11, crit13, crit14, crit15, crit16, crit24, crit25, crit26, crit27, crit28, crit30, crit32];
+  // Fallas en vivo: una capa transitoria sobre el diseño que la simulación sí ve.
+  function crit33() {
+    var nombre = "Fallas en vivo: cortar un cable o apagar un equipo corta el ping, restaurar lo repara y el diseño no cambia";
+    var previo = modoActualDom();
+    try {
+      var prob = [];
+      UI.setModo("topologia");
+      UI.cargarTopologia(clonar(ejemploPorId("complejo").topologia));
+      document.getElementById("sim-tab-inf-simulacion").click();
+      function pingPorLaInterfaz() {
+        var inf = document.querySelector(".siminf");
+        var origen = null, destino = null;
+        inf.querySelectorAll("label").forEach(function (l) {
+          if (l.textContent === "Origen") { origen = document.getElementById(l.htmlFor); }
+          if (l.textContent === "Destino") { destino = document.getElementById(l.htmlFor); }
+        });
+        var bPing = inf.querySelector(".simctrl button.primario");
+        if (!origen || !destino || !bPing) { return null; }
+        origen.value = "pc-admin";
+        origen.dispatchEvent(new Event("change", { bubbles: true }));
+        destino.value = "10.45.7.122";
+        bPing.click();
+        return /Volvieron 4 de 4/.test(document.querySelector(".siminf").textContent);
+      }
+      function cable(id) {
+        var topo = UI.topologiaActual(), r = null;
+        topo.enlaces.forEach(function (e) { if (e.id === id) { r = e; } });
+        return r;
+      }
+      function ariaDelCable() {
+        var g = document.querySelectorAll("g.enlace"), r = "";
+        for (var i = 0; i < g.length; i++) {
+          var t = g[i].getAttribute("aria-label") || "";
+          if (/R1 y R2/.test(t)) { r = t; }
+        }
+        return r;
+      }
+      if (pingPorLaInterfaz() !== true) { prob.push("el ping de partida no responde"); }
+      if (UI.alternarFalla("enlace", "l-r1-r2") !== true) { prob.push("no se pudo cortar el cable"); }
+      if (pingPorLaInterfaz() !== false) { prob.push("con el cable cortado el ping responde igual"); }
+      if (cable("l-r1-r2").estado !== "up") { prob.push("el corte entró al diseño"); }
+      if (UI.fallasEnVivo().enlaces.join() !== "l-r1-r2") { prob.push("no registra el corte"); }
+      if (ariaDelCable().indexOf("cortado en vivo") < 0) { prob.push("el cable no dice «cortado en vivo»"); }
+      UI.alternarFalla("enlace", "l-r1-r2");
+      if (pingPorLaInterfaz() !== true) { prob.push("al restaurar el cable el ping no vuelve"); }
+      if (UI.alternarFalla("equipo", "r2") !== true) { prob.push("no se pudo apagar R2"); }
+      if (pingPorLaInterfaz() !== false) { prob.push("con R2 apagado el ping responde igual"); }
+      var exportada = JSON.parse(Escenarios.exportar(UI.topologiaActual()));
+      var r2 = null;
+      exportada.dispositivos.forEach(function (d) { if (d.id === "r2") { r2 = d; } });
+      if (!r2 || r2.encendido !== true) { prob.push("la falla llegó a lo exportado"); }
+      if (UI.alternarFalla("equipo", "no-existe") !== false) { prob.push("una falla sobre un equipo inexistente no se rechaza"); }
+      UI.cargarTopologia(clonar(ejemploPorId("complejo").topologia));
+      var quedan = UI.fallasEnVivo();
+      if (quedan.enlaces.length || quedan.equipos.length) { prob.push("cargar otra red no limpia las fallas"); }
+      if (prob.length === 0) { return fila(33, nombre, true, "El corte del cable R1–R2 y el apagado de R2 cortan el ping y se restauran; el diseño y lo exportado no cambian; cargar una red limpia las fallas."); }
+      return fila(33, nombre, false, "Falla: " + prob.join("; ") + ".");
+    } catch (e) {
+      return fila(33, nombre, false, "Excepción: " + e.message);
+    } finally {
+      try { UI.setModo(previo); } catch (e2) { /* se sigue igual */ }
+    }
+  }
+
+  var CRITERIOS_TECNICOS = [crit01, crit09, crit10, crit11, crit13, crit14, crit15, crit16, crit24, crit25, crit26, crit27, crit28, crit30, crit32, crit33];
 
   function correr(opciones) {
     var tecnico = !!(opciones && opciones.tecnico);
