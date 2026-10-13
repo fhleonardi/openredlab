@@ -13,6 +13,8 @@
  *   binario en dos colores y la línea de corte en vivo.
  * - `animarPing` y `animarDhcp` animan sobre la topología real, con
  *   velocidad configurable y cancelación, sin bloquear (`requestAnimationFrame`).
+ *   `AnimadorPaquetes` anima el ping trama por trama a partir de `tramas` del
+ *   Motor y, si no puede, `animarPing` queda como respaldo.
  */
 
 var UI = (function () {
@@ -4983,6 +4985,7 @@ var UI = (function () {
   }
 
   function limpiarAnim() {
+    if (animador) { animador.detener(); }
     while (S.capaAnim.firstChild) { S.capaAnim.removeChild(S.capaAnim.firstChild); }
   }
 
@@ -5264,10 +5267,11 @@ var UI = (function () {
     this.detener();
     var miToken = ++this.miToken;
     this.tramas = tramas || [];
-    this.parsear(this.tramas);
-    if (!this.timeline.length) { return false; }
     S.animToken++;
     limpiarAnim();
+    miToken = ++this.miToken;
+    this.parsear(this.tramas);
+    if (!this.timeline.length) { return false; }
     if (movimientoReducido()) {
       this.dibujarEn(this.timeline.length - 1, 1);
       return true;
@@ -5280,18 +5284,25 @@ var UI = (function () {
     var ultimo = null;
     function cuadro(t) {
       if (miToken !== self.miToken || !self.activo) { return; }
-      if (ultimo === null) { ultimo = t; }
-      if (!self.pausado) { self.tActual += (t - ultimo) * self.velocidad; }
-      ultimo = t;
-      var tt = Math.min(self.tActual, total);
-      var idx = self.timeline.length - 1;
-      for (var i = 0; i < self.timeline.length; i++) {
-        if (tt < self.timeline[i].tiempoFin) { idx = i; break; }
+      try {
+        if (ultimo === null) { ultimo = t; }
+        // Con la pestaña oculta rAF se frena: sin tope, al volver saltaría al final.
+        if (!self.pausado) { self.tActual += Math.min(t - ultimo, 100) * self.velocidad; }
+        ultimo = t;
+        var tt = Math.min(self.tActual, total);
+        var idx = self.timeline.length - 1;
+        for (var i = 0; i < self.timeline.length; i++) {
+          if (tt < self.timeline[i].tiempoFin) { idx = i; break; }
+        }
+        self.idxActual = idx;
+        var it = self.timeline[idx];
+        self.dibujarEn(idx, (tt - it.tiempoInicio) / (it.tiempoFin - it.tiempoInicio));
+        if (self.tActual >= total) { self.activo = false; return; }
+      } catch (e) {
+        self.detener();
+        registrar("animacion", "Error en animación: " + e.message);
+        return;
       }
-      self.idxActual = idx;
-      var it = self.timeline[idx];
-      self.dibujarEn(idx, (tt - it.tiempoInicio) / (it.tiempoFin - it.tiempoInicio));
-      if (self.tActual >= total) { self.activo = false; return; }
       requestAnimationFrame(cuadro);
     }
     requestAnimationFrame(cuadro);

@@ -10,6 +10,10 @@ Los números siguen la forma MAYOR.MENOR.PARCHE:
 
 Los archivos de red llevan el número de su formato (`version`) y la versión del simulador que los exportó (`generador`). Un archivo de un formato anterior se actualiza solo al abrirlo.
 
+## 1.5.0 — 2026-10-13
+
+- **El ping se ve viajar por la topología.** Al hacer un ping exitoso, un paquete recorre el lienzo trama por trama, pasando por los equipos intermedios: azul para el pedido (request) y verde para la respuesta (reply). Si el ping falla, se mantiene la animación de siempre con la cruz en el punto donde se cortó.
+
 ## 1.4.0 — 2026-10-05
 
 - **El router puede reenviar el DNS, como en una red hogareña.** En la configuración de un router hay una casilla «Reenviar consultas DNS a su servidor DNS». Con ella activada, las PC que usan la IP del router como DNS reciben la respuesta que el router consigue con su propio DNS, y el recorrido muestra el reenvío. Sin la casilla, el diagnóstico D29 sigue diciendo que la IP no es un servidor DNS, y su sugerencia menciona la opción.
