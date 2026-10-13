@@ -509,8 +509,12 @@ var UI = (function () {
     ".recorrido .pasos{flex:1;min-height:0;overflow:auto;padding:4px 10px;}",
     ".recorrido .trama{cursor:pointer;}",
     ".recorrido .trama.actual{background:rgba(245,158,11,.18);outline:1px solid #f59e0b;border-radius:4px;}",
-    ".recorrido .ctl-anim{display:inline-flex;align-items:center;gap:6px;font-style:normal;}",
-    ".recorrido .ctl-anim select,.recorrido .ctl-anim button{font-size:12px;padding:2px 6px;}",
+    ".ctl-anim{display:inline-flex;align-items:center;gap:6px;font-style:normal;flex-wrap:wrap;}",
+    ".ctl-anim select,.ctl-anim button{font-size:12px;padding:2px 6px;}",
+    ".ctl-anim .ley{display:inline-flex;align-items:center;gap:3px;font-size:12px;color:var(--sim-tenue);}",
+    ".ctl-anim .ley i{width:9px;height:9px;border-radius:50%;display:inline-block;}",
+    ".dora .paso[data-msg]{cursor:pointer;}",
+    ".dora .paso.actual{background:rgba(245,158,11,.18);outline:1px solid #f59e0b;border-radius:4px;}",
     ".recorrido .pie{display:flex;align-items:center;gap:8px;padding:4px 10px 6px;font-size:12px;color:var(--sim-tenue);font-style:italic;}",
     ".linpaso{font-size:13px;padding:2px 0;}",
     ".capa{display:inline-block;min-width:92px;color:var(--sim-tenue);border:1px solid var(--sim-borde);font-size:11px;border-radius:4px;padding:0 5px;margin-right:6px;text-align:center;vertical-align:1px;cursor:help;}",
@@ -3439,6 +3443,7 @@ var UI = (function () {
       registrar("DNS", "Consulta " + selTipoDns.value + " de " + selD.value.trim() + " desde " + nombreDe(selO.value) + ": " +
         (res.exito ? res.respuesta.registros.map(textoRegistroUI).join("; ") : (res.diagnostico ? res.diagnostico.codigo : "falló")));
       renderInferior();
+      animarTramas(res);
     }
 
     function hacerConexion() {
@@ -3464,6 +3469,7 @@ var UI = (function () {
       registrar("conexion", "Conexión " + prot.toUpperCase() + " de " + nombreDe(selO.value) + " a " + selD.value.trim() + ":" + puerto + ": " +
         (res.exito ? "establecida" : (res.diagnostico ? res.diagnostico.codigo : "falló")));
       renderInferior();
+      animarTramas(res);
     }
 
     function hacerPing() {
@@ -3918,24 +3924,29 @@ var UI = (function () {
     }
   }
 
-  function controlesAnimacion() {
+  // Pausa, repetir y velocidad; sirven al animador de paquetes y al del DORA.
+  // `ctl` expone pausado, velocidad, alternarPausa, repetir y establecerVelocidad.
+  function controlesAnimacion(ctl, clave, leyenda) {
     var caja = el("span", "ctl-anim", "");
-    var bPausa = boton(animador.pausado ? "\u25B6 Reanudar" : "\u23F8 Pausar");
-    bPausa.setAttribute("data-foco", "pausa");
-    bPausa.addEventListener("click", function () { animador.alternarPausa(); });
+    var bPausa = boton(ctl.pausado ? "\u25B6 Reanudar" : "\u23F8 Pausar");
+    bPausa.setAttribute("data-foco", clave);
+    bPausa.addEventListener("click", function () { ctl.alternarPausa(); });
     var bRep = boton("\u21BB Repetir");
-    bRep.setAttribute("data-foco", "repetir");
-    bRep.addEventListener("click", function () { animador.repetir(); });
+    bRep.setAttribute("data-foco", clave.replace("pausa", "repetir"));
+    bRep.addEventListener("click", function () { ctl.repetir(); });
     var sel = document.createElement("select");
     sel.setAttribute("aria-label", "Velocidad de la animación");
     [0.5, 1, 2, 4].forEach(function (f) {
       var o = document.createElement("option");
       o.value = String(f); o.textContent = "\u00D7" + f;
-      if (f === animador.velocidad) { o.selected = true; }
+      if (f === ctl.velocidad) { o.selected = true; }
       sel.appendChild(o);
     });
-    sel.addEventListener("change", function () { animador.establecerVelocidad(Number(sel.value)); });
+    sel.addEventListener("change", function () { ctl.establecerVelocidad(Number(sel.value)); });
     caja.appendChild(bPausa); caja.appendChild(bRep); caja.appendChild(sel);
+    (leyenda || []).forEach(function (k) {
+      caja.appendChild(el("span", "ley", "<i style='background:" + ROTULO_TRAMA[k][0] + "'></i>" + ROTULO_TRAMA[k][1]));
+    });
     return caja;
   }
 
@@ -3993,7 +4004,7 @@ var UI = (function () {
     if (!res.exito && fallo >= 0 && !S.verTodos && !enTramas) {
       pie.appendChild(el("span", "", "los pasos siguientes no se llegaron a verificar"));
     }
-    if (tramas.length && !movimientoReducido()) { pie.appendChild(controlesAnimacion()); }
+    if (tramas.length && !movimientoReducido()) { pie.appendChild(controlesAnimacion(animador, "pausa", leyendaTramas(tramas))); }
     if (tramas.length) {
       var bTramas = boton(enTramas ? "Ver los pasos" : "Cómo viaja el paquete (" + tramas.length + (tramas.length === 1 ? " trama)" : " tramas)"));
       bTramas.setAttribute("data-foco", "tramas");
@@ -4884,6 +4895,19 @@ var UI = (function () {
     var u = S.ultimoDhcp;
     if (u && u.equipo === selC.value && u.interfaz === selI.value) {
       out.innerHTML = htmlResultadoDhcp(u.res, u.equipo);
+      var filasDora = out.querySelectorAll(".dora .paso");
+      Array.prototype.forEach.call(filasDora, function (fila, k) {
+        fila.setAttribute("data-msg", String(k));
+        fila.setAttribute("role", "button");
+        fila.tabIndex = 0;
+        fila.title = "Clic para ver este mensaje en la animación";
+        fila.addEventListener("click", function () { irAMensajeDhcp(u.res, k); });
+        fila.addEventListener("keydown", function (ev) {
+          if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); irAMensajeDhcp(u.res, k); }
+        });
+      });
+      if (!movimientoReducido() && filasDora.length) { out.insertBefore(controlesDhcp(u.res), out.firstChild); }
+      marcarMensajeDhcp(dhcpAnim.res === u.res ? dhcpAnim.dibujado : -1);
     }
     b.addEventListener("click", function () {
       recordar();
@@ -5020,9 +5044,21 @@ var UI = (function () {
     return { x: d ? d.x : 0, y: d ? d.y : 0 };
   }
 
-  function limpiarAnim() {
-    if (animador) { animador.detener(); }
+  function vaciarCapaAnim() {
     while (S.capaAnim.firstChild) { S.capaAnim.removeChild(S.capaAnim.firstChild); }
+  }
+
+  function limpiarAnim() {
+    detenerDhcp();
+    if (animador) { animador.detener(); }
+    vaciarCapaAnim();
+  }
+
+  // DNS y Conectar: el mismo animador del ping, trama por trama. Si la operación falló, el
+  // paquete termina en rojo y la ✗ marca dónde se cortó o quién rechazó.
+  function animarTramas(res) {
+    try { animador.animar(res.tramas, res.exito ? null : { falla: true }); }
+    catch (e) { registrar("animacion", "Error en animación: " + e.message); }
   }
 
   function animarPing(resultado) {
@@ -5126,95 +5162,194 @@ var UI = (function () {
     return t + (m.difusion ? " (difusión)" : "");
   }
 
-  function animarDhcp(resultado) {
-    var miToken = ++S.animToken;
-    limpiarAnim();
+  // Animación del DORA: un mensaje por vez, con sus ondas de difusión. El estado vive acá, y no
+  // en el panel, porque el panel se rehace con cada renderTodo y sus controles tienen que
+  // encontrar la animación en curso.
+  var dhcpAnim = { token: 0, activo: false, pausado: false, velocidad: 1, res: null, msgs: [], i: 0, tMsg: 0, ondas: [], dibujado: -1, puntos: [] };
+
+  function avisarEstadoDhcp() {
+    if (!S.raiz) { return; }
+    var b = S.raiz.querySelector('[data-foco="pausa-dhcp"]');
+    if (b) { b.textContent = dhcpAnim.pausado ? "\u25B6 Reanudar" : "\u23F8 Pausar"; }
+  }
+
+  function marcarMensajeDhcp(k) {
+    if (!S.raiz) { return; }
+    var filas = S.raiz.querySelectorAll(".dora .paso");
+    for (var j = 0; j < filas.length; j++) {
+      filas[j].classList.toggle("actual", k >= 0 && filas[j].getAttribute("data-msg") === String(k));
+    }
+  }
+
+  function quitarPuntosDhcp() {
+    dhcpAnim.puntos.forEach(function (c) { if (c.parentNode) { c.parentNode.removeChild(c); } });
+    dhcpAnim.puntos = [];
+  }
+
+  function detenerDhcp() {
+    if (!dhcpAnim) { return; }
+    dhcpAnim.token++;
+    dhcpAnim.activo = false;
+    dhcpAnim.pausado = false;
+    dhcpAnim.puntos = [];
+    avisarEstadoDhcp();
+  }
+
+  function colorDhcp(m) {
+    if (m.tipo === "offer" && dhcpAnim.res.exito && dhcpAnim.res.servidor !== m.origen) { return "#6b7280"; }
+    // Cliente en azul, servidor en violeta: el verde ya es el de los cables en up.
+    return (m.tipo === "discover" || m.tipo === "request") ? "#0b5fa5" : "#7c3aed";
+  }
+
+  function lineaAnim(p, q, color, ancho, punteada) {
+    var l = document.createElementNS("http://www.w3.org/2000/svg", "line");
+    l.setAttribute("x1", p.x); l.setAttribute("y1", p.y);
+    l.setAttribute("x2", q.x); l.setAttribute("y2", q.y);
+    l.setAttribute("stroke", color); l.setAttribute("stroke-width", ancho);
+    l.setAttribute("stroke-linecap", "round");
+    if (punteada) { l.setAttribute("stroke-dasharray", "6 5"); l.setAttribute("opacity", "0.7"); }
+    S.capaAnim.appendChild(l);
+  }
+
+  // Dibujo fijo de un mensaje: la inundación punteada, el camino útil en trazo firme y el
+  // nombre del mensaje sobre quien lo emite. Deja en dhcpAnim.ondas lo que se va a animar.
+  function dibujarMensajeDhcp(k) {
+    vaciarCapaAnim();
+    dhcpAnim.puntos = [];
+    var m = dhcpAnim.msgs[k];
+    var color = colorDhcp(m);
     var svgNS = "http://www.w3.org/2000/svg";
-    var msgs = (resultado && resultado.mensajes) || [];
-    if (!msgs.length) { return; }
-    function linea(p, q, color, ancho, punteada) {
-      var l = document.createElementNS(svgNS, "line");
-      l.setAttribute("x1", p.x); l.setAttribute("y1", p.y);
-      l.setAttribute("x2", q.x); l.setAttribute("y2", q.y);
-      l.setAttribute("stroke", color); l.setAttribute("stroke-width", ancho);
-      l.setAttribute("stroke-linecap", "round");
-      if (punteada) { l.setAttribute("stroke-dasharray", "6 5"); l.setAttribute("opacity", "0.7"); }
-      S.capaAnim.appendChild(l);
+    var ondas = ondasDifusion(m.origen, (m.inundados && m.inundados.length) ? m.inundados : (m.enlaces || []));
+    ondas.forEach(function (onda) { onda.forEach(function (t) { lineaAnim(t.de, t.a, color, 2, true); }); });
+    var actual = m.origen;
+    (m.enlaces || []).forEach(function (id) {
+      var e = buscarEnlace(id);
+      var t = e && tramoEnlace(e, actual);
+      if (!t) { return; }
+      lineaAnim(t.de, t.a, color, 4, false);
+      actual = e.a.dispositivo === actual ? e.b.dispositivo : e.a.dispositivo;
+    });
+    var o = buscarDisp(m.origen);
+    if (o) {
+      var tx = document.createElementNS(svgNS, "text");
+      tx.setAttribute("x", o.x + 14); tx.setAttribute("y", o.y - 38);
+      tx.setAttribute("font-size", "14"); tx.setAttribute("font-weight", "700");
+      tx.setAttribute("fill", color); tx.setAttribute("stroke", "#fff");
+      tx.setAttribute("stroke-width", "3"); tx.setAttribute("paint-order", "stroke");
+      tx.textContent = etiquetaDhcp(m);
+      S.capaAnim.appendChild(tx);
     }
-    // Dibujo fijo de un mensaje: la inundación punteada, el camino útil en
-    // trazo firme y el nombre del mensaje sobre quien lo emite.
-    function dibujarFijo(m, color) {
-      var ondas = ondasDifusion(m.origen, (m.inundados && m.inundados.length) ? m.inundados : (m.enlaces || []));
-      ondas.forEach(function (onda) { onda.forEach(function (t) { linea(t.de, t.a, color, 2, true); }); });
-      var actual = m.origen;
-      (m.enlaces || []).forEach(function (id) {
-        var e = buscarEnlace(id);
-        var t = e && tramoEnlace(e, actual);
-        if (!t) { return; }
-        linea(t.de, t.a, color, 4, false);
-        actual = e.a.dispositivo === actual ? e.b.dispositivo : e.a.dispositivo;
-      });
-      var o = buscarDisp(m.origen);
-      if (o) {
-        var tx = document.createElementNS(svgNS, "text");
-        tx.setAttribute("x", o.x + 14); tx.setAttribute("y", o.y - 38);
-        tx.setAttribute("font-size", "14"); tx.setAttribute("font-weight", "700");
-        tx.setAttribute("fill", color); tx.setAttribute("stroke", "#fff");
-        tx.setAttribute("stroke-width", "3"); tx.setAttribute("paint-order", "stroke");
-        tx.textContent = etiquetaDhcp(m);
-        S.capaAnim.appendChild(tx);
-      }
-      return ondas;
-    }
-    function colorDe(m) {
-      if (m.tipo === "offer" && resultado.exito && resultado.servidor !== m.origen) { return "#6b7280"; }
-      // Cliente en azul, servidor en violeta: el verde ya es el de los cables en up.
-      return (m.tipo === "discover" || m.tipo === "request") ? "#0b5fa5" : "#7c3aed";
-    }
-    if (movimientoReducido()) {
-      // Sin animación: queda dibujado el último mensaje con su recorrido.
-      dibujarFijo(msgs[msgs.length - 1], colorDe(msgs[msgs.length - 1]));
-      return;
-    }
-    var i = 0;
-    function siguiente() {
-      if (miToken !== S.animToken) { return; }
-      if (i >= msgs.length) { return; }
-      limpiarAnim();
-      var m = msgs[i];
-      var color = colorDe(m);
-      var ondas = dibujarFijo(m, color);
-      registrar("dhcp", "DORA sobre el lienzo: " + etiquetaDhcp(m) + ", " + nombreDe(m.origen) + " → " +
-        (m.destino === "broadcast" ? "toda la red" : nombreDe(m.destino)) + ".");
-      var puntos = [];
-      var dur = msVelocidad();
-      var onda = 0, t0 = null;
-      function cuadro(t) {
-        if (miToken !== S.animToken) { return; }
-        if (t0 === null) { t0 = t; }
-        var avance = (t - t0) / dur;
-        if (avance >= 1) { onda += 1; t0 = t; avance = 0; }
-        puntos.forEach(function (p) { S.capaAnim.removeChild(p); });
-        puntos = [];
-        if (onda >= ondas.length) {
-          i += 1;
-          setTimeout(siguiente, dur);
-          return;
+    dhcpAnim.ondas = ondas;
+    dhcpAnim.dibujado = k;
+    marcarMensajeDhcp(k);
+    registrar("dhcp", "DORA sobre el lienzo: " + etiquetaDhcp(m) + ", " + nombreDe(m.origen) + " \u2192 " +
+      (m.destino === "broadcast" ? "toda la red" : nombreDe(m.destino)) + ".");
+  }
+
+  function arrancarDhcp() {
+    var miToken = ++dhcpAnim.token;
+    dhcpAnim.activo = true;
+    var ultimo = null;
+    var svgNS = "http://www.w3.org/2000/svg";
+    function cuadro(t) {
+      if (miToken !== dhcpAnim.token || !dhcpAnim.activo) { return; }
+      try {
+        if (ultimo === null) { ultimo = t; }
+        // Con la pestaña oculta rAF se frena: sin tope, al volver saltaría varios mensajes.
+        if (!dhcpAnim.pausado) { dhcpAnim.tMsg += Math.min(t - ultimo, 100) * dhcpAnim.velocidad; }
+        ultimo = t;
+        var dur = msVelocidad();
+        var total = (dhcpAnim.ondas.length + 1) * dur;
+        if (dhcpAnim.tMsg >= total) {
+          if (dhcpAnim.i + 1 >= dhcpAnim.msgs.length) {
+            quitarPuntosDhcp();
+            dhcpAnim.activo = false;
+            return;
+          }
+          dhcpAnim.i += 1;
+          dhcpAnim.tMsg = 0;
+          dibujarMensajeDhcp(dhcpAnim.i);
         }
-        ondas[onda].forEach(function (tr) {
-          var c = document.createElementNS(svgNS, "circle");
-          c.setAttribute("r", 7); c.setAttribute("fill", color);
-          c.setAttribute("stroke", "#fff"); c.setAttribute("stroke-width", 2);
-          c.setAttribute("cx", tr.de.x + (tr.a.x - tr.de.x) * avance);
-          c.setAttribute("cy", tr.de.y + (tr.a.y - tr.de.y) * avance);
-          S.capaAnim.appendChild(c);
-          puntos.push(c);
-        });
-        requestAnimationFrame(cuadro);
+        quitarPuntosDhcp();
+        var onda = Math.floor(dhcpAnim.tMsg / dur);
+        if (onda < dhcpAnim.ondas.length) {
+          var avance = (dhcpAnim.tMsg - onda * dur) / dur;
+          var color = colorDhcp(dhcpAnim.msgs[dhcpAnim.i]);
+          dhcpAnim.ondas[onda].forEach(function (tr) {
+            var c = document.createElementNS(svgNS, "circle");
+            c.setAttribute("r", 7); c.setAttribute("fill", color);
+            c.setAttribute("stroke", "#fff"); c.setAttribute("stroke-width", 2);
+            c.setAttribute("cx", tr.de.x + (tr.a.x - tr.de.x) * avance);
+            c.setAttribute("cy", tr.de.y + (tr.a.y - tr.de.y) * avance);
+            S.capaAnim.appendChild(c);
+            dhcpAnim.puntos.push(c);
+          });
+        }
+      } catch (e) {
+        detenerDhcp();
+        registrar("animacion", "Error en animación: " + e.message);
+        return;
       }
       requestAnimationFrame(cuadro);
     }
-    siguiente();
+    requestAnimationFrame(cuadro);
+  }
+
+  function animarDhcp(resultado) {
+    detenerDhcp();
+    animador.detener();
+    S.animToken++;
+    vaciarCapaAnim();
+    var msgs = (resultado && resultado.mensajes) || [];
+    dhcpAnim.res = resultado;
+    dhcpAnim.msgs = msgs;
+    dhcpAnim.i = 0;
+    dhcpAnim.tMsg = 0;
+    dhcpAnim.ondas = [];
+    dhcpAnim.dibujado = -1;
+    marcarMensajeDhcp(-1);
+    if (!msgs.length) { return; }
+    if (movimientoReducido()) {
+      // Sin animación: queda dibujado el último mensaje con su recorrido.
+      dhcpAnim.i = msgs.length - 1;
+      dibujarMensajeDhcp(dhcpAnim.i);
+      return;
+    }
+    dibujarMensajeDhcp(0);
+    arrancarDhcp();
+  }
+
+  // Clic en un mensaje de la lista: la animación sigue desde ese mensaje.
+  function irAMensajeDhcp(res, k) {
+    var msgs = (res && res.mensajes) || [];
+    if (k < 0 || k >= msgs.length) { return; }
+    animador.detener();
+    S.animToken++;
+    dhcpAnim.res = res;
+    dhcpAnim.msgs = msgs;
+    dhcpAnim.i = k;
+    dhcpAnim.tMsg = 0;
+    dibujarMensajeDhcp(k);
+    // Con movimiento reducido sólo se muestra el cuadro de ese mensaje.
+    if (!movimientoReducido()) {
+      dhcpAnim.pausado = false;
+      if (!dhcpAnim.activo) { arrancarDhcp(); }
+      avisarEstadoDhcp();
+    }
+  }
+
+  function controlesDhcp(res) {
+    var ctl = {
+      get pausado() { return dhcpAnim.pausado; },
+      get velocidad() { return dhcpAnim.velocidad; },
+      alternarPausa: function () {
+        if (dhcpAnim.msgs.length) { dhcpAnim.pausado = !dhcpAnim.pausado; }
+        avisarEstadoDhcp();
+      },
+      repetir: function () { animarDhcp(res); },
+      establecerVelocidad: function (f) { dhcpAnim.velocidad = f > 0 ? f : 1; }
+    };
+    return controlesAnimacion(ctl, "pausa-dhcp", []);
   }
 
   function solicitarDhcp(idDisp, idIf) {
@@ -5224,9 +5359,37 @@ var UI = (function () {
 
   /* ----------- AnimadorPaquetes: paquetes que viajan sobre la topología ---------- */
 
-  // Colores de las tramas: el pedido va en azul y la respuesta en verde.
-  function colorDeTrama(t) {
-    return /reply|respuesta/i.test(String(t.mensaje || "")) ? "#0ca30c" : "#3987e5";
+  // Qué representa cada trama y con qué color se anima: pedido y respuesta según el sentido;
+  // en TCP, además, la apertura (SYN), el cierre (FIN) y el rechazo (RST o un «no existe»).
+  var ROTULO_TRAMA = {
+    pedido: ["#3987e5", "pedido"],
+    respuesta: ["#0ca30c", "respuesta"],
+    apertura: ["#7c5cff", "apertura"],
+    cierre: ["#d97706", "cierre"],
+    rechazo: ["#b42318", "rechazo"]
+  };
+
+  function clasificarTrama(t, ctx) {
+    var m = String(t.mensaje || "");
+    if (/\[[^\]]*RST/.test(m) || /no existe/i.test(m)) { return "rechazo"; }
+    if (/^TCP/.test(m)) {
+      var f = /\[([^\]]+)\]/.exec(m);
+      f = f ? f[1] : "";
+      if (/FIN/.test(f)) { ctx.fase = "cierre"; }
+      else if (/PSH/.test(f)) { ctx.fase = "datos"; }
+      else if (/SYN/.test(f)) { ctx.fase = "apertura"; }
+      if (ctx.fase === "cierre" || ctx.fase === "apertura") { return ctx.fase; }
+    }
+    return t.sentido === "vuelta" ? "respuesta" : "pedido";
+  }
+
+  function leyendaTramas(tramas) {
+    var ctx = {}, vistos = {}, orden = [];
+    (tramas || []).forEach(function (t) {
+      var k = clasificarTrama(t, ctx);
+      if (!vistos[k]) { vistos[k] = true; orden.push(k); }
+    });
+    return orden;
   }
 
   function AnimadorPaquetes() {
@@ -5251,9 +5414,11 @@ var UI = (function () {
     var self = this;
     var seg = msVelocidad();
     var t = 0;
+    var ctx = {};
     this.timeline = [];
     (tramas || []).forEach(function (tr, idx) {
       if (!tr || !tr.de || !tr.a) { return; }
+      var clave = clasificarTrama(tr, ctx);
       var ids = [tr.de.dispositivo].concat((tr.atraviesa || []).map(function (x) {
         return x && typeof x === "object" ? x.dispositivo : x;
       })).concat([tr.a.dispositivo]);
@@ -5264,7 +5429,7 @@ var UI = (function () {
       });
       if (puntos.length < 2) { return; }
       var dur = seg * (puntos.length - 1);
-      self.timeline.push({ idx: idx, color: colorDeTrama(tr), puntos: puntos, tiempoInicio: t, tiempoFin: t + dur });
+      self.timeline.push({ idx: idx, color: ROTULO_TRAMA[clave][0], negativa: clave === "rechazo", puntos: puntos, tiempoInicio: t, tiempoFin: t + dur });
       t += dur;
     });
   };
@@ -5362,7 +5527,7 @@ var UI = (function () {
   AnimadorPaquetes.prototype.marcarFalla = function () {
     var ult = this.timeline[this.timeline.length - 1];
     if (!this.falla || !S.capaAnim || !ult) { return; }
-    var d = ult.puntos[ult.puntos.length - 1];
+    var d = ult.negativa ? ult.puntos[0] : ult.puntos[ult.puntos.length - 1];
     var svgNS = "http://www.w3.org/2000/svg";
     if (this.marca) { this.marca.setAttribute("fill", "#b42318"); }
     this.quitarCruz();
