@@ -1761,6 +1761,7 @@ var Autotest = (function () {
     } catch (e) {
       return fila(33, nombre, false, "Excepción: " + e.message);
     } finally {
+      try { UI.cargarTopologia(clonar(ejemploPorId("complejo").topologia)); } catch (e1) { /* se sigue igual */ }
       try { UI.setModo(previo); } catch (e2) { /* se sigue igual */ }
     }
   }

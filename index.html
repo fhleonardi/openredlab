@@ -11266,7 +11266,7 @@ var UI = (function () {
     }
     S.tooltip.innerHTML = "<b>" + escapar(e.id) + "</b> " + escapar(e.tipo) + "<br>" +
       "velocidad " + escapar(String(e.velocidadMbps)) + " Mbps, retardo " +
-      escapar(String(e.retardoMs)) + " ms<br>estado " + escapar(e.estado) + d;
+      escapar(String(e.retardoMs)) + " ms<br>estado " + (enlaceEnFalla(e) ? "cortado en vivo" : escapar(e.estado)) + d;
     S.tooltip.style.display = "block";
     posicionarTip(ev);
   }
@@ -11327,7 +11327,7 @@ var UI = (function () {
     ev.stopPropagation();
     var inicio = { x: ev.clientX, y: ev.clientY, dx: d.x, dy: d.y };
     var movio = false;
-    if (S.colocando || S.herramientaCable) { return; }
+    if (S.colocando || S.herramientaCable || S.herramientaFalla === "equipo") { return; }
     function mover(e2) {
       var rect = S.svg.getBoundingClientRect();
       var k = S.vista.k;
@@ -11383,6 +11383,13 @@ var UI = (function () {
     });
     svg.addEventListener("click", function () {
       if (S.moviendoExtremo) { cancelarMovimiento(); return; }
+      if (S.herramientaFalla) {
+        S.herramientaFalla = null;
+        registrar("falla", "Herramienta de falla en vivo desactivada al tocar el fondo.");
+        avisar("Saliste de la herramienta de fallas. Las fallas aplicadas siguen; «Restaurar todo» las quita.");
+        renderLienzo();
+        return;
+      }
       if (!S.herramientaCable && !S.colocando) { seleccionar(null); }
     });
     // Alternativa de teclado al paneo y al zoom con el mouse.
@@ -11520,6 +11527,20 @@ var UI = (function () {
     }
   }
 
+  // Aviso para el panel de propiedades: lo que dice el diseño y lo que simula la falla en vivo no
+  // coinciden, y el diseño no se toca desde ahí.
+  function avisoFallaEnVivo(tipo, id) {
+    var mapa = tipo === "enlace" ? S.fallasVivas.enlaces : S.fallasVivas.equipos;
+    if (!mapa[id]) { return null; }
+    var caja = el("div", "advertencia",
+      "\u26A1 " + (tipo === "enlace" ? "Cortado" : "Apagado") + " en vivo: la simulación lo trata como " +
+      (tipo === "enlace" ? "caído" : "apagado") + ", aunque el diseño diga otra cosa. ");
+    var b = boton("Restaurar");
+    b.addEventListener("click", function () { alternarFalla(tipo, id); renderPropiedades(); });
+    caja.appendChild(b);
+    return caja;
+  }
+
   function actualizarHerramientasFalla() {
     if (S.botonCortar) {
       S.botonCortar.classList.toggle("activo", S.herramientaFalla === "enlace");
@@ -11560,8 +11581,10 @@ var UI = (function () {
     var texto, esFalla;
     if (mapa[id]) {
       delete mapa[id];
-      esFalla = false;
-      texto = "\u26A1 " + (esEnlace ? mayus(quien) + " restaurado" : quien + " encendido") + " (" + hora + ")";
+      var sigueCaido = esEnlace ? elem.estado !== "up" : !elem.encendido;
+      esFalla = sigueCaido;
+      texto = "\u26A1 " + (esEnlace ? mayus(quien) + " restaurado" : quien + " encendido") + " (" + hora + ")" +
+        (sigueCaido ? ", pero sigue " + (esEnlace ? "caído" : "apagado") + " en el diseño" : "");
     } else {
       if (esEnlace ? elem.estado !== "up" : !elem.encendido) {
         avisar((esEnlace ? mayus(quien) + " ya está caído" : quien + " ya está apagado") + " en el diseño: no hace falta cortarlo.");
@@ -12047,6 +12070,8 @@ var UI = (function () {
       if (!e) { S.enlaceSel = null; }
       else {
         c.appendChild(el("h2", "", escapar(mayus(cableTexto(e)))));
+        var avisoCable = avisoFallaEnVivo("enlace", e.id);
+        if (avisoCable) { c.appendChild(avisoCable); }
         var sel = document.createElement("select");
         sel.innerHTML = "<option value='up'>activo</option><option value='down'>caído</option>";
         sel.value = e.estado;
@@ -12265,6 +12290,8 @@ var UI = (function () {
         c.appendChild(labReenvio);
       }
     }
+    var avisoEquipo = avisoFallaEnVivo("equipo", d.id);
+    if (avisoEquipo) { c.appendChild(avisoEquipo); }
     var labE = el("label", "enlinea");
     var chk = document.createElement("input");
     chk.type = "checkbox"; chk.checked = !!d.encendido;
@@ -12837,7 +12864,7 @@ var UI = (function () {
       escapar((function () {
         if (!prim) { return "sin interfaz con IP"; }
         var e = enlaceEnPuerto(d.id, prim.id);
-        return e ? (e.id + " (" + e.estado + ")") : "sin cable";
+        return e ? (e.id + " (" + (enlaceEnFalla(e) ? "cortado en vivo" : e.estado) + ")") : "sin cable";
       })())));
     if (S.estado) {
       var arp = [];
@@ -17328,6 +17355,7 @@ var Autotest = (function () {
     } catch (e) {
       return fila(33, nombre, false, "Excepción: " + e.message);
     } finally {
+      try { UI.cargarTopologia(clonar(ejemploPorId("complejo").topologia)); } catch (e1) { /* se sigue igual */ }
       try { UI.setModo(previo); } catch (e2) { /* se sigue igual */ }
     }
   }
