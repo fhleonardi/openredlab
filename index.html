@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data: blob:; connect-src https://cloudflare-dns.com; base-uri 'none'; form-action 'none'; frame-src 'none'; object-src 'none'">
 <meta name="theme-color" content="#13355e">
 <meta name="author" content="Francisco Leonardi · Open Tecnología (opentecnologia.ar)">
 <title>OpenRedLab · Simulador de Redes</title>
@@ -874,6 +875,10 @@ var Motor = (function () {
       explicacion: function (ctx) {
         ctx = ctx || {};
         var nombre = "\"" + valor(ctx.nombre, "ese nombre") + "\"";
+        if (ctx.sinRegistros) {
+          return valor(ctx.quien, "El servidor DNS") + " responde que " + nombre + " existe, pero no tiene registros " + valor(ctx.tipo, "de ese tipo") +
+            ". No es que el nombre no exista: no hay un registro de ese tipo para él.";
+        }
         if (ctx.noRecursivo) {
           return valor(ctx.quien, "El servidor DNS") + " sólo responde por su zona (" + valor(ctx.zona, "?") + ") y no busca nombres de afuera: " +
             "no puede resolver " + nombre + ".";
@@ -890,6 +895,7 @@ var Motor = (function () {
       },
       sugerencia: function (ctx) {
         ctx = ctx || {};
+        if (ctx.sinRegistros) { return "Probá con otro tipo de registro (por ejemplo A, CNAME, MX o NS) o con otro nombre."; }
         if (ctx.noRecursivo) { return "Marcá «Resolver nombres de afuera» en el servidor, o usá otro servidor DNS para los nombres de internet."; }
         if (ctx.zona) { return "Revisá el nombre, o agregá el registro en la pestaña DNS del servidor de " + ctx.zona + "."; }
         if (ctx.tld) { return "Para un nombre de la red interna, configurá como DNS el servidor propio que tiene esa zona."; }
@@ -3304,6 +3310,101 @@ var Motor = (function () {
   };
   var RESOLVERS_PUBLICOS = { "8.8.8.8": "Google Public DNS", "1.1.1.1": "Cloudflare" };
 
+  /* ---------------- DNS real: datos que entrega la interfaz ----------------
+   * El Motor no hace peticiones de red. La interfaz, si el alumno lo pidió, consulta un resolvedor
+   * público por DNS sobre HTTPS y le entrega acá la respuesta. Se valida de nuevo, porque viene de
+   * afuera, y se usa como la respuesta de un servidor público. */
+  var TIPOS_DNS_REAL = ["A", "CNAME", "MX", "NS"];
+  var MAX_REGISTROS_REAL = 20;
+  var RESOLVEDOR_REAL = { nombre: "Cloudflare", ip: "1.1.1.1" };
+
+  // Un nombre de dominio con al menos dos partes y un TLD de letras (o punycode); sin punto final.
+  function nombreDnsValido(nombre) {
+    if (typeof nombre !== "string") { return false; }
+    var t = nombre.toLowerCase();
+    if (t.length < 3 || t.length > 253) { return false; }
+    var partes = t.split(".");
+    if (partes.length < 2) { return false; }
+    for (var i = 0; i < partes.length; i++) {
+      if (!/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(partes[i])) { return false; }
+    }
+    return /^[a-z]{2,24}$/.test(partes[partes.length - 1]) || /^xn--[a-z0-9-]{1,59}$/.test(partes[partes.length - 1]);
+  }
+
+  function sinPuntoFinal(texto) {
+    return typeof texto === "string" ? texto.toLowerCase().replace(/\.$/, "") : "";
+  }
+
+  function registroRealValido(r) {
+    if (!r || typeof r !== "object") { return null; }
+    var tipo = typeof r.tipo === "string" ? r.tipo.toUpperCase() : "";
+    if (TIPOS_DNS_REAL.indexOf(tipo) < 0) { return null; }
+    var nombre = sinPuntoFinal(r.nombre);
+    if (!nombreDnsValido(nombre)) { return null; }
+    var valor = sinPuntoFinal(r.valor);
+    var ttl = Number(r.ttl);
+    var salida = { nombre: nombre, tipo: tipo, valor: valor, ttl: isFinite(ttl) ? Math.max(0, Math.min(TTL_DNS, Math.round(ttl))) : TTL_DNS };
+    if (tipo === "A") {
+      if (!Red.esIpValida(valor) || Red.clasificar(valor) !== "publica") { return null; }
+    } else if (!nombreDnsValido(valor)) {
+      return null;
+    }
+    if (tipo === "MX") {
+      var prio = Number(r.prioridad);
+      if (!isFinite(prio) || prio < 0 || prio > 65535) { return null; }
+      salida.prioridad = Math.round(prio);
+    }
+    return salida;
+  }
+
+  // resultado: { rcode: 0 (existe) | 3 (no existe), registros: [{ nombre, tipo, valor, ttl, prioridad? }] }.
+  function cargarDnsReal(estado, nombre, tipo, resultado) {
+    var n = sinPuntoFinal(nombre);
+    var t = typeof tipo === "string" ? tipo.toUpperCase() : "";
+    if (!estado || !nombreDnsValido(n)) { return { ok: false, error: "nombre" }; }
+    if (TIPOS_DNS_REAL.indexOf(t) < 0) { return { ok: false, error: "tipo" }; }
+    if (!resultado || typeof resultado !== "object" || (resultado.rcode !== 0 && resultado.rcode !== 3)) {
+      return { ok: false, error: "respuesta" };
+    }
+    estado.dnsReal = estado.dnsReal || {};
+    if (resultado.rcode === 3) {
+      estado.dnsReal[n + "|" + t] = { rcode: 3, registros: [] };
+      return { ok: true, registros: [], descartados: 0 };
+    }
+    var lista = Array.isArray(resultado.registros) ? resultado.registros : [];
+    // El nombre existe pero no tiene registros de ese tipo (NODATA): no es lo mismo que «no existe».
+    if (!lista.length) {
+      estado.dnsReal[n + "|" + t] = { rcode: 0, registros: [], vacio: true };
+      return { ok: true, registros: [], descartados: 0, vacio: true };
+    }
+    var validos = [];
+    lista.slice(0, MAX_REGISTROS_REAL).forEach(function (r) {
+      var v = registroRealValido(r);
+      if (v) { validos.push(v); }
+    });
+    // Sólo lo que responde a lo preguntado: el nombre y, de ahí, su cadena de CNAME. Un registro
+    // de otro nombre no es la respuesta (y no puede hacer pasar a una IP por un servidor web).
+    var cadena = {}; cadena[n] = true;
+    for (var vuelta = 0; vuelta < MAX_REGISTROS_REAL; vuelta++) {
+      var creció = false;
+      validos.forEach(function (v) {
+        if (v.tipo === "CNAME" && cadena[v.nombre] && !cadena[v.valor]) { cadena[v.valor] = true; creció = true; }
+      });
+      if (!creció) { break; }
+    }
+    validos = validos.filter(function (v) { return cadena[v.nombre]; });
+    if (!validos.length) { return { ok: false, error: "sin registros válidos" }; }
+    estado.dnsReal[n + "|" + t] = { rcode: 0, registros: validos };
+    // Las IP que salieron de una respuesta real atienden web, como las de google.com.
+    estado.serviciosReales = estado.serviciosReales || {};
+    validos.forEach(function (v) { if (v.tipo === "A") { estado.serviciosReales[v.valor] = [["tcp", 80], ["tcp", 443]]; } });
+    return { ok: true, registros: validos, descartados: lista.length - validos.length };
+  }
+
+  function dnsRealDe(estado, nombre, tipo) {
+    return (estado && estado.dnsReal && estado.dnsReal[nombre + "|" + tipo]) || null;
+  }
+
   function dentroDeZona(nombre, zona) {
     return nombre === zona || nombre.slice(-(zona.length + 1)) === "." + zona;
   }
@@ -3354,7 +3455,7 @@ var Motor = (function () {
 
   // Consultas iterativas por la jerarquía, desde quien resuelve. agregar
   // suma un paso de capa 7; devuelve { registros } o { fallo: {ctx} }.
-  function iterarJerarquia(nombre, tipo, quien, agregar, profundidad) {
+  function iterarJerarquia(nombre, tipo, quien, agregar, profundidad, estado) {
     var etiquetas = nombre.split(".");
     var tld = etiquetas[etiquetas.length - 1];
     var datosTld = JERARQUIA.tld[tld];
@@ -3369,36 +3470,60 @@ var Motor = (function () {
       return { fallo: { arpa: true, ip: ipArpa, privada: privadaArpa } };
     }
     if (!datosTld) {
+      var realTld = dnsRealDe(estado, nombre, tipo);
+      if (realTld) { return respuestaDnsReal(realTld, nombre, tipo, quien, agregar); }
       agregar("Preguntar a la raíz (consulta iterativa)", quien + " le pregunta a " + raiz.nombre + " (" + raiz.ip + "), un servidor raíz, por " +
         nombre + ". La raíz responde que ." + tld + " no existe en internet.", false, raiz.ip);
-      return { fallo: { tld: tld } };
+      return { fallo: { tld: tld, simulado: true, consulta: nombre } };
     }
     agregar("Preguntar a la raíz (consulta iterativa)", quien + " le pregunta a " + raiz.nombre + " (" + raiz.ip + "), un servidor raíz, por " +
       nombre + ". La raíz no sabe la respuesta, pero sabe quién atiende ." + tld + ": " + datosTld.nombre + " (" + datosTld.ip + ").", true, raiz.ip);
     var zona = zonaPublicaDe(nombre);
     if (!zona) {
+      var realZona = dnsRealDe(estado, nombre, tipo);
+      if (realZona) { return respuestaDnsReal(realZona, nombre, tipo, quien, agregar); }
       agregar("Preguntar al servidor de ." + tld + " (consulta iterativa)", quien + " le pregunta a " + datosTld.nombre + " por " + nombre +
         ", y responde que ese nombre no está registrado en ." + tld + ".", false, datosTld.ip);
-      return { fallo: { quien: datosTld.nombre + ", el servidor de ." + tld } };
+      return { fallo: { quien: datosTld.nombre + ", el servidor de ." + tld, simulado: true, consulta: nombre } };
     }
     var auth = JERARQUIA.zonas[zona];
     agregar("Preguntar al servidor de ." + tld + " (consulta iterativa)", quien + " le pregunta a " + datosTld.nombre + " por " + nombre +
       ". Tampoco sabe la respuesta, pero sabe cuál es el servidor autoritativo de " + zona + ": " + auth.ns + " (" + auth.ip + ").", true, datosTld.ip);
     var hallado = buscarRegistros(auth.registros, nombre, tipo);
     if (!hallado || (!hallado.registros.length && !hallado.pendiente)) {
+      var realEnZona = dnsRealDe(estado, nombre, tipo);
+      if (realEnZona) { return respuestaDnsReal(realEnZona, nombre, tipo, quien, agregar); }
       agregar("Preguntar al autoritativo de " + zona + " (consulta iterativa)", quien + " le pregunta a " + auth.ns +
         ", el servidor autoritativo de " + zona + ", y responde que " + nombre + " no tiene registros " + tipo + ".", false, auth.ip);
-      return { fallo: { quien: auth.ns, zona: zona } };
+      return { fallo: { quien: auth.ns, zona: zona, simulado: true, consulta: nombre } };
     }
     agregar("Preguntar al autoritativo de " + zona + " (consulta iterativa)", quien + " le pregunta a " + auth.ns +
       ", el servidor autoritativo de " + zona + ", que responde: " + hallado.registros.map(textoRegistro).join("; ") + ".", true, auth.ip);
     if (hallado.pendiente && (profundidad || 0) < 3) {
       // El CNAME apunta a otra zona: se resuelve el nombre nuevo.
-      var resto = iterarJerarquia(hallado.pendiente, tipo, quien, agregar, (profundidad || 0) + 1);
+      var resto = iterarJerarquia(hallado.pendiente, tipo, quien, agregar, (profundidad || 0) + 1, estado);
       if (resto.fallo) { return resto; }
       return { registros: hallado.registros.concat(resto.registros) };
     }
     return { registros: hallado.registros };
+  }
+
+  // La simulación no conocía el nombre y la interfaz trajo una respuesta real: es la del último
+  // servidor consultado, un resolvedor público al que se llegó por internet.
+  function respuestaDnsReal(real, nombre, tipo, quien, agregar) {
+    var titulo = "Preguntar a un servidor DNS público real (DNS sobre HTTPS)";
+    var comun = quien + " no conoce " + nombre + " en la simulación, así que la consulta salió de verdad por internet a " +
+      RESOLVEDOR_REAL.nombre + " (" + RESOLVEDOR_REAL.ip + "), por DNS sobre HTTPS. ";
+    if (real.rcode === 3) {
+      agregar(titulo, comun + "Responde que el nombre no existe.", false, RESOLVEDOR_REAL.ip);
+      return { fallo: { quien: RESOLVEDOR_REAL.nombre + " (respuesta real)", real: true } };
+    }
+    if (real.vacio) {
+      agregar(titulo, comun + "Responde que el nombre existe, pero no tiene registros " + tipo + ".", false, RESOLVEDOR_REAL.ip);
+      return { fallo: { quien: RESOLVEDOR_REAL.nombre + " (respuesta real)", real: true, sinRegistros: true, tipo: tipo } };
+    }
+    agregar(titulo, comun + "Respuesta real: " + real.registros.map(textoRegistro).join("; ") + ".", true, RESOLVEDOR_REAL.ip);
+    return { registros: real.registros };
   }
 
   function ttlDe(registros) {
@@ -3494,7 +3619,8 @@ var Motor = (function () {
         agregar("Reenviar la consulta", quien + " no obtuvo respuesta de su DNS, así que no puede contestarle a " + nombreCliente + ".", false);
         Array.prototype.push.apply(tramasDns, tramasCon(vueltaDe(viaje),
           dnsUdp(53, puertoDns, "Respuesta: no se pudo resolver " + nombre)));
-        return { exito: false, pasos: pasos, respuesta: null, diagnostico: arriba.diagnostico, saltos: viaje.saltos, tramas: tramasDns };
+        return { exito: false, pasos: pasos, respuesta: null, diagnostico: arriba.diagnostico, saltos: viaje.saltos, tramas: tramasDns,
+          nombreSinResolver: arriba.nombreSinResolver || null };
       }
       agregar("Responder al cliente", quien + " le contesta a " + nombreCliente + " con la respuesta de su DNS (no autoritativa).", true);
       return responder(arriba.respuesta.registros, false, false);
@@ -3549,7 +3675,7 @@ var Motor = (function () {
     var resultado = iterarJerarquia(nombre, tipo, quien, function (t, d, ok, ipServidor) {
       ipsIterativas.push(ipServidor);
       agregar(t, d, ok);
-    }, 0);
+    }, 0, estado);
     // Las consultas iterativas del servidor propio salen por su camino a
     // internet: una pregunta y su respuesta por cada servidor consultado.
     if (servicio && aRaiz && aRaiz.exito) {
@@ -3560,7 +3686,7 @@ var Motor = (function () {
         // El camino es el mismo hasta internet; cambia la IP del servidor.
         var consulta = dnsUdp(po, 53, consultaInfo + " (" + aQuien + ")");
         consulta.ipDestino = ipServ;
-        var resp = dnsUdp(53, po, "Respuesta " + aQuien.replace(/^a la /, "de la ").replace(/^al /, "del ") + (p.ok ? "" : ": no existe"));
+        var resp = dnsUdp(53, po, "Respuesta " + aQuien.replace(/^a la /, "de la ").replace(/^al /, "del ").replace(/^a un /, "de un ") + (p.ok ? "" : ": no existe"));
         resp.ipOrigen = ipServ;
         Array.prototype.push.apply(tramasDns, tramasCon(idaDe(aRaiz), consulta));
         Array.prototype.push.apply(tramasDns, tramasCon(vueltaDe(aRaiz), resp));
@@ -3569,7 +3695,12 @@ var Motor = (function () {
     if (resultado.fallo) {
       var ctxFallo = resultado.fallo;
       ctxFallo.nombre = nombre;
-      return fallar(ctxFallo.arpa ? "D35" : "D25", ctxFallo);
+      var fallado = fallar(ctxFallo.arpa ? "D35" : "D25", ctxFallo);
+      // La simulación no conocía el nombre: la interfaz puede preguntar afuera, si el alumno lo pidió.
+      if (ctxFallo.simulado && TIPOS_DNS_REAL.indexOf(tipo) >= 0) {
+        fallado.nombreSinResolver = { nombre: ctxFallo.consulta || nombre, tipo: tipo };
+      }
+      return fallado;
     }
     cache[nombre + "|" + tipo] = { registros: resultado.registros, vence: ahora + ttlDe(resultado.registros) * 1000 };
     agregar("Responder al cliente", quien + " le contesta a " + nombreCliente + " (respuesta no autoritativa: la obtuvo de otros servidores) " +
@@ -3619,9 +3750,15 @@ var Motor = (function () {
   // ¿Quién atiende protocolo/puerto en esa IP? dev es el equipo al que
   // llegó el paquete (null: internet). Devuelve el nombre del servicio o
   // null si el puerto está cerrado.
-  function quienEscucha(dev, ip, protocolo, puerto) {
+  // Los servidores de internet que el simulador conoce, más las IP que salieron de una resolución real
+  // (que atienden web: así «Conectar» a un nombre real también funciona).
+  function serviciosPublicosDe(estado, ip) {
+    return SERVICIOS_INTERNET[ip] || (estado && estado.serviciosReales && estado.serviciosReales[ip]) || null;
+  }
+
+  function quienEscucha(dev, ip, protocolo, puerto, estado) {
     if (!dev) {
-      var publicos = SERVICIOS_INTERNET[ip] || [];
+      var publicos = serviciosPublicosDe(estado, ip) || [];
       return publicos.some(function (p) { return p[0] === protocolo && p[1] === puerto; })
         ? (servicioConocido(protocolo, puerto) || { nombre: protocolo.toUpperCase() + " " + puerto }).nombre : null;
     }
@@ -3688,8 +3825,15 @@ var Motor = (function () {
       var resuelto = resolverNombre(estado, idCliente, texto, "A");
       Array.prototype.push.apply(pasos, resuelto.pasos);
       Array.prototype.push.apply(tramasConexion, resuelto.tramas || []);
-      if (!resuelto.exito) { return fallo(resuelto.diagnostico); }
+      if (!resuelto.exito) {
+        var fallada = fallo(resuelto.diagnostico);
+        if (resuelto.nombreSinResolver) { fallada.nombreSinResolver = resuelto.nombreSinResolver; }
+        return fallada;
+      }
       var as = resuelto.respuesta.registros.filter(function (x) { return x.tipo === "A"; });
+      if (!as.length) {
+        return fallo(diagnosticoDe("D25", { nombre: texto, quien: resuelto.respuesta.servidor, sinRegistros: true, tipo: "A" }));
+      }
       ip = as[as.length - 1].valor;
     }
     // La red tiene que llegar, de ida y de vuelta: lo dice el ping.
@@ -3725,12 +3869,12 @@ var Motor = (function () {
         flags: flags, seq: seq, ack: ack, datos: datos || null
       });
     }
-    var servicio = quienEscucha(atiende, ip, protocolo, puertoServicio);
+    var servicio = quienEscucha(atiende, ip, protocolo, puertoServicio, estado);
     var info = servicioConocido(protocolo, puertoServicio);
     var etiqueta = protocolo.toUpperCase() + " " + puertoServicio;
     // El ping lo contestó la nube, pero en esa IP no hay nadie (D33): ni
     // un RST ni un ICMP, el pedido se pierde.
-    var nadie = !atiende && !SERVICIOS_INTERNET[ip];
+    var nadie = !atiende && !serviciosPublicosDe(estado, ip);
     function sinRespuesta() {
       var nube = buscarDispositivo(estado, red.respondio);
       return fallo(diagnosticoDe("D33", { ip: ip, puerto: puerto, protocolo: protocolo, nube: nube ? (nube.nombre || nube.id) : null }));
@@ -3830,11 +3974,20 @@ var Motor = (function () {
     if (!resuelto.exito) {
       return {
         exito: false, pasos: resuelto.pasos, saltos: resuelto.saltos && resuelto.saltos.length ? resuelto.saltos : [{ dispositivo: origen.id, interfaz: "" }],
-        diagnostico: resuelto.diagnostico, respuestas: [], tramas: [], tramasPrevias: resuelto.tramas || []
+        diagnostico: resuelto.diagnostico, respuestas: [], tramas: [], tramasPrevias: resuelto.tramas || [],
+        nombreSinResolver: resuelto.nombreSinResolver || null
       };
     }
     var as = resuelto.respuesta.registros.filter(function (x) { return x.tipo === "A"; });
-    var ip = as.length ? as[as.length - 1].valor : null;
+    // El nombre resuelve, pero termina en un CNAME sin dirección: no hay a dónde mandar el paquete.
+    if (!as.length) {
+      return {
+        exito: false, pasos: resuelto.pasos, saltos: [{ dispositivo: origen.id, interfaz: "" }],
+        diagnostico: diagnosticoDe("D25", { nombre: texto, quien: resuelto.respuesta.servidor, sinRegistros: true, tipo: "A" }),
+        respuestas: [], tramas: [], tramasPrevias: resuelto.tramas || []
+      };
+    }
+    var ip = as[as.length - 1].valor;
     var res = ejecutarPing(estado, idOrigen, ip, opciones);
     var previos = resuelto.pasos.length;
     res.pasos = resuelto.pasos.concat(res.pasos.map(function (pn) {
@@ -5230,6 +5383,102 @@ var Motor = (function () {
       comparar("router sin salida a internet: el DNS no responde (D26)", rSinRuta.diagnostico.codigo, "D26");
     })();
 
+    // 42b. DNS real: la interfaz entrega una respuesta de un resolvedor público; el Motor la valida y la usa.
+    (function () {
+      var porDefecto = [{ destino: "0.0.0.0", prefijo: 0, siguienteSalto: "200.45.7.1" }];
+      function est() { return crearEstado(conInternet(porDefecto, "8.8.8.8")); }
+      // Sin respuesta real, un nombre que la simulación no conoce falla y avisa que se podría preguntar afuera.
+      var sin = ping(est(), "pc1", "example.com");
+      comparar("DNS real: sin dato, D25 y nombreSinResolver", [sin.diagnostico.codigo, sin.nombreSinResolver], ["D25", { nombre: "example.com", tipo: "A" }]);
+      var sinDns = consultarDns(est(), "pc1", "www.example.com", "A");
+      comparar("DNS real: consultarDns también avisa", sinDns.nombreSinResolver, { nombre: "www.example.com", tipo: "A" });
+      var sinConectar = conectar(est(), "pc1", "example.com", "tcp", 80);
+      comparar("DNS real: conectar también avisa", sinConectar.nombreSinResolver, { nombre: "example.com", tipo: "A" });
+      var sinServidor = conInternet(porDefecto, null);
+      comparar("DNS real: sin servidor DNS (D24) no avisa", ping(crearEstado(sinServidor), "pc1", "example.com").nombreSinResolver || null, null);
+      comparar("DNS real: un PTR no avisa", consultarDns(est(), "pc1", "8.8.4.4", "PTR").nombreSinResolver || null, null);
+      // Con la respuesta real cargada, resuelve y el recorrido lo dice.
+      var e1 = est();
+      var carga = cargarDnsReal(e1, "example.com", "A", { rcode: 0, registros: [{ nombre: "example.com", tipo: "A", valor: "93.184.216.34", ttl: 100 }] });
+      comparar("DNS real: carga válida", [carga.ok, carga.registros.length], [true, 1]);
+      var conReal = ping(e1, "pc1", "example.com");
+      comparar("DNS real: el ping resuelve a la IP real", [conReal.exito, conReal.ipResuelta], [true, "93.184.216.34"]);
+      comparar("DNS real: el recorrido dice que es real",
+        conReal.pasos.some(function (x) { return /DNS público real/.test(x.titulo); }), true);
+      // CNAME + A en una sola respuesta.
+      var e2 = est();
+      cargarDnsReal(e2, "www.example.com", "A", { rcode: 0, registros: [
+        { nombre: "www.example.com", tipo: "CNAME", valor: "example.com.", ttl: 60 },
+        { nombre: "example.com", tipo: "A", valor: "93.184.216.34", ttl: 60 }] });
+      comparar("DNS real: CNAME y A", ping(e2, "pc1", "www.example.com").ipResuelta, "93.184.216.34");
+      // Conectar a un nombre real: la IP atiende web; otro puerto no; y otro estado no hereda nada.
+      comparar("DNS real: conectar al puerto 80 de un nombre real", conectar(e1, "pc1", "example.com", "tcp", 80).exito, true);
+      comparar("DNS real: conectar al puerto 22 de un nombre real", conectar(e1, "pc1", "example.com", "tcp", 22).exito, false);
+      comparar("DNS real: lo real no pasa a otro estado", conectar(est(), "pc1", "93.184.216.34", "tcp", 80).diagnostico.codigo, "D33");
+      // Un nombre que no existe de verdad da el D25 de siempre.
+      var e3 = est();
+      cargarDnsReal(e3, "noexiste-de-verdad.com", "A", { rcode: 3, registros: [] });
+      var inex = ping(e3, "pc1", "noexiste-de-verdad.com");
+      comparar("DNS real: NXDOMAIN real da D25 sin volver a avisar", [inex.diagnostico.codigo, inex.nombreSinResolver || null], ["D25", null]);
+      // Lo que la simulación ya sabe no se pisa con un dato real.
+      var e4 = est();
+      cargarDnsReal(e4, "google.com", "A", { rcode: 0, registros: [{ nombre: "google.com", tipo: "A", valor: "93.184.216.34", ttl: 60 }] });
+      comparar("DNS real: google.com sigue siendo el simulado", ping(e4, "pc1", "google.com").ipResuelta, "142.250.79.46");
+      // Validación de lo que viene de afuera.
+      var e5 = est();
+      var mezcla = cargarDnsReal(e5, "example.com", "A", { rcode: 0, registros: [
+        { nombre: "example.com", tipo: "A", valor: "10.0.0.1", ttl: 60 },
+        { nombre: "example.com", tipo: "A", valor: "127.0.0.1", ttl: 60 },
+        { nombre: "example.com", tipo: "A", valor: "<img src=x onerror=alert(1)>", ttl: 60 },
+        { nombre: "example.com", tipo: "TXT", valor: "hola", ttl: 60 },
+        { nombre: "example.com", tipo: "A", valor: "93.184.216.34", ttl: 999999 }] });
+      // Un CNAME que no termina en una dirección: falla limpio, sin romper ni decir «dirección no válida».
+      var eCname = est();
+      cargarDnsReal(eCname, "solo-cname.com", "A", { rcode: 0, registros: [{ nombre: "solo-cname.com", tipo: "CNAME", valor: "otro.net", ttl: 60 }] });
+      var pCname = ping(eCname, "pc1", "solo-cname.com");
+      var cCname = conectar(eCname, "pc1", "solo-cname.com", "tcp", 80);
+      comparar("DNS real: un CNAME sin dirección falla limpio en ping y conectar",
+        [pCname.exito, pCname.diagnostico.codigo, cCname.exito, cCname.diagnostico.codigo], [false, "D25", false, "D25"]);
+      comparar("DNS real: dice que existe pero no tiene registros A", /existe, pero no tiene registros A/.test(pCname.diagnostico.explicacion), true);
+      comparar("DNS real: sólo queda el registro válido, con el TTL acotado",
+        [mezcla.ok, mezcla.registros.length, mezcla.registros[0].valor, mezcla.registros[0].ttl, mezcla.descartados], [true, 1, "93.184.216.34", 300, 4]);
+      // Un registro de otro nombre no es la respuesta.
+      var ajeno = cargarDnsReal(est(), "example.com", "A", { rcode: 0, registros: [
+        { nombre: "example.com", tipo: "A", valor: "93.184.216.34", ttl: 60 },
+        { nombre: "otro.net", tipo: "A", valor: "198.51.100.7", ttl: 60 }] });
+      comparar("DNS real: un registro de otro nombre no entra", [ajeno.registros.length, ajeno.registros[0].valor], [1, "93.184.216.34"]);
+      var soloAjeno = est();
+      comparar("DNS real: si todo es de otro nombre no se carga",
+        cargarDnsReal(soloAjeno, "example.com", "A", { rcode: 0, registros: [{ nombre: "otro.net", tipo: "A", valor: "198.51.100.7", ttl: 60 }] }).ok, false);
+      comparar("DNS real: lo ajeno no queda como servidor web",
+        conectar(soloAjeno, "pc1", "198.51.100.7", "tcp", 80).diagnostico.codigo, "D33");
+      // NODATA: el nombre existe pero no tiene ese tipo; no es «no existe».
+      var eVacio = est();
+      comparar("DNS real: NODATA se carga", cargarDnsReal(eVacio, "example.com", "MX", { rcode: 0, registros: [] }).vacio, true);
+      var rVacio = consultarDns(eVacio, "pc1", "example.com", "MX");
+      comparar("DNS real: NODATA da D25 que dice que existe sin registros",
+        [rVacio.diagnostico.codigo, /existe, pero no tiene registros MX/.test(rVacio.diagnostico.explicacion), rVacio.nombreSinResolver || null], ["D25", true, null]);
+      // Un subdominio de una zona simulada (mail.google.com) también se puede preguntar afuera.
+      var eSub = est();
+      comparar("DNS real: un subdominio de una zona simulada avisa", ping(eSub, "pc1", "mail.google.com").nombreSinResolver, { nombre: "mail.google.com", tipo: "A" });
+      cargarDnsReal(eSub, "mail.google.com", "A", { rcode: 0, registros: [{ nombre: "mail.google.com", tipo: "A", valor: "142.250.80.5", ttl: 60 }] });
+      comparar("DNS real: el subdominio resuelve con lo real", ping(eSub, "pc1", "mail.google.com").ipResuelta, "142.250.80.5");
+      var muchos = [];
+      for (var q = 0; q < 25; q++) { muchos.push({ nombre: "example.com", tipo: "A", valor: "93.184.216." + (q + 1), ttl: 60 }); }
+      var tope = cargarDnsReal(est(), "example.com", "A", { rcode: 0, registros: muchos });
+      comparar("DNS real: a lo sumo 20 registros", [tope.ok, tope.registros.length, tope.descartados], [true, 20, 5]);
+      comparar("DNS real: sin registros válidos no se carga",
+        cargarDnsReal(est(), "example.com", "A", { rcode: 0, registros: [{ nombre: "example.com", tipo: "A", valor: "10.1.1.1" }] }).ok, false);
+      comparar("DNS real: nombre inválido", cargarDnsReal(est(), "a b.com", "A", { rcode: 3, registros: [] }).ok, false);
+      comparar("DNS real: tipo no permitido", cargarDnsReal(est(), "example.com", "TXT", { rcode: 3, registros: [] }).ok, false);
+      comparar("DNS real: rcode desconocido", cargarDnsReal(est(), "example.com", "A", { rcode: 5, registros: [] }).ok, false);
+      comparar("DNS real: respuesta que no es un objeto", cargarDnsReal(est(), "example.com", "A", "hola").ok, false);
+      comparar("DNS real: un MX necesita prioridad", cargarDnsReal(est(), "example.com", "MX", { rcode: 0, registros: [{ nombre: "example.com", tipo: "MX", valor: "mail.example.com", ttl: 60 }] }).ok, false);
+      comparar("DNS real: nombres válidos e inválidos",
+        ["example.com", "www.ejemplo.com.ar", "xn--bcher-kva.ch", "a-b.example.org", "solo", "a..b.com", "-a.com", "a.com-", "a.c", "a.123", "x".repeat(64) + ".com", "a b.com", ""].map(nombreDnsValido),
+        [true, true, true, true, false, false, false, false, false, false, false, false, false]);
+    })();
+
     // 43. Una PC con la nube como gateway directo llega a internet.
     (function () {
       var pcD = fabPc("pc1", "200.45.7.2", 30, "200.45.7.1");
@@ -5894,6 +6143,8 @@ var Motor = (function () {
 
   return {
     crearEstado: crearEstado,
+    cargarDnsReal: cargarDnsReal,
+    nombreDnsValido: nombreDnsValido,
     ping: ping,
     diagnosticar: diagnosticar,
     advertenciasDe: advertenciasDe,
@@ -5955,7 +6206,7 @@ var Escenarios = (function () {
 
   // Versión de la app (semver). Cada PR que toca una capa la sube y suma su
   // entrada en CHANGELOG.md; el ensamblador controla que coincidan.
-  var VERSION_APP = "1.7.0";
+  var VERSION_APP = "1.8.0";
 
   // Versión del formato de archivo que escribe esta capa. Sube sólo si un
   // campo existente cambia o desaparece, y cada subida trae su migración.
@@ -9595,6 +9846,11 @@ var UI = (function () {
     herramientaCable: null,
     herramientaFalla: null,
     fallasVivas: { enlaces: {}, equipos: {} },
+    dnsRealActivo: false,
+    dnsReal: {},
+    dnsRealPeticiones: [],
+    dnsRealOcupado: false,
+    dnsRealGeneracion: 0,
     cableTipo: "ethernet",
     cableOrigen: null,
     colocando: null,
@@ -9623,7 +9879,6 @@ var UI = (function () {
     // acumula lo que pasa por ahí, numerado, hasta detenerla o limpiarla.
     captura: { activa: false, enlace: "", paquetes: [], filtro: "", sel: null, n: 0, descartados: 0 },
     verEncabezados: false,
-    consolaAbierta: false,
     lineasConsola: [],
     presExpandida: false,
     origenElegido: null,
@@ -9898,6 +10153,7 @@ var UI = (function () {
     } catch (e) {
       S.estado = null;
     }
+    inyectarDnsReal();
   }
 
   /* ---------------- CSS inyectado ---------------- */
@@ -9937,20 +10193,20 @@ var UI = (function () {
     ".simbarra .espacio{flex:1;}",
     ".simbarra .enpres{display:none;font-size:13px;opacity:.85;}",
     ".simcuerpo{flex:1;display:flex;min-height:0;}",
-    ".simpaleta{width:200px;flex:0 0 200px;background:var(--sim-panel);border-right:1px solid var(--sim-borde);padding:8px;overflow:auto;box-sizing:border-box;}",
+    ".simpaleta{width:200px;flex:0 0 200px;background:var(--sim-panel);border-right:1px solid var(--sim-borde);padding:8px;overflow:auto;scrollbar-width:thin;box-sizing:border-box;}",
     ".simpaleta.colapsada{width:60px;flex-basis:60px;}",
     ".simpaleta.colapsada .etiqueta,.simpaleta.colapsada .titulopal,.simpaleta.colapsada .leyenda,.simpaleta.colapsada select,.simpaleta.colapsada label{display:none;}",
-    ".simpaleta h2{font-size:12px;letter-spacing:.02em;color:var(--sim-tenue);margin:4px 0 8px;}",
+    ".simpaleta h2{font-size:12px;letter-spacing:.02em;color:var(--sim-tenue);margin:2px 0 6px;}",
     ".palitem{display:flex;align-items:center;gap:8px;width:100%;box-sizing:border-box;padding:6px 8px;margin-bottom:6px;text-align:left;cursor:grab;user-select:none;}",
     ".simraiz .palitem{touch-action:none;}",
     ".palitem.armado{outline:2px solid var(--sim-acento);outline-offset:1px;}",
     ".palitem svg{width:28px;height:28px;flex:0 0 28px;}",
     ".palgrid{display:grid;grid-template-columns:1fr 1fr;grid-auto-rows:1fr;gap:4px;margin-bottom:4px;}",
-    ".palgrid .palitem{gap:4px;padding:3px 5px;margin:0;}",
+    ".palgrid .palitem{gap:3px;padding:3px 4px;margin:0;}",
     ".palcab{display:flex;align-items:center;justify-content:space-between;gap:4px;margin:2px 0 6px;}",
     ".palcab h2{margin:0;}",
     ".palcab button{font-size:11px;padding:1px 6px;}",
-    ".palgrid .palitem svg{width:20px;height:20px;flex-basis:20px;}",
+    ".palgrid .palitem svg{width:18px;height:18px;flex-basis:18px;}",
     ".palgrid .palitem .etiqueta{font-size:11.5px;line-height:1.15;overflow-wrap:normal;}",
     ".simpaleta.colapsada .palgrid .palitem{justify-content:center;}",
     ".simpaleta.colapsada .palgrid{grid-template-columns:1fr;}",
@@ -9963,6 +10219,8 @@ var UI = (function () {
     ".simpaleta .palgrid + h2{margin-top:8px;}",
     ".simlienzo{flex:1;position:relative;min-width:0;background:var(--sim-fondo);}",
     ".simlienzo svg.lienzo{width:100%;height:100%;display:block;touch-action:none;}",
+    ".filafallas{display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-bottom:4px;}",
+    ".filafallas button{padding:6px 4px;font-size:12px;white-space:nowrap;}",
     ".simlienzo svg.lienzo.modo-falla .enlace,.simlienzo svg.lienzo.modo-falla .nodo{cursor:crosshair;}",
     ".simtools select{font-size:12px;}",
     ".simtools .cuentadom{align-self:center;font-size:12px;font-weight:600;padding:0 4px;color:var(--sim-texto);}",
@@ -10005,7 +10263,7 @@ var UI = (function () {
     ".filaif .datos{flex:1;min-width:0;}",
     ".filaif label{margin:0;}",
     ".filaif select{width:auto;}",
-    ".siminf{height:260px;flex:0 0 260px;background:var(--sim-panel);border-top:1px solid var(--sim-borde);padding:6px 12px 8px;box-sizing:border-box;overflow:hidden;display:flex;flex-direction:column;}",
+    ".siminf{height:clamp(290px,38vh,480px);flex:0 1 clamp(290px,38vh,480px);background:var(--sim-panel);border-top:1px solid var(--sim-borde);padding:6px 12px 8px;box-sizing:border-box;overflow:hidden;display:flex;flex-direction:column;}",
     ".siminf.colapsado{height:44px;flex-basis:44px;}",
     ".siminf.compacta{height:44px;flex-basis:44px;}",
     ".siminf .tabs button[role=tab]{border:0;border-bottom:3px solid transparent;border-radius:0;background:transparent;padding:6px 10px;font-size:14px;color:var(--sim-tenue);}",
@@ -10108,6 +10366,9 @@ var UI = (function () {
     ".recorrido .pasos{flex:1;min-height:0;overflow:auto;padding:4px 10px;}",
     ".recorrido .trama{cursor:pointer;}",
     ".recorrido .trama.actual{background:rgba(245,158,11,.18);outline:1px solid #f59e0b;border-radius:4px;}",
+    ".tabs .dnsreal{display:inline-flex;align-items:center;gap:8px;margin-right:12px;font-size:12px;color:var(--sim-tenue);}",
+    ".tabs .dnsreal label{display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--sim-tenue);white-space:nowrap;}",
+    ".tabs .dnsreal-nota{color:var(--sim-aviso,#b45309);font-weight:600;white-space:nowrap;}",
     ".ctl-anim{display:inline-flex;align-items:center;gap:6px;font-style:normal;flex-wrap:wrap;}",
     ".ctl-anim select,.ctl-anim button{font-size:12px;padding:2px 6px;}",
     ".ctl-anim .ley{display:inline-flex;align-items:center;gap:3px;font-size:12px;color:var(--sim-tenue);}",
@@ -10145,7 +10406,6 @@ var UI = (function () {
     ".advertencia{border:1px solid var(--sim-aviso);border-radius:8px;padding:6px;margin:6px 0;font-size:12px;}",
     ".consola{background:#0d1117;color:#d6f0d6;font-family:ui-monospace,Consolas,monospace;font-size:12px;border-radius:8px;padding:8px;flex:1;min-height:0;overflow:auto;white-space:pre-wrap;margin:0;}",
     ".consola .error{color:#ff8a80;}",
-    ".consolabtn{text-align:left;font-family:ui-monospace,Consolas,monospace;font-size:12px;}",
     ".lienzovacio{position:absolute;left:50%;top:45%;transform:translate(-50%,-50%);width:min(440px,80%);text-align:center;color:var(--sim-tenue);font-size:14px;line-height:1.45;pointer-events:none;}",
     ".lienzovacio b{display:block;color:var(--sim-texto);font-size:17px;margin-bottom:4px;}",
     ".lienzovacio .recuperar{pointer-events:auto;margin-top:14px;padding:10px 12px;background:var(--sim-panel);border:1px solid var(--sim-borde);border-radius:10px;color:var(--sim-texto);}",
@@ -10584,17 +10844,20 @@ var UI = (function () {
     S.botonCable = bCable;
     pal.appendChild(el("p", "leyenda", "Cobre: lleno · fibra: grueso · wireless: puntos. Verde: activo · rojo y cortado: caído."));
     pal.appendChild(el("h2", "titulopal", "Fallas en vivo"));
-    var bCortar = boton("\u26A1 Cortar un cable", "herramienta");
+    var bCortar = boton("Cortar cable", "herramienta");
     bCortar.title = "Clic en un cable para cortarlo; otro clic lo restaura (Esc sale)";
     bCortar.setAttribute("aria-pressed", "false");
     bCortar.addEventListener("click", function () { alternarModoFalla("enlace"); });
-    var bApagar = boton("\u26A1 Apagar un equipo", "herramienta");
+    var bApagar = boton("Apagar equipo", "herramienta");
     bApagar.title = "Clic en un equipo para apagarlo; otro clic lo enciende (Esc sale)";
     bApagar.setAttribute("aria-pressed", "false");
     bApagar.addEventListener("click", function () { alternarModoFalla("equipo"); });
     var bRestaurar = boton("Restaurar todo");
     bRestaurar.addEventListener("click", restaurarTodasLasFallas);
-    pal.appendChild(bCortar); pal.appendChild(bApagar); pal.appendChild(bRestaurar);
+    // Cortar y apagar van lado a lado: la paleta entra entera con una ventana de altura común.
+    var filaFallas = el("div", "filafallas");
+    filaFallas.appendChild(bCortar); filaFallas.appendChild(bApagar);
+    pal.appendChild(filaFallas); pal.appendChild(bRestaurar);
     var leyFallas = el("p", "leyenda", "");
     leyFallas.setAttribute("aria-live", "polite");
     pal.appendChild(leyFallas);
@@ -11560,7 +11823,7 @@ var UI = (function () {
         .concat(Object.keys(S.fallasVivas.equipos).map(function (id) { return nombreDe(id) + " apagado"; }));
       S.leyendaFallas.textContent = ahora.length
         ? "⚡ En vivo: " + ahora.join(", ") + ". El diseño no cambió."
-        : "No cambian el diseño: sólo lo que simulás.";
+        : "No cambian el diseño.";
     }
     if (S.svg) { S.svg.classList.toggle("modo-falla", !!S.herramientaFalla); }
   }
@@ -12914,6 +13177,40 @@ var UI = (function () {
     conFoco(S.inf, dibujarInferior);
   }
 
+  // «Resolver nombres reales»: va en la barra de pestañas, que tiene lugar, y no en la fila de
+  // controles del ping, que ya está justa. Dice qué sale a la red mientras está prendido.
+  function interruptorDnsReal() {
+    var caja = el("span", "dnsreal");
+    var chk = document.createElement("input");
+    chk.type = "checkbox"; chk.checked = S.dnsRealActivo;
+    chk.setAttribute("data-foco", "dnsreal");
+    chk.addEventListener("change", function () {
+      S.dnsRealActivo = chk.checked;
+      if (!S.dnsRealActivo) {
+        S.dnsRealGeneracion += 1; S.dnsRealOcupado = false; S.dnsReal = {};
+        reconstruirEstado();
+      }
+      registrar("DNS", S.dnsRealActivo
+        ? "DNS real activado: los nombres que la simulación no conozca se consultan a Cloudflare."
+        : "DNS real desactivado: no se hace ninguna consulta por la red.");
+      renderInferior();
+    });
+    var lab = el("label", "enlinea");
+    lab.appendChild(chk);
+    lab.appendChild(document.createTextNode(" Resolver nombres reales (requiere internet)"));
+    lab.title = "Los nombres que la simulación no conoce se consultan a Cloudflare (cloudflare-dns.com) por DNS sobre HTTPS. " +
+      "Es una consulta real por internet. Se apaga al recargar la página o al abrir otra red.";
+    caja.appendChild(lab);
+    if (S.dnsRealActivo) {
+      var nota = el("span", "dnsreal-nota", "⚠ consulta a Cloudflare por internet");
+      nota.id = idCampo("dnsreal-nota");
+      chk.setAttribute("aria-describedby", nota.id);
+      nota.title = lab.title;
+      caja.appendChild(nota);
+    }
+    return caja;
+  }
+
   function dibujarInferior() {
     var c = S.inf;
     c.innerHTML = "";
@@ -12938,6 +13235,7 @@ var UI = (function () {
       barra.appendChild(el("span", "version", "OpenRedLab " + escapar(Escenarios.VERSION_APP) +
         " · <a href='https://opentecnologia.ar' target='_blank' rel='noopener'>Open Tecnología</a>"));
     }
+    if (S.pestañaInf === "simulacion") { barra.appendChild(interruptorDnsReal()); }
     var selV = document.createElement("select");
     selV.innerHTML = "<option value='lenta'>lenta</option><option value='normal'>normal</option><option value='rapida'>rápida</option>";
     selV.value = S.velocidad;
@@ -13041,6 +13339,169 @@ var UI = (function () {
       var op = document.createElement("option");
       op.value = d.id; op.textContent = d.nombre || d.id;
       sel.appendChild(op);
+    });
+  }
+
+  /* ---------------- DNS real: nombres de internet por DNS sobre HTTPS ----------------
+   * Es lo único que esta página manda por la red, y sólo si el alumno prendió «Resolver nombres
+   * reales». El Motor no sabe de red: acá se pregunta, se valida y se le entrega la respuesta. Una
+   * política de seguridad en el <head> deja a la página llegar a ese único host. */
+  var DOH_URL = "https://cloudflare-dns.com/dns-query";
+  var DOH_TIPOS = ["A", "CNAME", "MX", "NS"];
+  var DOH_TIEMPO_MS = 5000;
+  var DOH_MAX_BYTES = 16384;
+  var DOH_MAX_POR_MINUTO = 10;
+  var DOH_TTL_MAX = 300;
+  var SUFIJOS_RESERVADOS = ["local", "lan", "internal", "home", "localdomain", "localhost", "test", "example", "invalid", "arpa"];
+
+  // Un nombre público y válido; nunca una IP ni un nombre de una red privada.
+  function nombreConsultable(nombre) {
+    var n = String(nombre || "").trim().toLowerCase().replace(/\.$/, "");
+    if (!Motor.nombreDnsValido(n) || Red.esIpValida(n)) { return null; }
+    if (SUFIJOS_RESERVADOS.indexOf(n.split(".").pop()) >= 0) { return null; }
+    return n;
+  }
+
+  function inyectarDnsReal() {
+    if (!S.estado || !S.dnsRealActivo) { return; }
+    var ahora = Date.now();
+    Object.keys(S.dnsReal).forEach(function (clave) {
+      var e = S.dnsReal[clave];
+      if (e.vence <= ahora) { delete S.dnsReal[clave]; return; }
+      var partes = clave.split("|");
+      Motor.cargarDnsReal(S.estado, partes[0], partes[1], e.resultado);
+    });
+  }
+
+  // De la respuesta JSON del servicio a lo que el Motor valida y guarda.
+  function guardarRespuestaDnsReal(nombre, tipo, datos) {
+    if (!datos || typeof datos !== "object" || (datos.Status !== 0 && datos.Status !== 3)) { return { ok: false, motivo: "servicio" }; }
+    var tipos = { 1: "A", 5: "CNAME", 15: "MX", 2: "NS" };
+    var registros = [];
+    (Array.isArray(datos.Answer) ? datos.Answer.slice(0, 50) : []).forEach(function (a) {
+      if (!a || typeof a !== "object" || typeof a.name !== "string" || typeof a.data !== "string" || a.data.length > 255) { return; }
+      var t = tipos[a.type];
+      if (!t) { return; }
+      var r = { nombre: a.name, tipo: t, valor: a.data, ttl: a.TTL };
+      if (t === "MX") {
+        var m = /^(\d{1,5}) (\S+)$/.exec(a.data);
+        // «0 .» es un MX nulo: el dominio declara que no recibe correo, es decir, no tiene MX.
+        if (!m || m[2] === ".") { return; }
+        r.prioridad = Number(m[1]); r.valor = m[2];
+      }
+      registros.push(r);
+    });
+    // Status 3 es «no existe»; Status 0 sin registros del tipo pedido es «existe, pero sin ese tipo».
+    var rcode = datos.Status === 3 ? 3 : 0;
+    var guardado = S.estado ? Motor.cargarDnsReal(S.estado, nombre, tipo, { rcode: rcode, registros: registros }) : { ok: false };
+    if (!guardado.ok) { return { ok: false, motivo: "formato" }; }
+    var ttl = rcode === 3 || !guardado.registros.length ? 60 : DOH_TTL_MAX;
+    guardado.registros.forEach(function (r) { ttl = Math.min(ttl, r.ttl); });
+    S.dnsReal[nombre + "|" + tipo] = { resultado: { rcode: rcode, registros: guardado.registros }, vence: Date.now() + Math.max(ttl, 10) * 1000 };
+    var texto = "Consulta real a Cloudflare (DNS sobre HTTPS): " + nombre + " tipo " + tipo + " \u2192 " +
+      (rcode === 3 ? "no existe" : (guardado.registros.length ? guardado.registros.map(textoRegistroUI).join("; ") : "existe, sin registros de ese tipo"));
+    registrar("DNS", texto);
+    consolaAgregar(texto);
+    return { ok: true };
+  }
+
+  // Lee el cuerpo hasta el tope y lo corta: no hay que cargarlo entero para descartarlo.
+  function leerAcotado(r) {
+    if (!r.body || typeof r.body.getReader !== "function") {
+      return r.text().then(function (t) { if (t.length > DOH_MAX_BYTES) { throw new Error("grande"); } return t; });
+    }
+    var lector = r.body.getReader();
+    var decodificador = new TextDecoder("utf-8");
+    var texto = "", bytes = 0;
+    function leer() {
+      return lector.read().then(function (paso) {
+        if (paso.done) { return texto + decodificador.decode(); }
+        bytes += paso.value.length;
+        if (bytes > DOH_MAX_BYTES) { lector.cancel(); throw new Error("grande"); }
+        texto += decodificador.decode(paso.value, { stream: true });
+        return leer();
+      });
+    }
+    return leer();
+  }
+
+  // Siempre termina con { ok, motivo }: nunca falla ni se cuelga.
+  function consultarDnsReal(nombre, tipo) {
+    var generacion = S.dnsRealGeneracion;
+    return new Promise(function (resolver) {
+      var n = nombreConsultable(nombre);
+      var t = String(tipo || "").toUpperCase();
+      if (!n || DOH_TIPOS.indexOf(t) < 0) { resolver({ ok: false, motivo: "nombre" }); return; }
+      var guardado = S.dnsReal[n + "|" + t];
+      var ahora = Date.now();
+      if (guardado && guardado.vence > ahora) { inyectarDnsReal(); resolver({ ok: true }); return; }
+      S.dnsRealPeticiones = S.dnsRealPeticiones.filter(function (x) { return ahora - x < 60000; });
+      if (S.dnsRealPeticiones.length >= DOH_MAX_POR_MINUTO) { resolver({ ok: false, motivo: "limite" }); return; }
+      if (typeof fetch !== "function") { resolver({ ok: false, motivo: "sin-red" }); return; }
+      S.dnsRealPeticiones.push(ahora);
+      var control = typeof AbortController === "function" ? new AbortController() : null;
+      var reloj = setTimeout(function () { if (control) { control.abort(); } }, DOH_TIEMPO_MS);
+      var url = DOH_URL + "?" + new URLSearchParams({ name: n, type: t }).toString();
+      fetch(url, {
+        method: "GET", headers: { accept: "application/dns-json" }, credentials: "omit", referrerPolicy: "no-referrer",
+        redirect: "error", cache: "no-store", mode: "cors", signal: control ? control.signal : undefined
+      }).then(function (r) {
+        if (!r.ok) { throw new Error("http"); }
+        if (Number(r.headers.get("content-length")) > DOH_MAX_BYTES) { throw new Error("grande"); }
+        return leerAcotado(r);
+      }).then(function (texto) {
+        // Se apagó el interruptor o se abrió otra red mientras tanto: no se usa ni se anota nada.
+        if (generacion !== S.dnsRealGeneracion || !S.dnsRealActivo) { resolver({ ok: false, motivo: "cancelado" }); return; }
+        resolver(guardarRespuestaDnsReal(n, t, JSON.parse(texto)));
+      }).catch(function (e) {
+        var motivo = e instanceof SyntaxError ? "formato" : (e && (e.message === "http" || e.message === "grande") ? e.message : "sin-red");
+        resolver({ ok: false, motivo: motivo });
+      }).then(function () { clearTimeout(reloj); });
+    });
+  }
+
+  function avisarFallaDnsReal(r) {
+    var texto = {
+      "sin-red": "No se pudo consultar el DNS real (¿hay conexión a internet?). Se usa sólo el DNS simulado.",
+      "http": "El servicio de DNS real no pudo responder. Se usa sólo el DNS simulado.",
+      "servicio": "El servicio de DNS real no pudo resolver ese nombre. Se usa sólo el DNS simulado.",
+      "formato": "La respuesta del DNS real no se pudo usar. Se usa sólo el DNS simulado.",
+      "grande": "La respuesta del DNS real era demasiado grande y se descartó. Se usa sólo el DNS simulado.",
+      "limite": "Hiciste muchas consultas reales seguidas (máximo " + DOH_MAX_POR_MINUTO + " por minuto). Esperá un poco."
+    }[r.motivo] || "No se pudo consultar el DNS real. Se usa sólo el DNS simulado.";
+    if (r.motivo === "cancelado") { return; }
+    avisar(texto);
+    consolaAgregar(texto, true);
+    registrar("DNS", texto);
+  }
+
+  function pendienteDnsReal(r) {
+    var res = r && r.res ? r.res : r;
+    return res && res.nombreSinResolver ? res.nombreSinResolver : null;
+  }
+
+  // Calcula con la simulación y, si un nombre de internet no se conocía y el alumno prendió el DNS real,
+  // lo consulta afuera y repite el cálculo. Con el interruptor apagado es síncrono y no toca la red.
+  function conDnsReal(calcular, textoError, alTerminar) {
+    var primero;
+    try { primero = calcular(); }
+    catch (e) { registrar("error", textoError + e.message); return; }
+    var pendiente = S.dnsRealActivo ? pendienteDnsReal(primero) : null;
+    if (!pendiente || !nombreConsultable(pendiente.nombre)) { alTerminar(primero); return; }
+    var generacion = S.dnsRealGeneracion;
+    S.dnsRealOcupado = true;
+    avisar("Consultando " + pendiente.nombre + " en el DNS real (Cloudflare)…");
+    consultarDnsReal(pendiente.nombre, pendiente.tipo).then(function (r) {
+      if (generacion !== S.dnsRealGeneracion) { return; }
+      S.dnsRealOcupado = false;
+      var res = primero;
+      if (r.ok) {
+        try { res = calcular(); }
+        catch (e) { registrar("error", textoError + e.message); return; }
+      } else {
+        avisarFallaDnsReal(r);
+      }
+      alTerminar(res);
     });
   }
 
@@ -13164,14 +13625,25 @@ var UI = (function () {
     c.appendChild(ctrl);
     c.appendChild(renderResultado());
 
+    function ocupadoPorDnsReal() {
+      if (!S.dnsRealOcupado) { return false; }
+      avisar("Esperá: todavía se está consultando el DNS real.");
+      return true;
+    }
+
     function hacerConsulta() {
+      if (ocupadoPorDnsReal()) { return; }
       S.ultimoNombre = selD.value;
       S.origenElegido = selO.value;
       if (!S.estado) { reconstruirEstado(); }
-      var res;
-      try { res = Motor.consultarDns(S.estado, selO.value, selD.value.trim(), selTipoDns.value); }
-      catch (e) { registrar("error", "La consulta DNS falló por un error interno: " + e.message); return; }
-      S.ultimo = { origen: selO.value, destino: selD.value.trim(), res: res, dns: true, tipo: selTipoDns.value };
+      var origen = selO.value, nombre = selD.value.trim(), tipoDns = selTipoDns.value;
+      conDnsReal(function () { return Motor.consultarDns(S.estado, origen, nombre, tipoDns); },
+        "La consulta DNS falló por un error interno: ",
+        function (res) { mostrarConsulta(res, origen, nombre, tipoDns); });
+    }
+
+    function mostrarConsulta(res, origen, nombre, tipoDns) {
+      S.ultimo = { origen: origen, destino: nombre, res: res, dns: true, tipo: tipoDns };
       capturarTramas(res.tramas);
       S.panelRes = "ping";
       S.verTodos = true;
@@ -13181,25 +13653,30 @@ var UI = (function () {
         consolaAgregar(res.respuesta.autoritativa ? "Respuesta autoritativa:" : "Respuesta no autoritativa" + (res.respuesta.desdeCache ? " (desde la caché):" : ":"));
         res.respuesta.registros.forEach(function (x) { consolaAgregar(textoRegistroUI(x)); });
       } else if (res.diagnostico) {
-        consolaAgregar("La consulta de " + selD.value.trim() + " falló: " + res.diagnostico.titulo + " (" + res.diagnostico.codigo + ")", true);
+        consolaAgregar("La consulta de " + nombre + " falló: " + res.diagnostico.titulo + " (" + res.diagnostico.codigo + ")", true);
       }
-      registrar("DNS", "Consulta " + selTipoDns.value + " de " + selD.value.trim() + " desde " + nombreDe(selO.value) + ": " +
+      registrar("DNS", "Consulta " + tipoDns + " de " + nombre + " desde " + nombreDe(origen) + ": " +
         (res.exito ? res.respuesta.registros.map(textoRegistroUI).join("; ") : (res.diagnostico ? res.diagnostico.codigo : "falló")));
       renderInferior();
       animarTramas(res);
     }
 
     function hacerConexion() {
+      if (ocupadoPorDnsReal()) { return; }
       S.ultimoConectar = selD.value;
       S.origenElegido = selO.value;
       if (!S.estado) { reconstruirEstado(); }
       var prot, puerto;
       if (selServ.value === "otro") { prot = selProt.value; puerto = Number(inPuerto.value); }
       else { prot = selServ.value.split(":")[0]; puerto = Number(selServ.value.split(":")[1]); }
-      var res;
-      try { res = Motor.conectar(S.estado, selO.value, selD.value.trim(), prot, puerto); }
-      catch (e) { registrar("error", "La conexión falló por un error interno: " + e.message); return; }
-      S.ultimo = { origen: selO.value, destino: selD.value.trim(), res: res, conexion: true, protocolo: prot, puerto: puerto };
+      var origen = selO.value, destino = selD.value.trim();
+      conDnsReal(function () { return Motor.conectar(S.estado, origen, destino, prot, puerto); },
+        "La conexión falló por un error interno: ",
+        function (res) { mostrarConexion(res, origen, destino, prot, puerto); });
+    }
+
+    function mostrarConexion(res, origen, destino, prot, puerto) {
+      S.ultimo = { origen: origen, destino: destino, res: res, conexion: true, protocolo: prot, puerto: puerto };
       capturarTramas(res.tramas);
       S.panelRes = "ping";
       S.verTodos = true;
@@ -13207,9 +13684,9 @@ var UI = (function () {
       if (res.exito) {
         consolaAgregar("Conexión " + prot.toUpperCase() + " " + res.socket.cliente + " ↔ " + res.socket.servidor + " (" + res.servicio + ")");
       } else if (res.diagnostico) {
-        consolaAgregar("La conexión a " + selD.value.trim() + ":" + puerto + " falló: " + res.diagnostico.titulo + " (" + res.diagnostico.codigo + ")", true);
+        consolaAgregar("La conexión a " + destino + ":" + puerto + " falló: " + res.diagnostico.titulo + " (" + res.diagnostico.codigo + ")", true);
       }
-      registrar("conexion", "Conexión " + prot.toUpperCase() + " de " + nombreDe(selO.value) + " a " + selD.value.trim() + ":" + puerto + ": " +
+      registrar("conexion", "Conexión " + prot.toUpperCase() + " de " + nombreDe(origen) + " a " + destino + ":" + puerto + ": " +
         (res.exito ? "establecida" : (res.diagnostico ? res.diagnostico.codigo : "falló")));
       renderInferior();
       animarTramas(res);
@@ -13218,17 +13695,21 @@ var UI = (function () {
     function hacerPing() {
       if (S.modoSim === "dns") { hacerConsulta(); return; }
       if (S.modoSim === "conectar") { hacerConexion(); return; }
+      if (ocupadoPorDnsReal()) { return; }
       S.ultimoDestino = selD.value;
       S.origenElegido = selO.value;
       if (!S.estado) { reconstruirEstado(); }
-      var res, qos;
       S.semillaPing = (S.semillaPing || 0) + 1;
-      try {
-        qos = Motor.pingRepetido(S.estado, selO.value, selD.value.trim(), { cantidad: Number(selCant.value), semilla: S.semillaPing });
-        res = qos.res;
-      } catch (e) { registrar("error", "El ping falló por un error interno: " + e.message); return; }
+      var origen = selO.value, destino = selD.value.trim(), cantidad = Number(selCant.value), semilla = S.semillaPing;
+      conDnsReal(function () { return Motor.pingRepetido(S.estado, origen, destino, { cantidad: cantidad, semilla: semilla }); },
+        "El ping falló por un error interno: ",
+        function (qos) { mostrarPing(qos, origen, destino); });
+    }
+
+    function mostrarPing(qos, origen, destino) {
+      var res = qos.res;
       animador.detener();
-      pintarPing(selO.value, selD.value.trim(), res, qos);
+      pintarPing(origen, destino, res, qos);
       var animado = false;
       try {
         var saltos = res.saltos || [];
@@ -13459,8 +13940,8 @@ var UI = (function () {
     var res = S.ultimo.res;
     cont.appendChild(renderRecorrido(res));
     var lado = el("div", "lado");
-    // Con el resultado a la vista, la consola va en su propia columna: debajo
-    // de la banda quedaba sin alto.
+    // Con el resultado a la vista, la consola va en su propia columna, sea un
+    // éxito o un diagnóstico: debajo de la tarjeta quedaba fuera de la vista.
     var conConsola = false;
     if (S.ultimo.conexion) {
       // El socket y los segmentos, uno por línea: → del cliente, ← del servidor.
@@ -13482,7 +13963,7 @@ var UI = (function () {
         var dgC = renderDiagnostico(res.diagnostico);
         if (lineas.length) { dgC.appendChild(el("div", "segmentos", lineas.join("<br>"))); }
         lado.appendChild(dgC);
-        lado.appendChild(renderConsolaPlegable());
+        conConsola = true;
       }
     } else if (S.ultimo.dns && res.exito) {
       // Respuesta como la de nslookup: quién respondió, si es autoritativa
@@ -13497,7 +13978,7 @@ var UI = (function () {
     } else if (res.exito && S.ultimo.qos && S.ultimo.qos.diagnostico) {
       // El camino existe, pero se perdieron todos los paquetes (D32).
       lado.appendChild(renderDiagnostico(S.ultimo.qos.diagnostico));
-      lado.appendChild(renderConsolaPlegable());
+      conConsola = true;
     } else if (res.exito) {
       var r = res.respuestas[0] || { ms: 1, ttl: 64 };
       var ruta = rutaNombres(res);
@@ -13512,8 +13993,7 @@ var UI = (function () {
       conConsola = true;
     } else {
       lado.appendChild(renderDiagnostico(res.diagnostico));
-      // Con un diagnóstico a la vista, la consola se pliega a una línea.
-      lado.appendChild(renderConsolaPlegable());
+      conConsola = true;
     }
     cont.appendChild(lado);
     if (conConsola) {
@@ -13917,22 +14397,6 @@ var UI = (function () {
     return cons;
   }
 
-  function renderConsolaPlegable() {
-    var cont = el("div", "");
-    cont.style.display = "flex";
-    cont.style.flexDirection = "column";
-    cont.style.minHeight = "0";
-    cont.style.flex = S.consolaAbierta ? "1" : "0 0 auto";
-    var b = boton("Consola · " + S.lineasConsola.length + " líneas " + (S.consolaAbierta ? "▾" : "▸"), "consolabtn");
-    b.setAttribute("aria-expanded", String(!!S.consolaAbierta));
-    b.setAttribute("data-foco", "consola");
-    b.addEventListener("click", function () { S.consolaAbierta = !S.consolaAbierta; renderInferior(); });
-    cont.appendChild(b);
-    if (S.consolaAbierta) { cont.appendChild(renderConsola()); }
-    else { S.consola = null; }
-    return cont;
-  }
-
   // La captura guarda los últimos MAX_CAPTURA paquetes: en una clase larga la
   // tabla se redibuja entera y, sin tope, la pestaña se pone lenta.
   var MAX_CAPTURA = 500;
@@ -13959,7 +14423,6 @@ var UI = (function () {
     S.panelRes = "ping";
     S.verTodos = false;
     S.verTramas = false;
-    S.consolaAbierta = false;
     if (res.exito && qos && qos.estadisticas) {
       var est = qos.estadisticas;
       var desde = res.ipResuelta || destino;
@@ -15537,6 +16000,7 @@ var UI = (function () {
     S.topologia = clonar(topologia);
     S.fallasVivas = { enlaces: {}, equipos: {} };
     S.herramientaFalla = null;
+    S.dnsRealActivo = false; S.dnsReal = {}; S.dnsRealOcupado = false; S.dnsRealGeneracion += 1;
     S.seleccionado = null; S.enlaceSel = null;
     S.deshacer = []; S.rehacer = [];
     reconstruirEstado();
@@ -15833,12 +16297,19 @@ var Autotest = (function () {
   }
 
   function crit01() {
-    var nombre = "El archivo no hace ninguna petición de red";
+    var nombre = "El archivo no hace peticiones de red salvo la consulta DNS real a pedido, a un único host fijo";
     try {
       var html = document.documentElement.outerHTML || "";
       var ag = agujaRed();
       var bajos = html.toLowerCase();
-      var tieneFetch = html.indexOf(ag.a + "(") >= 0 || html.indexOf(ag.a + " (") >= 0;
+      // La única llamada admitida es la consulta DNS sobre HTTPS a pedido (SRE-1029).
+      var llamadas = html.split(ag.a + "(").length - 1 + html.split(ag.a + " (").length - 1;
+      var urlFija = "https://cloudflare-dns.com/dns-query";
+      var tieneFetch = llamadas > 1 || (llamadas === 1 && html.indexOf('DOH_URL = "' + urlFija + '"') < 0);
+      var metaCsp = document.querySelector('meta[http-equiv="Content-Security-Policy"]');
+      var csp = metaCsp ? metaCsp.getAttribute("content") || "" : "";
+      var cspOk = /default-src 'none'/.test(csp) && /connect-src https:\/\/cloudflare-dns\.com(;|$)/.test(csp) &&
+        !/connect-src[^;]*(\*|http:)/.test(csp) && !/script-src[^;]*https?:/.test(csp);
       var tieneXhr = html.indexOf(ag.b) >= 0;
       var tieneImportDin = html.indexOf(ag.c) >= 0 || html.indexOf(ag.c.trim()) >= 0 && false;
       var imp = "im" + "port";
@@ -15848,7 +16319,10 @@ var Autotest = (function () {
       var cssUrlExt = /url\s*\(\s*["']?\s*(https?:|\/\/)/i.test(html);
       var problemas = [];
       if (tieneFetch) {
-        problemas.push("aparece llamada de red (" + ag.a + ")");
+        problemas.push("hay " + llamadas + " llamadas de red (" + ag.a + ") o no es la de la URL fija");
+      }
+      if (!cspOk) {
+        problemas.push("falta la política de seguridad que limita la red al host fijo");
       }
       if (tieneXhr) {
         problemas.push("aparece " + ag.b);
@@ -15868,9 +16342,9 @@ var Autotest = (function () {
       /* Los blobs locales (URL.createObjectURL) no son red: se admiten. */
       void bajos;
       if (problemas.length === 0) {
-        return fila(1, nombre, true, "Sin llamadas de red ni referencias externas en el documento.");
+        return fila(1, nombre, true, "Una sola llamada de red, hacia " + urlFija + ", limitada por la política de seguridad; sin otras referencias externas.");
       }
-      return fila(1, nombre, false, "Se esperaba cero referencias externas y se encontró: " + problemas.join("; ") + ".");
+      return fila(1, nombre, false, "Se esperaba una sola llamada de red, a la URL fija y limitada por la política de seguridad, y se encontró: " + problemas.join("; ") + ".");
     } catch (e) {
       return fila(1, nombre, false, "No se pudo inspeccionar el documento: " + e.message);
     }
@@ -17343,6 +17817,10 @@ var Autotest = (function () {
       if (pingPorLaInterfaz() !== true) { prob.push("el ping de partida no responde"); }
       if (UI.alternarFalla("enlace", "l-r1-r2") !== true) { prob.push("no se pudo cortar el cable"); }
       if (pingPorLaInterfaz() !== false) { prob.push("con el cable cortado el ping responde igual"); }
+      // Un error también muestra la consola, en su propia columna y a la vista.
+      var resError = document.querySelector(".siminf .simres");
+      if (!resError || !resError.querySelector(".colconsola .consola")) { prob.push("con un error la consola no tiene su columna"); }
+      else if (resError.children.length !== 3) { prob.push("con un error el resultado no está en tres columnas"); }
       if (cable("l-r1-r2").estado !== "up") { prob.push("el corte entró al diseño"); }
       if (UI.fallasEnVivo().enlaces.join() !== "l-r1-r2") { prob.push("no registra el corte"); }
       if (ariaDelCable().indexOf("cortado en vivo") < 0) { prob.push("el cable no dice «cortado en vivo»"); }
@@ -17368,7 +17846,80 @@ var Autotest = (function () {
     }
   }
 
-  var CRITERIOS_TECNICOS = [crit01, crit09, crit10, crit11, crit13, crit14, crit15, crit16, crit24, crit25, crit26, crit27, crit28, crit30, crit32, crit33];
+  // DNS real a pedido (SRE-1029). Con un fetch simulado: la prueba nunca sale a la red.
+  function crit34() {
+    var nombre = "DNS real: apagado no sale a la red; prendido sólo consulta nombres públicos, con la URL y las opciones fijas";
+    var previo = modoActualDom();
+    var original = window[agujaRed().a];
+    var llamadas = [];
+    try {
+      var prob = [];
+      window[agujaRed().a] = function (url, opciones) {
+        llamadas.push({ url: String(url), opciones: opciones || {} });
+        return Promise.reject(new TypeError("autotest"));
+      };
+      UI.setModo("topologia");
+      UI.cargarTopologia(clonar(ejemploPorId("oficina-dns").topologia));
+      document.getElementById("sim-tab-inf-simulacion").click();
+      function inf() { return document.querySelector(".siminf"); }
+      function campo(rotulo) {
+        var r = null;
+        inf().querySelectorAll("label").forEach(function (l) { if (l.textContent === rotulo) { r = document.getElementById(l.htmlFor); } });
+        return r;
+      }
+      function consultar(nombreDns) {
+        var botones = inf().querySelectorAll(".modosim button");
+        for (var i = 0; i < botones.length; i++) { if (botones[i].textContent === "Consultar DNS") { botones[i].click(); } }
+        var origen = campo("Origen"), n = campo("Nombre"), b = inf().querySelector(".simctrl button.primario");
+        if (!origen || !n || !b) { return false; }
+        origen.value = "pc1";
+        origen.dispatchEvent(new Event("change", { bubbles: true }));
+        n.value = nombreDns;
+        n.dispatchEvent(new Event("input", { bubbles: true }));
+        b.click();
+        return true;
+      }
+      function interruptor() { return inf().querySelector("[data-foco=dnsreal]"); }
+      var sw = interruptor();
+      if (!sw) { return fila(34, nombre, false, "Falla: no está el interruptor «Resolver nombres reales»."); }
+      if (sw.checked) { prob.push("el interruptor arranca prendido"); }
+
+      if (!consultar("example.com")) { prob.push("no se encontró el formulario de consulta DNS"); }
+      if (llamadas.length !== 0) { prob.push("apagado, salió " + llamadas.length + " petición(es) a la red"); }
+      if (!/El nombre no existe/.test(inf().textContent)) { prob.push("apagado, example.com no da D25"); }
+
+      interruptor().click();
+      if (!interruptor() || !interruptor().checked) { prob.push("no se pudo prender el interruptor"); }
+      if (!/Cloudflare/.test(inf().textContent)) { prob.push("prendido, no avisa a quién se consulta"); }
+      ["host.home", "x.localdomain", "solo", "a b.com", "10.1.1.1"].forEach(function (n) {
+        consultar(n);
+        if (llamadas.length !== 0) { prob.push("consultó «" + n + "», que no es un nombre público"); }
+      });
+      consultar("example.com");
+      if (llamadas.length !== 1) { prob.push("example.com hizo " + llamadas.length + " peticiones en vez de 1"); }
+      else {
+        var ll = llamadas[0], op = ll.opciones;
+        if (ll.url !== "https://cloudflare-dns.com/dns-query?name=example.com&type=A") { prob.push("URL inesperada: " + ll.url); }
+        if (op.credentials !== "omit" || op.referrerPolicy !== "no-referrer" || op.redirect !== "error" || op.method !== "GET") {
+          prob.push("opciones de seguridad inesperadas");
+        }
+      }
+      // Hay una consulta en curso: otra no sale hasta que termine.
+      consultar("example.org");
+      if (llamadas.length !== 1) { prob.push("salió una segunda consulta con una en curso"); }
+
+      if (prob.length === 0) { return fila(34, nombre, true, "Apagado: ninguna petición. Prendido: los nombres locales o inválidos no salen; example.com hace una sola consulta GET a la URL fija, sin credenciales ni referrer."); }
+      return fila(34, nombre, false, "Falla: " + prob.join("; ") + ".");
+    } catch (e) {
+      return fila(34, nombre, false, "Excepción: " + e.message);
+    } finally {
+      window[agujaRed().a] = original;
+      try { UI.cargarTopologia(clonar(ejemploPorId("complejo").topologia)); } catch (e1) { /* se sigue igual */ }
+      try { UI.setModo(previo); } catch (e2) { /* se sigue igual */ }
+    }
+  }
+
+  var CRITERIOS_TECNICOS = [crit01, crit09, crit10, crit11, crit13, crit14, crit15, crit16, crit24, crit25, crit26, crit27, crit28, crit30, crit32, crit33, crit34];
 
   function correr(opciones) {
     var tecnico = !!(opciones && opciones.tecnico);
