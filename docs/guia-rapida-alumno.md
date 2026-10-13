@@ -153,6 +153,17 @@ Para preguntar sin hacer ping, en **Simulación** elegí **Consultar DNS**: escr
 
 Un servidor se agrega desde la paleta (**Servidor**); en su pestaña **DNS** se cargan la zona y los registros: **A** (nombre → IP), **CNAME** (un nombre que es alias de otro), **MX** (el servidor de correo de un dominio) y **NS** (el servidor DNS de un dominio). El ejemplo **Oficina con DNS propio** trae todo armado. Los problemas de DNS tienen sus propios diagnósticos (D24 a D26, D29 y D30): están en la tabla de arriba.
 
+### Nombres reales de internet (a pedido)
+
+La simulación sólo conoce unos pocos nombres de internet (google.com, wikipedia.org, dns.google y one.one.one.one). Si querés probar con otros, por ejemplo `example.com`, prendé **«Resolver nombres reales (requiere internet)»** en la franja de Simulación. Ese nombre se consulta de verdad a **Cloudflare** (por DNS sobre HTTPS) y el ping, la consulta DNS y Conectar usan la IP real; el recorrido te dice qué respuesta es real.
+
+Tené en cuenta:
+
+- **Sale a internet el nombre que escribís**, y nada más. Por eso viene apagado y se apaga solo al recargar o al abrir otra red.
+- No se consultan IP ni nombres de redes privadas (`.local`, `.lan`, `.home`…): esos los resuelve tu propio servidor DNS.
+- El ping y la conexión **siguen siendo simulados**: llegan a la IP real, pero no hay un servidor de verdad del otro lado. Que el ping responda no prueba que ahí haya un servicio.
+- Sin conexión, el simulador avisa y sigue con el DNS simulado.
+
 ## Captura: lo que pasa por un cable
 
 En la pestaña **Captura** elegís un cable (o todos), apretás **Iniciar captura** y después hacés pings, consultas DNS o conexiones en Simulación. Cada paquete que pase por ese cable aparece numerado, como en Wireshark: origen, destino, protocolo e información (por ejemplo `49612 → 80 [SYN] Seq=1000`). Al tocar uno, ves sus capas: la trama (MAC), el paquete IP (IP y TTL), el segmento TCP o el datagrama UDP (puertos, indicadores) y los datos de la aplicación.

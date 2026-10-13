@@ -10,6 +10,12 @@ Los números siguen la forma MAYOR.MENOR.PARCHE:
 
 Los archivos de red llevan el número de su formato (`version`) y la versión del simulador que los exportó (`generador`). Un archivo de un formato anterior se actualiza solo al abrirlo.
 
+## 1.8.0 — 2026-10-13
+
+- **Resolver nombres reales de internet, a pedido.** Hasta ahora el DNS simulado sólo conocía cuatro nombres de internet (google.com, wikipedia.org, dns.google y one.one.one.one). En la franja de Simulación hay un interruptor **«Resolver nombres reales (requiere internet)»**, apagado al abrir. Prendido, un nombre que la simulación no conoce (por ejemplo example.com) se consulta de verdad a Cloudflare por DNS sobre HTTPS, y el ping, Consultar DNS (A, CNAME, MX y NS) y Conectar lo usan. El recorrido dice cuál es la respuesta real y de dónde viene. El ping y la conexión siguen simulados, hacia la IP real: los navegadores no mandan ICMP.
+- **Qué sale a la red.** Sólo el nombre que escribís, y sólo si prendiste el interruptor, la simulación no lo conocía y es un nombre público válido (no una IP, ni `.local`, `.lan`, `.home` u otros nombres de redes privadas). Hasta 10 consultas por minuto, de a una, con 5 segundos de tiempo máximo y sin credenciales ni datos de la página. Se apaga al recargar o al abrir otra red. La página tiene una política de seguridad que sólo la deja conectarse a `cloudflare-dns.com`, y lo que vuelve se valida antes de usarse (se descartan las IP privadas y lo que no tiene forma de nombre o dirección).
+- **Sin conexión, todo sigue igual.** Si no hay internet o el servicio no responde, la herramienta avisa y queda el DNS simulado de siempre.
+
 ## 1.7.0 — 2026-10-13
 
 - **Fallas en vivo: cortar un cable o apagar un equipo con un clic.** En la paleta, debajo de «Conectar con un cable», hay una sección **Fallas en vivo** con **Cortar un cable**, **Apagar un equipo** y **Restaurar todo**. Con una herramienta activa, un clic en un cable (o en un equipo) lo cae y otro clic lo restaura; Esc o un clic en el fondo del lienzo sale. Las propiedades de un cable o equipo fallado en vivo lo avisan y traen un botón para restaurarlo. El cable cortado se ve rojo y punteado con ⚡ y el equipo apagado, atenuado con ⚡. Después se repite el ping, la consulta DNS, la conexión o el DORA para ver el efecto, con el diagnóstico de siempre («el cable… está marcado como caído»).

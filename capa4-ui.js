@@ -42,6 +42,11 @@ var UI = (function () {
     herramientaCable: null,
     herramientaFalla: null,
     fallasVivas: { enlaces: {}, equipos: {} },
+    dnsRealActivo: false,
+    dnsReal: {},
+    dnsRealPeticiones: [],
+    dnsRealOcupado: false,
+    dnsRealGeneracion: 0,
     cableTipo: "ethernet",
     cableOrigen: null,
     colocando: null,
@@ -345,6 +350,7 @@ var UI = (function () {
     } catch (e) {
       S.estado = null;
     }
+    inyectarDnsReal();
   }
 
   /* ---------------- CSS inyectado ---------------- */
@@ -555,6 +561,8 @@ var UI = (function () {
     ".recorrido .pasos{flex:1;min-height:0;overflow:auto;padding:4px 10px;}",
     ".recorrido .trama{cursor:pointer;}",
     ".recorrido .trama.actual{background:rgba(245,158,11,.18);outline:1px solid #f59e0b;border-radius:4px;}",
+    ".simctrl label.dnsreal{display:inline-flex;align-items:center;gap:4px;font-size:12px;}",
+    ".simctrl .dnsreal-nota{flex:1 0 100%;margin:0;font-size:12px;color:var(--sim-tenue);}",
     ".ctl-anim{display:inline-flex;align-items:center;gap:6px;font-style:normal;flex-wrap:wrap;}",
     ".ctl-anim select,.ctl-anim button{font-size:12px;padding:2px 6px;}",
     ".ctl-anim .ley{display:inline-flex;align-items:center;gap:3px;font-size:12px;color:var(--sim-tenue);}",
@@ -3491,6 +3499,145 @@ var UI = (function () {
     });
   }
 
+  /* ---------------- DNS real: nombres de internet por DNS sobre HTTPS ----------------
+   * Es lo único que esta página manda por la red, y sólo si el alumno prendió «Resolver nombres
+   * reales». El Motor no sabe de red: acá se pregunta, se valida y se le entrega la respuesta. Una
+   * política de seguridad en el <head> deja a la página llegar a ese único host. */
+  var DOH_URL = "https://cloudflare-dns.com/dns-query";
+  var DOH_TIPOS = ["A", "CNAME", "MX", "NS"];
+  var DOH_TIEMPO_MS = 5000;
+  var DOH_MAX_BYTES = 16384;
+  var DOH_MAX_POR_MINUTO = 10;
+  var DOH_TTL_MAX = 300;
+  var SUFIJOS_RESERVADOS = ["local", "lan", "internal", "home", "localdomain", "localhost", "test", "example", "invalid", "arpa"];
+
+  // Un nombre público y válido; nunca una IP ni un nombre de una red privada.
+  function nombreConsultable(nombre) {
+    var n = String(nombre || "").trim().toLowerCase().replace(/\.$/, "");
+    if (!Motor.nombreDnsValido(n) || Red.esIpValida(n)) { return null; }
+    if (SUFIJOS_RESERVADOS.indexOf(n.split(".").pop()) >= 0) { return null; }
+    return n;
+  }
+
+  function inyectarDnsReal() {
+    if (!S.estado) { return; }
+    var ahora = Date.now();
+    Object.keys(S.dnsReal).forEach(function (clave) {
+      var e = S.dnsReal[clave];
+      if (e.vence <= ahora) { delete S.dnsReal[clave]; return; }
+      var partes = clave.split("|");
+      Motor.cargarDnsReal(S.estado, partes[0], partes[1], e.resultado);
+    });
+  }
+
+  // De la respuesta JSON del servicio a lo que el Motor valida y guarda.
+  function guardarRespuestaDnsReal(nombre, tipo, datos) {
+    if (!datos || typeof datos !== "object" || (datos.Status !== 0 && datos.Status !== 3)) { return { ok: false, motivo: "servicio" }; }
+    var tipos = { 1: "A", 5: "CNAME", 15: "MX", 2: "NS" };
+    var registros = [];
+    (Array.isArray(datos.Answer) ? datos.Answer.slice(0, 50) : []).forEach(function (a) {
+      if (!a || typeof a !== "object" || typeof a.name !== "string" || typeof a.data !== "string" || a.data.length > 255) { return; }
+      var t = tipos[a.type];
+      if (!t) { return; }
+      var r = { nombre: a.name, tipo: t, valor: a.data, ttl: a.TTL };
+      if (t === "MX") {
+        var m = /^(\d{1,5}) (\S+)$/.exec(a.data);
+        if (!m) { return; }
+        r.prioridad = Number(m[1]); r.valor = m[2];
+      }
+      registros.push(r);
+    });
+    // Existe pero no tiene registros de ese tipo: para la simulación es como si no existiera.
+    var rcode = datos.Status === 0 && registros.length ? 0 : 3;
+    var guardado = S.estado ? Motor.cargarDnsReal(S.estado, nombre, tipo, { rcode: rcode, registros: registros }) : { ok: false };
+    if (!guardado.ok) { return { ok: false, motivo: "formato" }; }
+    var ttl = rcode === 3 ? 60 : DOH_TTL_MAX;
+    guardado.registros.forEach(function (r) { ttl = Math.min(ttl, r.ttl); });
+    S.dnsReal[nombre + "|" + tipo] = { resultado: { rcode: rcode, registros: guardado.registros }, vence: Date.now() + ttl * 1000 };
+    var texto = "Consulta real a Cloudflare (DNS sobre HTTPS): " + nombre + " tipo " + tipo + " \u2192 " +
+      (rcode === 3 ? "no existe" : guardado.registros.map(textoRegistroUI).join("; "));
+    registrar("DNS", texto);
+    consolaAgregar(texto);
+    return { ok: true };
+  }
+
+  // Siempre termina con { ok, motivo }: nunca falla ni se cuelga.
+  function consultarDnsReal(nombre, tipo) {
+    return new Promise(function (resolver) {
+      var n = nombreConsultable(nombre);
+      var t = String(tipo || "").toUpperCase();
+      if (!n || DOH_TIPOS.indexOf(t) < 0) { resolver({ ok: false, motivo: "nombre" }); return; }
+      var guardado = S.dnsReal[n + "|" + t];
+      var ahora = Date.now();
+      if (guardado && guardado.vence > ahora) { inyectarDnsReal(); resolver({ ok: true }); return; }
+      S.dnsRealPeticiones = S.dnsRealPeticiones.filter(function (x) { return ahora - x < 60000; });
+      if (S.dnsRealPeticiones.length >= DOH_MAX_POR_MINUTO) { resolver({ ok: false, motivo: "limite" }); return; }
+      if (typeof fetch !== "function") { resolver({ ok: false, motivo: "sin-red" }); return; }
+      S.dnsRealPeticiones.push(ahora);
+      var control = typeof AbortController === "function" ? new AbortController() : null;
+      var reloj = setTimeout(function () { if (control) { control.abort(); } }, DOH_TIEMPO_MS);
+      var url = DOH_URL + "?" + new URLSearchParams({ name: n, type: t }).toString();
+      fetch(url, {
+        method: "GET", headers: { accept: "application/dns-json" }, credentials: "omit", referrerPolicy: "no-referrer",
+        redirect: "error", cache: "no-store", mode: "cors", signal: control ? control.signal : undefined
+      }).then(function (r) {
+        if (!r.ok) { throw new Error("http"); }
+        if (Number(r.headers.get("content-length")) > DOH_MAX_BYTES) { throw new Error("grande"); }
+        return r.text();
+      }).then(function (texto) {
+        if (texto.length > DOH_MAX_BYTES) { throw new Error("grande"); }
+        resolver(guardarRespuestaDnsReal(n, t, JSON.parse(texto)));
+      }).catch(function (e) {
+        var motivo = e instanceof SyntaxError ? "formato" : (e && (e.message === "http" || e.message === "grande") ? e.message : "sin-red");
+        resolver({ ok: false, motivo: motivo });
+      }).then(function () { clearTimeout(reloj); });
+    });
+  }
+
+  function avisarFallaDnsReal(r) {
+    var texto = {
+      "sin-red": "No se pudo consultar el DNS real (¿hay conexión a internet?). Se usa sólo el DNS simulado.",
+      "http": "El servicio de DNS real no pudo responder. Se usa sólo el DNS simulado.",
+      "servicio": "El servicio de DNS real no pudo resolver ese nombre. Se usa sólo el DNS simulado.",
+      "formato": "La respuesta del DNS real no se pudo usar. Se usa sólo el DNS simulado.",
+      "grande": "La respuesta del DNS real era demasiado grande y se descartó. Se usa sólo el DNS simulado.",
+      "limite": "Hiciste muchas consultas reales seguidas (máximo " + DOH_MAX_POR_MINUTO + " por minuto). Esperá un poco."
+    }[r.motivo] || "No se pudo consultar el DNS real. Se usa sólo el DNS simulado.";
+    avisar(texto);
+    consolaAgregar(texto, true);
+    registrar("DNS", texto);
+  }
+
+  function pendienteDnsReal(r) {
+    var res = r && r.res ? r.res : r;
+    return res && res.nombreSinResolver ? res.nombreSinResolver : null;
+  }
+
+  // Calcula con la simulación y, si un nombre de internet no se conocía y el alumno prendió el DNS real,
+  // lo consulta afuera y repite el cálculo. Con el interruptor apagado es síncrono y no toca la red.
+  function conDnsReal(calcular, textoError, alTerminar) {
+    var primero;
+    try { primero = calcular(); }
+    catch (e) { registrar("error", textoError + e.message); return; }
+    var pendiente = S.dnsRealActivo ? pendienteDnsReal(primero) : null;
+    if (!pendiente || !nombreConsultable(pendiente.nombre)) { alTerminar(primero); return; }
+    var generacion = S.dnsRealGeneracion;
+    S.dnsRealOcupado = true;
+    avisar("Consultando " + pendiente.nombre + " en el DNS real (Cloudflare)…");
+    consultarDnsReal(pendiente.nombre, pendiente.tipo).then(function (r) {
+      if (generacion !== S.dnsRealGeneracion) { return; }
+      S.dnsRealOcupado = false;
+      var res = primero;
+      if (r.ok) {
+        try { res = calcular(); }
+        catch (e) { registrar("error", textoError + e.message); return; }
+      } else {
+        avisarFallaDnsReal(r);
+      }
+      alTerminar(res);
+    });
+  }
+
   function panelSimulacion(c) {
     c.classList.add("sim");
     var ctrl = el("div", "simctrl");
@@ -3588,6 +3735,25 @@ var UI = (function () {
       });
       ctrl.appendChild(bVaciar);
     }
+    var chkReal = document.createElement("input");
+    chkReal.type = "checkbox"; chkReal.checked = S.dnsRealActivo;
+    chkReal.setAttribute("data-foco", "dnsreal");
+    chkReal.addEventListener("change", function () {
+      S.dnsRealActivo = chkReal.checked;
+      registrar("DNS", S.dnsRealActivo
+        ? "DNS real activado: los nombres que la simulación no conozca se consultan a Cloudflare."
+        : "DNS real desactivado: no se hace ninguna consulta por la red.");
+      renderInferior();
+    });
+    var labReal = el("label", "enlinea dnsreal");
+    labReal.appendChild(chkReal);
+    labReal.appendChild(document.createTextNode(" Resolver nombres reales (requiere internet)"));
+    labReal.title = "Los nombres que la simulación no conoce se consultan a Cloudflare (cloudflare-dns.com) por DNS sobre HTTPS. Se apaga al recargar la página o al abrir otra red.";
+    ctrl.appendChild(labReal);
+    if (S.dnsRealActivo) {
+      ctrl.appendChild(el("p", "nota dnsreal-nota",
+        "\u26A0 Los nombres que la simulación no conozca se envían a Cloudflare (cloudflare-dns.com) por DNS sobre HTTPS: es una consulta real por internet. Se apaga al recargar."));
+    }
     ctrl.appendChild(el("span", "espacio"));
     // Los botones están siempre en el mismo lugar; si no aplican, quedan
     // deshabilitados en lugar de desaparecer.
@@ -3611,14 +3777,25 @@ var UI = (function () {
     c.appendChild(ctrl);
     c.appendChild(renderResultado());
 
+    function ocupadoPorDnsReal() {
+      if (!S.dnsRealOcupado) { return false; }
+      avisar("Esperá: todavía se está consultando el DNS real.");
+      return true;
+    }
+
     function hacerConsulta() {
+      if (ocupadoPorDnsReal()) { return; }
       S.ultimoNombre = selD.value;
       S.origenElegido = selO.value;
       if (!S.estado) { reconstruirEstado(); }
-      var res;
-      try { res = Motor.consultarDns(S.estado, selO.value, selD.value.trim(), selTipoDns.value); }
-      catch (e) { registrar("error", "La consulta DNS falló por un error interno: " + e.message); return; }
-      S.ultimo = { origen: selO.value, destino: selD.value.trim(), res: res, dns: true, tipo: selTipoDns.value };
+      var origen = selO.value, nombre = selD.value.trim(), tipoDns = selTipoDns.value;
+      conDnsReal(function () { return Motor.consultarDns(S.estado, origen, nombre, tipoDns); },
+        "La consulta DNS falló por un error interno: ",
+        function (res) { mostrarConsulta(res, origen, nombre, tipoDns); });
+    }
+
+    function mostrarConsulta(res, origen, nombre, tipoDns) {
+      S.ultimo = { origen: origen, destino: nombre, res: res, dns: true, tipo: tipoDns };
       capturarTramas(res.tramas);
       S.panelRes = "ping";
       S.verTodos = true;
@@ -3628,25 +3805,30 @@ var UI = (function () {
         consolaAgregar(res.respuesta.autoritativa ? "Respuesta autoritativa:" : "Respuesta no autoritativa" + (res.respuesta.desdeCache ? " (desde la caché):" : ":"));
         res.respuesta.registros.forEach(function (x) { consolaAgregar(textoRegistroUI(x)); });
       } else if (res.diagnostico) {
-        consolaAgregar("La consulta de " + selD.value.trim() + " falló: " + res.diagnostico.titulo + " (" + res.diagnostico.codigo + ")", true);
+        consolaAgregar("La consulta de " + nombre + " falló: " + res.diagnostico.titulo + " (" + res.diagnostico.codigo + ")", true);
       }
-      registrar("DNS", "Consulta " + selTipoDns.value + " de " + selD.value.trim() + " desde " + nombreDe(selO.value) + ": " +
+      registrar("DNS", "Consulta " + tipoDns + " de " + nombre + " desde " + nombreDe(origen) + ": " +
         (res.exito ? res.respuesta.registros.map(textoRegistroUI).join("; ") : (res.diagnostico ? res.diagnostico.codigo : "falló")));
       renderInferior();
       animarTramas(res);
     }
 
     function hacerConexion() {
+      if (ocupadoPorDnsReal()) { return; }
       S.ultimoConectar = selD.value;
       S.origenElegido = selO.value;
       if (!S.estado) { reconstruirEstado(); }
       var prot, puerto;
       if (selServ.value === "otro") { prot = selProt.value; puerto = Number(inPuerto.value); }
       else { prot = selServ.value.split(":")[0]; puerto = Number(selServ.value.split(":")[1]); }
-      var res;
-      try { res = Motor.conectar(S.estado, selO.value, selD.value.trim(), prot, puerto); }
-      catch (e) { registrar("error", "La conexión falló por un error interno: " + e.message); return; }
-      S.ultimo = { origen: selO.value, destino: selD.value.trim(), res: res, conexion: true, protocolo: prot, puerto: puerto };
+      var origen = selO.value, destino = selD.value.trim();
+      conDnsReal(function () { return Motor.conectar(S.estado, origen, destino, prot, puerto); },
+        "La conexión falló por un error interno: ",
+        function (res) { mostrarConexion(res, origen, destino, prot, puerto); });
+    }
+
+    function mostrarConexion(res, origen, destino, prot, puerto) {
+      S.ultimo = { origen: origen, destino: destino, res: res, conexion: true, protocolo: prot, puerto: puerto };
       capturarTramas(res.tramas);
       S.panelRes = "ping";
       S.verTodos = true;
@@ -3654,9 +3836,9 @@ var UI = (function () {
       if (res.exito) {
         consolaAgregar("Conexión " + prot.toUpperCase() + " " + res.socket.cliente + " ↔ " + res.socket.servidor + " (" + res.servicio + ")");
       } else if (res.diagnostico) {
-        consolaAgregar("La conexión a " + selD.value.trim() + ":" + puerto + " falló: " + res.diagnostico.titulo + " (" + res.diagnostico.codigo + ")", true);
+        consolaAgregar("La conexión a " + destino + ":" + puerto + " falló: " + res.diagnostico.titulo + " (" + res.diagnostico.codigo + ")", true);
       }
-      registrar("conexion", "Conexión " + prot.toUpperCase() + " de " + nombreDe(selO.value) + " a " + selD.value.trim() + ":" + puerto + ": " +
+      registrar("conexion", "Conexión " + prot.toUpperCase() + " de " + nombreDe(origen) + " a " + destino + ":" + puerto + ": " +
         (res.exito ? "establecida" : (res.diagnostico ? res.diagnostico.codigo : "falló")));
       renderInferior();
       animarTramas(res);
@@ -3665,17 +3847,21 @@ var UI = (function () {
     function hacerPing() {
       if (S.modoSim === "dns") { hacerConsulta(); return; }
       if (S.modoSim === "conectar") { hacerConexion(); return; }
+      if (ocupadoPorDnsReal()) { return; }
       S.ultimoDestino = selD.value;
       S.origenElegido = selO.value;
       if (!S.estado) { reconstruirEstado(); }
-      var res, qos;
       S.semillaPing = (S.semillaPing || 0) + 1;
-      try {
-        qos = Motor.pingRepetido(S.estado, selO.value, selD.value.trim(), { cantidad: Number(selCant.value), semilla: S.semillaPing });
-        res = qos.res;
-      } catch (e) { registrar("error", "El ping falló por un error interno: " + e.message); return; }
+      var origen = selO.value, destino = selD.value.trim(), cantidad = Number(selCant.value), semilla = S.semillaPing;
+      conDnsReal(function () { return Motor.pingRepetido(S.estado, origen, destino, { cantidad: cantidad, semilla: semilla }); },
+        "El ping falló por un error interno: ",
+        function (qos) { mostrarPing(qos, origen, destino); });
+    }
+
+    function mostrarPing(qos, origen, destino) {
+      var res = qos.res;
       animador.detener();
-      pintarPing(selO.value, selD.value.trim(), res, qos);
+      pintarPing(origen, destino, res, qos);
       var animado = false;
       try {
         var saltos = res.saltos || [];
@@ -5984,6 +6170,7 @@ var UI = (function () {
     S.topologia = clonar(topologia);
     S.fallasVivas = { enlaces: {}, equipos: {} };
     S.herramientaFalla = null;
+    S.dnsRealActivo = false; S.dnsReal = {}; S.dnsRealOcupado = false; S.dnsRealGeneracion += 1;
     S.seleccionado = null; S.enlaceSel = null;
     S.deshacer = []; S.rehacer = [];
     reconstruirEstado();

@@ -231,12 +231,19 @@ var Autotest = (function () {
   }
 
   function crit01() {
-    var nombre = "El archivo no hace ninguna petición de red";
+    var nombre = "El archivo no hace peticiones de red salvo la consulta DNS real a pedido, a un único host fijo";
     try {
       var html = document.documentElement.outerHTML || "";
       var ag = agujaRed();
       var bajos = html.toLowerCase();
-      var tieneFetch = html.indexOf(ag.a + "(") >= 0 || html.indexOf(ag.a + " (") >= 0;
+      // La única llamada admitida es la consulta DNS sobre HTTPS a pedido (SRE-1029).
+      var llamadas = html.split(ag.a + "(").length - 1 + html.split(ag.a + " (").length - 1;
+      var urlFija = "https://cloudflare-dns.com/dns-query";
+      var tieneFetch = llamadas > 1 || (llamadas === 1 && html.indexOf('DOH_URL = "' + urlFija + '"') < 0);
+      var metaCsp = document.querySelector('meta[http-equiv="Content-Security-Policy"]');
+      var csp = metaCsp ? metaCsp.getAttribute("content") || "" : "";
+      var cspOk = /default-src 'none'/.test(csp) && /connect-src https:\/\/cloudflare-dns\.com(;|$)/.test(csp) &&
+        !/connect-src[^;]*(\*|http:)/.test(csp) && !/script-src[^;]*https?:/.test(csp);
       var tieneXhr = html.indexOf(ag.b) >= 0;
       var tieneImportDin = html.indexOf(ag.c) >= 0 || html.indexOf(ag.c.trim()) >= 0 && false;
       var imp = "im" + "port";
@@ -246,7 +253,10 @@ var Autotest = (function () {
       var cssUrlExt = /url\s*\(\s*["']?\s*(https?:|\/\/)/i.test(html);
       var problemas = [];
       if (tieneFetch) {
-        problemas.push("aparece llamada de red (" + ag.a + ")");
+        problemas.push("hay " + llamadas + " llamadas de red (" + ag.a + ") o no es la de la URL fija");
+      }
+      if (!cspOk) {
+        problemas.push("falta la política de seguridad que limita la red al host fijo");
       }
       if (tieneXhr) {
         problemas.push("aparece " + ag.b);
@@ -266,9 +276,9 @@ var Autotest = (function () {
       /* Los blobs locales (URL.createObjectURL) no son red: se admiten. */
       void bajos;
       if (problemas.length === 0) {
-        return fila(1, nombre, true, "Sin llamadas de red ni referencias externas en el documento.");
+        return fila(1, nombre, true, "Una sola llamada de red, hacia " + urlFija + ", limitada por la política de seguridad; sin otras referencias externas.");
       }
-      return fila(1, nombre, false, "Se esperaba cero referencias externas y se encontró: " + problemas.join("; ") + ".");
+      return fila(1, nombre, false, "Se esperaba una sola llamada de red, a la URL fija y limitada por la política de seguridad, y se encontró: " + problemas.join("; ") + ".");
     } catch (e) {
       return fila(1, nombre, false, "No se pudo inspeccionar el documento: " + e.message);
     }
@@ -1766,7 +1776,80 @@ var Autotest = (function () {
     }
   }
 
-  var CRITERIOS_TECNICOS = [crit01, crit09, crit10, crit11, crit13, crit14, crit15, crit16, crit24, crit25, crit26, crit27, crit28, crit30, crit32, crit33];
+  // DNS real a pedido (SRE-1029). Con un fetch simulado: la prueba nunca sale a la red.
+  function crit34() {
+    var nombre = "DNS real: apagado no sale a la red; prendido sólo consulta nombres públicos, con la URL y las opciones fijas";
+    var previo = modoActualDom();
+    var original = window[agujaRed().a];
+    var llamadas = [];
+    try {
+      var prob = [];
+      window[agujaRed().a] = function (url, opciones) {
+        llamadas.push({ url: String(url), opciones: opciones || {} });
+        return Promise.reject(new TypeError("autotest"));
+      };
+      UI.setModo("topologia");
+      UI.cargarTopologia(clonar(ejemploPorId("oficina-dns").topologia));
+      document.getElementById("sim-tab-inf-simulacion").click();
+      function inf() { return document.querySelector(".siminf"); }
+      function campo(rotulo) {
+        var r = null;
+        inf().querySelectorAll("label").forEach(function (l) { if (l.textContent === rotulo) { r = document.getElementById(l.htmlFor); } });
+        return r;
+      }
+      function consultar(nombreDns) {
+        var botones = inf().querySelectorAll(".modosim button");
+        for (var i = 0; i < botones.length; i++) { if (botones[i].textContent === "Consultar DNS") { botones[i].click(); } }
+        var origen = campo("Origen"), n = campo("Nombre"), b = inf().querySelector(".simctrl button.primario");
+        if (!origen || !n || !b) { return false; }
+        origen.value = "pc1";
+        origen.dispatchEvent(new Event("change", { bubbles: true }));
+        n.value = nombreDns;
+        n.dispatchEvent(new Event("input", { bubbles: true }));
+        b.click();
+        return true;
+      }
+      function interruptor() { return inf().querySelector("[data-foco=dnsreal]"); }
+      var sw = interruptor();
+      if (!sw) { return fila(34, nombre, false, "Falla: no está el interruptor «Resolver nombres reales»."); }
+      if (sw.checked) { prob.push("el interruptor arranca prendido"); }
+
+      if (!consultar("example.com")) { prob.push("no se encontró el formulario de consulta DNS"); }
+      if (llamadas.length !== 0) { prob.push("apagado, salió " + llamadas.length + " petición(es) a la red"); }
+      if (!/El nombre no existe/.test(inf().textContent)) { prob.push("apagado, example.com no da D25"); }
+
+      interruptor().click();
+      if (!interruptor() || !interruptor().checked) { prob.push("no se pudo prender el interruptor"); }
+      if (!/Cloudflare/.test(inf().textContent)) { prob.push("prendido, no avisa a quién se consulta"); }
+      ["host.home", "x.localdomain", "solo", "a b.com", "10.1.1.1"].forEach(function (n) {
+        consultar(n);
+        if (llamadas.length !== 0) { prob.push("consultó «" + n + "», que no es un nombre público"); }
+      });
+      consultar("example.com");
+      if (llamadas.length !== 1) { prob.push("example.com hizo " + llamadas.length + " peticiones en vez de 1"); }
+      else {
+        var ll = llamadas[0], op = ll.opciones;
+        if (ll.url !== "https://cloudflare-dns.com/dns-query?name=example.com&type=A") { prob.push("URL inesperada: " + ll.url); }
+        if (op.credentials !== "omit" || op.referrerPolicy !== "no-referrer" || op.redirect !== "error" || op.method !== "GET") {
+          prob.push("opciones de seguridad inesperadas");
+        }
+      }
+      // Hay una consulta en curso: otra no sale hasta que termine.
+      consultar("example.org");
+      if (llamadas.length !== 1) { prob.push("salió una segunda consulta con una en curso"); }
+
+      if (prob.length === 0) { return fila(34, nombre, true, "Apagado: ninguna petición. Prendido: los nombres locales o inválidos no salen; example.com hace una sola consulta GET a la URL fija, sin credenciales ni referrer."); }
+      return fila(34, nombre, false, "Falla: " + prob.join("; ") + ".");
+    } catch (e) {
+      return fila(34, nombre, false, "Excepción: " + e.message);
+    } finally {
+      window[agujaRed().a] = original;
+      try { UI.cargarTopologia(clonar(ejemploPorId("complejo").topologia)); } catch (e1) { /* se sigue igual */ }
+      try { UI.setModo(previo); } catch (e2) { /* se sigue igual */ }
+    }
+  }
+
+  var CRITERIOS_TECNICOS = [crit01, crit09, crit10, crit11, crit13, crit14, crit15, crit16, crit24, crit25, crit26, crit27, crit28, crit30, crit32, crit33, crit34];
 
   function correr(opciones) {
     var tecnico = !!(opciones && opciones.tecnico);
