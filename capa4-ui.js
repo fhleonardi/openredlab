@@ -389,20 +389,20 @@ var UI = (function () {
     ".simbarra .espacio{flex:1;}",
     ".simbarra .enpres{display:none;font-size:13px;opacity:.85;}",
     ".simcuerpo{flex:1;display:flex;min-height:0;}",
-    ".simpaleta{width:200px;flex:0 0 200px;background:var(--sim-panel);border-right:1px solid var(--sim-borde);padding:8px;overflow:auto;box-sizing:border-box;}",
+    ".simpaleta{width:200px;flex:0 0 200px;background:var(--sim-panel);border-right:1px solid var(--sim-borde);padding:8px;overflow:auto;scrollbar-width:thin;box-sizing:border-box;}",
     ".simpaleta.colapsada{width:60px;flex-basis:60px;}",
     ".simpaleta.colapsada .etiqueta,.simpaleta.colapsada .titulopal,.simpaleta.colapsada .leyenda,.simpaleta.colapsada select,.simpaleta.colapsada label{display:none;}",
-    ".simpaleta h2{font-size:12px;letter-spacing:.02em;color:var(--sim-tenue);margin:4px 0 8px;}",
+    ".simpaleta h2{font-size:12px;letter-spacing:.02em;color:var(--sim-tenue);margin:2px 0 6px;}",
     ".palitem{display:flex;align-items:center;gap:8px;width:100%;box-sizing:border-box;padding:6px 8px;margin-bottom:6px;text-align:left;cursor:grab;user-select:none;}",
     ".simraiz .palitem{touch-action:none;}",
     ".palitem.armado{outline:2px solid var(--sim-acento);outline-offset:1px;}",
     ".palitem svg{width:28px;height:28px;flex:0 0 28px;}",
     ".palgrid{display:grid;grid-template-columns:1fr 1fr;grid-auto-rows:1fr;gap:4px;margin-bottom:4px;}",
-    ".palgrid .palitem{gap:4px;padding:3px 5px;margin:0;}",
+    ".palgrid .palitem{gap:3px;padding:3px 4px;margin:0;}",
     ".palcab{display:flex;align-items:center;justify-content:space-between;gap:4px;margin:2px 0 6px;}",
     ".palcab h2{margin:0;}",
     ".palcab button{font-size:11px;padding:1px 6px;}",
-    ".palgrid .palitem svg{width:20px;height:20px;flex-basis:20px;}",
+    ".palgrid .palitem svg{width:18px;height:18px;flex-basis:18px;}",
     ".palgrid .palitem .etiqueta{font-size:11.5px;line-height:1.15;overflow-wrap:normal;}",
     ".simpaleta.colapsada .palgrid .palitem{justify-content:center;}",
     ".simpaleta.colapsada .palgrid{grid-template-columns:1fr;}",
@@ -415,6 +415,8 @@ var UI = (function () {
     ".simpaleta .palgrid + h2{margin-top:8px;}",
     ".simlienzo{flex:1;position:relative;min-width:0;background:var(--sim-fondo);}",
     ".simlienzo svg.lienzo{width:100%;height:100%;display:block;touch-action:none;}",
+    ".filafallas{display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-bottom:4px;}",
+    ".filafallas button{padding:6px 4px;font-size:12px;white-space:nowrap;}",
     ".simlienzo svg.lienzo.modo-falla .enlace,.simlienzo svg.lienzo.modo-falla .nodo{cursor:crosshair;}",
     ".simtools select{font-size:12px;}",
     ".simtools .cuentadom{align-self:center;font-size:12px;font-weight:600;padding:0 4px;color:var(--sim-texto);}",
@@ -457,7 +459,7 @@ var UI = (function () {
     ".filaif .datos{flex:1;min-width:0;}",
     ".filaif label{margin:0;}",
     ".filaif select{width:auto;}",
-    ".siminf{height:260px;flex:0 0 260px;background:var(--sim-panel);border-top:1px solid var(--sim-borde);padding:6px 12px 8px;box-sizing:border-box;overflow:hidden;display:flex;flex-direction:column;}",
+    ".siminf{height:clamp(290px,38vh,480px);flex:0 1 clamp(290px,38vh,480px);background:var(--sim-panel);border-top:1px solid var(--sim-borde);padding:6px 12px 8px;box-sizing:border-box;overflow:hidden;display:flex;flex-direction:column;}",
     ".siminf.colapsado{height:44px;flex-basis:44px;}",
     ".siminf.compacta{height:44px;flex-basis:44px;}",
     ".siminf .tabs button[role=tab]{border:0;border-bottom:3px solid transparent;border-radius:0;background:transparent;padding:6px 10px;font-size:14px;color:var(--sim-tenue);}",
@@ -1038,17 +1040,20 @@ var UI = (function () {
     S.botonCable = bCable;
     pal.appendChild(el("p", "leyenda", "Cobre: lleno · fibra: grueso · wireless: puntos. Verde: activo · rojo y cortado: caído."));
     pal.appendChild(el("h2", "titulopal", "Fallas en vivo"));
-    var bCortar = boton("\u26A1 Cortar un cable", "herramienta");
+    var bCortar = boton("Cortar cable", "herramienta");
     bCortar.title = "Clic en un cable para cortarlo; otro clic lo restaura (Esc sale)";
     bCortar.setAttribute("aria-pressed", "false");
     bCortar.addEventListener("click", function () { alternarModoFalla("enlace"); });
-    var bApagar = boton("\u26A1 Apagar un equipo", "herramienta");
+    var bApagar = boton("Apagar equipo", "herramienta");
     bApagar.title = "Clic en un equipo para apagarlo; otro clic lo enciende (Esc sale)";
     bApagar.setAttribute("aria-pressed", "false");
     bApagar.addEventListener("click", function () { alternarModoFalla("equipo"); });
     var bRestaurar = boton("Restaurar todo");
     bRestaurar.addEventListener("click", restaurarTodasLasFallas);
-    pal.appendChild(bCortar); pal.appendChild(bApagar); pal.appendChild(bRestaurar);
+    // Cortar y apagar van lado a lado: la paleta entra entera con una ventana de altura común.
+    var filaFallas = el("div", "filafallas");
+    filaFallas.appendChild(bCortar); filaFallas.appendChild(bApagar);
+    pal.appendChild(filaFallas); pal.appendChild(bRestaurar);
     var leyFallas = el("p", "leyenda", "");
     leyFallas.setAttribute("aria-live", "polite");
     pal.appendChild(leyFallas);
@@ -2014,7 +2019,7 @@ var UI = (function () {
         .concat(Object.keys(S.fallasVivas.equipos).map(function (id) { return nombreDe(id) + " apagado"; }));
       S.leyendaFallas.textContent = ahora.length
         ? "⚡ En vivo: " + ahora.join(", ") + ". El diseño no cambió."
-        : "No cambian el diseño: sólo lo que simulás.";
+        : "No cambian el diseño.";
     }
     if (S.svg) { S.svg.classList.toggle("modo-falla", !!S.herramientaFalla); }
   }

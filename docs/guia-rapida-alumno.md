@@ -192,8 +192,8 @@ En las propiedades de un cable podés cargar su **latencia** (lo que tarda en cr
 
 En la paleta, debajo de *Conectar con un cable*, está **Fallas en vivo**:
 
-- **⚡ Cortar un cable:** hacé clic en un cable y se corta (rojo, punteado y con ⚡). Otro clic lo restaura.
-- **⚡ Apagar un equipo:** hacé clic en un equipo y se apaga (atenuado, con ⚡). Otro clic lo enciende.
+- **Cortar cable:** hacé clic en un cable y se corta (rojo, punteado y con ⚡). Otro clic lo restaura.
+- **Apagar equipo:** hacé clic en un equipo y se apaga (atenuado, con ⚡). Otro clic lo enciende.
 - **Restaurar todo** deja todo como estaba. Para salir de la herramienta, **Esc** o un clic en el fondo del lienzo (las fallas aplicadas siguen hasta que las restaures). En las propiedades de un cable o de un equipo cortado en vivo aparece un aviso con el botón **Restaurar**.
 
 Después de cortar algo, **repetí el ping** (o la consulta DNS, o la conexión): el recorrido se detiene donde corresponde y el diagnóstico te dice qué pasó. Probá cortar un cable que no sea el del camino y fijate que el ping sigue funcionando: así se ve qué enlaces son imprescindibles y cuáles no.
