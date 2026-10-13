@@ -160,7 +160,7 @@ La simulación sólo conoce unos pocos nombres de internet (google.com, wikipedi
 Tené en cuenta:
 
 - **Sale a internet el nombre que escribís**, y nada más. Por eso viene apagado y se apaga solo al recargar o al abrir otra red.
-- No se consultan IP ni nombres de redes privadas (`.local`, `.lan`, `.home`…): esos los resuelve tu propio servidor DNS.
+- No se consultan IP ni nombres de redes privadas (`.local`, `.lan`, `.home`…): esos los resuelve tu propio servidor DNS. **Ojo:** un nombre interno con un dominio real (por ejemplo `intranet.miempresa.com`) sí se enviaría. Si estás modelando una red verdadera, apagá el interruptor o usá nombres inventados.
 - El ping y la conexión **siguen siendo simulados**: llegan a la IP real, pero no hay un servidor de verdad del otro lado. Que el ping responda no prueba que ahí haya un servicio.
 - Sin conexión, el simulador avisa y sigue con el DNS simulado.
 

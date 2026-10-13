@@ -3520,7 +3520,7 @@ var UI = (function () {
   }
 
   function inyectarDnsReal() {
-    if (!S.estado) { return; }
+    if (!S.estado || !S.dnsRealActivo) { return; }
     var ahora = Date.now();
     Object.keys(S.dnsReal).forEach(function (clave) {
       var e = S.dnsReal[clave];
@@ -3542,27 +3542,49 @@ var UI = (function () {
       var r = { nombre: a.name, tipo: t, valor: a.data, ttl: a.TTL };
       if (t === "MX") {
         var m = /^(\d{1,5}) (\S+)$/.exec(a.data);
-        if (!m) { return; }
+        // «0 .» es un MX nulo: el dominio declara que no recibe correo, es decir, no tiene MX.
+        if (!m || m[2] === ".") { return; }
         r.prioridad = Number(m[1]); r.valor = m[2];
       }
       registros.push(r);
     });
-    // Existe pero no tiene registros de ese tipo: para la simulación es como si no existiera.
-    var rcode = datos.Status === 0 && registros.length ? 0 : 3;
+    // Status 3 es «no existe»; Status 0 sin registros del tipo pedido es «existe, pero sin ese tipo».
+    var rcode = datos.Status === 3 ? 3 : 0;
     var guardado = S.estado ? Motor.cargarDnsReal(S.estado, nombre, tipo, { rcode: rcode, registros: registros }) : { ok: false };
     if (!guardado.ok) { return { ok: false, motivo: "formato" }; }
-    var ttl = rcode === 3 ? 60 : DOH_TTL_MAX;
+    var ttl = rcode === 3 || !guardado.registros.length ? 60 : DOH_TTL_MAX;
     guardado.registros.forEach(function (r) { ttl = Math.min(ttl, r.ttl); });
-    S.dnsReal[nombre + "|" + tipo] = { resultado: { rcode: rcode, registros: guardado.registros }, vence: Date.now() + ttl * 1000 };
+    S.dnsReal[nombre + "|" + tipo] = { resultado: { rcode: rcode, registros: guardado.registros }, vence: Date.now() + Math.max(ttl, 10) * 1000 };
     var texto = "Consulta real a Cloudflare (DNS sobre HTTPS): " + nombre + " tipo " + tipo + " \u2192 " +
-      (rcode === 3 ? "no existe" : guardado.registros.map(textoRegistroUI).join("; "));
+      (rcode === 3 ? "no existe" : (guardado.registros.length ? guardado.registros.map(textoRegistroUI).join("; ") : "existe, sin registros de ese tipo"));
     registrar("DNS", texto);
     consolaAgregar(texto);
     return { ok: true };
   }
 
+  // Lee el cuerpo hasta el tope y lo corta: no hay que cargarlo entero para descartarlo.
+  function leerAcotado(r) {
+    if (!r.body || typeof r.body.getReader !== "function") {
+      return r.text().then(function (t) { if (t.length > DOH_MAX_BYTES) { throw new Error("grande"); } return t; });
+    }
+    var lector = r.body.getReader();
+    var decodificador = new TextDecoder("utf-8");
+    var texto = "", bytes = 0;
+    function leer() {
+      return lector.read().then(function (paso) {
+        if (paso.done) { return texto + decodificador.decode(); }
+        bytes += paso.value.length;
+        if (bytes > DOH_MAX_BYTES) { lector.cancel(); throw new Error("grande"); }
+        texto += decodificador.decode(paso.value, { stream: true });
+        return leer();
+      });
+    }
+    return leer();
+  }
+
   // Siempre termina con { ok, motivo }: nunca falla ni se cuelga.
   function consultarDnsReal(nombre, tipo) {
+    var generacion = S.dnsRealGeneracion;
     return new Promise(function (resolver) {
       var n = nombreConsultable(nombre);
       var t = String(tipo || "").toUpperCase();
@@ -3583,9 +3605,10 @@ var UI = (function () {
       }).then(function (r) {
         if (!r.ok) { throw new Error("http"); }
         if (Number(r.headers.get("content-length")) > DOH_MAX_BYTES) { throw new Error("grande"); }
-        return r.text();
+        return leerAcotado(r);
       }).then(function (texto) {
-        if (texto.length > DOH_MAX_BYTES) { throw new Error("grande"); }
+        // Se apagó el interruptor o se abrió otra red mientras tanto: no se usa ni se anota nada.
+        if (generacion !== S.dnsRealGeneracion || !S.dnsRealActivo) { resolver({ ok: false, motivo: "cancelado" }); return; }
         resolver(guardarRespuestaDnsReal(n, t, JSON.parse(texto)));
       }).catch(function (e) {
         var motivo = e instanceof SyntaxError ? "formato" : (e && (e.message === "http" || e.message === "grande") ? e.message : "sin-red");
@@ -3603,6 +3626,7 @@ var UI = (function () {
       "grande": "La respuesta del DNS real era demasiado grande y se descartó. Se usa sólo el DNS simulado.",
       "limite": "Hiciste muchas consultas reales seguidas (máximo " + DOH_MAX_POR_MINUTO + " por minuto). Esperá un poco."
     }[r.motivo] || "No se pudo consultar el DNS real. Se usa sólo el DNS simulado.";
+    if (r.motivo === "cancelado") { return; }
     avisar(texto);
     consolaAgregar(texto, true);
     registrar("DNS", texto);
@@ -3740,6 +3764,10 @@ var UI = (function () {
     chkReal.setAttribute("data-foco", "dnsreal");
     chkReal.addEventListener("change", function () {
       S.dnsRealActivo = chkReal.checked;
+      if (!S.dnsRealActivo) {
+        S.dnsRealGeneracion += 1; S.dnsRealOcupado = false; S.dnsReal = {};
+        reconstruirEstado();
+      }
       registrar("DNS", S.dnsRealActivo
         ? "DNS real activado: los nombres que la simulación no conozca se consultan a Cloudflare."
         : "DNS real desactivado: no se hace ninguna consulta por la red.");
