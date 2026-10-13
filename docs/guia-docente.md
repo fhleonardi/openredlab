@@ -57,7 +57,9 @@ La forma más rápida de mostrar una idea es hacer un ping, mostrar el recorrido
 
 ### Unidad 8: modelos de capas
 
-Cada paso del recorrido indica su capa (OSI, y TCP/IP al pasar el mouse). Después de un ping, **Cómo viaja el paquete** muestra las tramas tramo por tramo: en cada router cambian las MAC y baja el TTL, mientras el paquete IP conserva su origen y su destino; los switches pasan la trama sin cambiarla. **Ver los encabezados** muestra el encapsulamiento (trama ⊃ paquete IP ⊃ mensaje ICMP). Una buena pregunta para la clase: «¿con qué TTL llega la respuesta, y por qué?». En Cálculo de subred aparece también la clase de la IP frente al prefijo CIDR.
+Cada paso del recorrido indica su capa (OSI, y TCP/IP al pasar el mouse). Después de un ping, **Cómo viaja el paquete** muestra las tramas tramo por tramo: en cada router cambian las MAC y baja el TTL, mientras el paquete IP conserva su origen y su destino; los switches pasan la trama sin cambiarla. **Ver los encabezados** muestra el encapsulamiento (trama ⊃ paquete IP ⊃ mensaje ICMP). Una buena pregunta para la clase: «¿con qué TTL llega la respuesta, y por qué?».
+
+**El paquete en movimiento.** Al hacer un ping, un punto recorre el lienzo siguiendo las tramas: azul el pedido y verde la respuesta. Es útil para proyectar: con **Pausar** podés detenerlo en un router y preguntar «¿qué MAC lleva ahora la trama?», y un clic en una línea de *Cómo viaja el paquete* salta a ese tramo (y la resalta). Con **×0.5** se sigue el recorrido paso a paso; con **×4** se repite rápido para comparar caminos. Si el ping se corta, el punto queda rojo con una ✗ en el último equipo que alcanzó, lo que sirve para plantear «¿por qué paró acá?» antes de leer el diagnóstico. Con la opción del sistema de reducir movimiento no se anima y no aparecen los botones. En Cálculo de subred aparece también la clase de la IP frente al prefijo CIDR.
 
 ### Unidad 9: direccionamiento IP, internet y DNS
 
