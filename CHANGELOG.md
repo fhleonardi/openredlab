@@ -10,6 +10,11 @@ Los números siguen la forma MAYOR.MENOR.PARCHE:
 
 Los archivos de red llevan el número de su formato (`version`) y la versión del simulador que los exportó (`generador`). Un archivo de un formato anterior se actualiza solo al abrirlo.
 
+## 1.6.0 — 2026-10-13
+
+- **Consultar DNS y Conectar también se ven viajar.** Cada consulta y cada conexión recorre el lienzo trama por trama, igual que el ping, con los mismos botones (pausar, repetir y velocidad) y con el salto al hacer clic en una trama. En DNS se ve la consulta recursiva y las tres consultas iterativas (raíz, TLD y autoritativo) con sus respuestas. En TCP cada fase tiene su color: apertura (SYN, SYN-ACK y ACK), datos (pedido y respuesta) y cierre (FIN), y un rechazo (RST, o un «no existe» de DNS) sale en rojo con una ✗ en el equipo que lo dio. Debajo de los botones, una leyenda dice qué significa cada color.
+- **El DORA de DHCP se puede controlar.** La animación de la pestaña DHCP tiene ahora Pausar, Repetir y velocidad. Un clic en uno de los cuatro mensajes (Discover, Offer, Request, Ack) salta a ese mensaje, y el que se está mostrando queda resaltado en la lista.
+
 ## 1.5.1 — 2026-10-13
 
 - **Iconos de equipos más modernos.** Cada equipo se dibuja ahora dentro de un recuadro redondeado con el color de su tipo y un glifo de trazo parejo. PC, servidor, firewall, internet, cámara, punto de acceso e IoT usan iconos de Tabler Icons (licencia MIT, detallada en `AVISOS.md`). El router, el switch y el hub mantienen sus símbolos clásicos de diagrama de redes, redibujados con el mismo estilo.
