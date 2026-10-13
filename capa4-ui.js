@@ -5165,7 +5165,7 @@ var UI = (function () {
   // Animación del DORA: un mensaje por vez, con sus ondas de difusión. El estado vive acá, y no
   // en el panel, porque el panel se rehace con cada renderTodo y sus controles tienen que
   // encontrar la animación en curso.
-  var dhcpAnim = { token: 0, activo: false, pausado: false, velocidad: 1, res: null, msgs: [], i: 0, tMsg: 0, ondas: [], dibujado: -1, puntos: [] };
+  var dhcpAnim = { token: 0, activo: false, pausado: false, res: null, msgs: [], i: 0, tMsg: 0, ondas: [], dibujado: -1, puntos: [] };
 
   function avisarEstadoDhcp() {
     if (!S.raiz) { return; }
@@ -5192,6 +5192,8 @@ var UI = (function () {
     dhcpAnim.activo = false;
     dhcpAnim.pausado = false;
     dhcpAnim.puntos = [];
+    dhcpAnim.dibujado = -1;
+    marcarMensajeDhcp(-1);
     avisarEstadoDhcp();
   }
 
@@ -5256,7 +5258,7 @@ var UI = (function () {
       try {
         if (ultimo === null) { ultimo = t; }
         // Con la pestaña oculta rAF se frena: sin tope, al volver saltaría varios mensajes.
-        if (!dhcpAnim.pausado) { dhcpAnim.tMsg += Math.min(t - ultimo, 100) * dhcpAnim.velocidad; }
+        if (!dhcpAnim.pausado) { dhcpAnim.tMsg += Math.min(t - ultimo, 100) * animador.velocidad; }
         ultimo = t;
         var dur = msVelocidad();
         var total = (dhcpAnim.ondas.length + 1) * dur;
@@ -5341,13 +5343,13 @@ var UI = (function () {
   function controlesDhcp(res) {
     var ctl = {
       get pausado() { return dhcpAnim.pausado; },
-      get velocidad() { return dhcpAnim.velocidad; },
+      get velocidad() { return animador.velocidad; },
       alternarPausa: function () {
-        if (dhcpAnim.msgs.length) { dhcpAnim.pausado = !dhcpAnim.pausado; }
+        if (dhcpAnim.activo) { dhcpAnim.pausado = !dhcpAnim.pausado; }
         avisarEstadoDhcp();
       },
       repetir: function () { animarDhcp(res); },
-      establecerVelocidad: function (f) { dhcpAnim.velocidad = f > 0 ? f : 1; }
+      establecerVelocidad: function (f) { animador.establecerVelocidad(f); }
     };
     return controlesAnimacion(ctl, "pausa-dhcp", []);
   }
@@ -5370,15 +5372,15 @@ var UI = (function () {
   };
 
   function clasificarTrama(t, ctx) {
-    var m = String(t.mensaje || "");
-    if (/\[[^\]]*RST/.test(m) || /no existe/i.test(m)) { return "rechazo"; }
-    if (/^TCP/.test(m)) {
-      var f = /\[([^\]]+)\]/.exec(m);
-      f = f ? f[1] : "";
+    if (t.protocolo === "TCP") {
+      var f = String(t.flags || "");
+      if (/RST/.test(f)) { return "rechazo"; }
       if (/FIN/.test(f)) { ctx.fase = "cierre"; }
       else if (/PSH/.test(f)) { ctx.fase = "datos"; }
       else if (/SYN/.test(f)) { ctx.fase = "apertura"; }
       if (ctx.fase === "cierre" || ctx.fase === "apertura") { return ctx.fase; }
+    } else if (t.protocolo === "DNS" && /no existe/i.test(String(t.mensaje || ""))) {
+      return "rechazo";
     }
     return t.sentido === "vuelta" ? "respuesta" : "pedido";
   }
@@ -5527,7 +5529,9 @@ var UI = (function () {
   AnimadorPaquetes.prototype.marcarFalla = function () {
     var ult = this.timeline[this.timeline.length - 1];
     if (!this.falla || !S.capaAnim || !ult) { return; }
-    var d = ult.negativa ? ult.puntos[0] : ult.puntos[ult.puntos.length - 1];
+    var neg = null;
+    this.timeline.forEach(function (it) { if (it.negativa) { neg = it; } });
+    var d = neg ? neg.puntos[0] : ult.puntos[ult.puntos.length - 1];
     var svgNS = "http://www.w3.org/2000/svg";
     if (this.marca) { this.marca.setAttribute("fill", "#b42318"); }
     this.quitarCruz();
@@ -5545,7 +5549,7 @@ var UI = (function () {
   };
 
   AnimadorPaquetes.prototype.alternarPausa = function () {
-    if (this.timeline.length) { this.pausado = !this.pausado; }
+    if (this.activo) { this.pausado = !this.pausado; }
     this.avisarEstado();
     return this.pausado;
   };

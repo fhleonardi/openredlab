@@ -98,7 +98,11 @@ Los switches y puntos de acceso aparecen como «pasa por… sin cambiar la trama
 
 ### El paquete en movimiento
 
-Cuando hacés un ping, un punto recorre la topología siguiendo esas mismas tramas: **azul** es el pedido (el ping que sale) y **verde** es la respuesta que vuelve. Pasa por los switches y los routers del camino, igual que en la lista.
+Cuando hacés un ping, una consulta DNS o una conexión, un punto recorre la topología siguiendo esas mismas tramas: **azul** es el pedido y **verde** es la respuesta que vuelve. Pasa por los switches y los routers del camino, igual que en la lista. Debajo de los botones hay una leyenda con los colores de esa operación.
+
+- **DNS:** ves el pedido a tu servidor DNS y, si el nombre es de internet, las consultas del servidor a la raíz, al servidor del TLD y al autoritativo, cada una con su respuesta.
+- **Conectar (TCP):** la **apertura** (SYN, SYN-ACK y ACK) va en **violeta**; después los datos (pedido azul, respuesta verde); y el **cierre** (FIN) va en **naranja**. UDP sólo tiene pedido y respuesta.
+- **Rechazo:** un RST (puerto cerrado) o una respuesta «no existe» de DNS salen en **rojo**, y la ✗ queda en el equipo que dijo que no.
 
 Debajo del recorrido tenés los controles:
 
@@ -106,9 +110,11 @@ Debajo del recorrido tenés los controles:
 - **Repetir** lo vuelve a largar desde el principio.
 - **×0.5, ×1, ×2, ×4** cambia la velocidad.
 
+En la pestaña **DHCP**, el DORA (Discover, Offer, Request, Ack) se anima mensaje por mensaje con los mismos botones; hacé clic en uno de los cuatro mensajes de la lista para verlo de nuevo, y el que se está mostrando queda resaltado.
+
 En *Cómo viaja el paquete*, hacé clic en una línea (o Enter con el teclado) y el punto salta a ese tramo; la línea que se está mostrando queda resaltada.
 
-Si el ping **no llega**, el punto avanza hasta donde pudo, se pone **rojo** y marca con una ✗ el último equipo que alcanzó: ahí está el problema. Si tu sistema tiene activada la opción de reducir movimiento, no se anima: se muestra el último punto y no aparecen los botones.
+Si la operación **no llega**, el punto avanza hasta donde pudo, se pone **rojo** y marca con una ✗ el último equipo que alcanzó: ahí está el problema. Si tu sistema tiene activada la opción de reducir movimiento, no se anima: se muestra el último punto y no aparecen los botones.
 
 ## Internet y NAT
 
