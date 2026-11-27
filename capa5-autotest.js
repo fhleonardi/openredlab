@@ -160,6 +160,13 @@ var Autotest = (function () {
       esperado: "Con todo conectado, el paquete sale por el NAT de R-Casa, cruza de Internet (casa) a Internet (oficina), que son la misma internet, " +
         "y R-Oficina se lo entrega al servidor: la conexión se abre. Con el cable caído, internet no llega hasta el servidor: D34, y falla también el ping."
     },
+    35: {
+      conError: false,
+      situacion: "En «Bus (medio compartido con un hub)», PC-1 y PC-2 transmiten a la vez. Después se hace lo mismo en «Topología en estrella», " +
+        "donde el equipo central es un switch.",
+      esperado: "Con el hub las señales chocan: se ve la colisión, la señal de atasco y la espera al azar, y las dos tramas llegan en un reintento. " +
+        "Con el switch cada equipo está en su propio dominio de colisión: no hay choque."
+    },
     31: {
       conError: true,
       situacion: "En «Servidor publicado con redirección de puertos», SRV-Web tiene IP privada (192.168.50.10). PC-Casa se conecta por HTTP a la IP pública " +
@@ -1189,7 +1196,24 @@ var Autotest = (function () {
     }
   }
 
-  var CRITERIOS_DIDACTICOS = [crit02, crit17, crit03, crit04, crit05, crit06, crit20, crit18, crit19, crit21, crit22, crit23, crit29, crit31, crit07, crit08, crit12];
+  function crit35() {
+    var nombre = "Colisiones: con un hub dos equipos que transmiten a la vez chocan y reintentan; con un switch no hay colisión";
+    try {
+      var bus = Motor.transmitirALaVez(Motor.crearEstado(clonar(ejemploPorId("bus-hub").topologia)), "pc1", "pc2", { semilla: 1 });
+      var estrella = Motor.transmitirALaVez(Motor.crearEstado(clonar(ejemploPorId("estrella").topologia)), "pc1", "pc2", { semilla: 1 });
+      var ultimo = bus.intentos[bus.intentos.length - 1];
+      var pasa = bus.resultado === "colision" && bus.colisiones >= 1 && !!ultimo && !ultimo.colision &&
+        estrella.resultado === "sin-colision" && estrella.colisiones === 0;
+      var cuenta = function (r) { return r.colisiones + (r.colisiones === 1 ? " colisión" : " colisiones"); };
+      return fila(35, nombre, pasa, pasa
+        ? "Con el hub: " + cuenta(bus) + " y las dos tramas entregadas. Con el switch: ninguna colisión."
+        : "Falla: con el hub el resultado fue «" + bus.resultado + "» (" + cuenta(bus) + ") y con el switch «" + estrella.resultado + "» (" + cuenta(estrella) + ").");
+    } catch (e) {
+      return fila(35, nombre, false, "Excepción: " + e.message);
+    }
+  }
+
+  var CRITERIOS_DIDACTICOS = [crit02, crit17, crit03, crit04, crit05, crit06, crit20, crit18, crit19, crit21, crit22, crit23, crit29, crit31, crit35, crit07, crit08, crit12];
   // La pestaña Laboratorio: sólo en modo Docente, con sus cuatro secciones
   // y sin scroll de página. correr() restaura la red del usuario.
   function crit24() {
@@ -1848,12 +1872,85 @@ var Autotest = (function () {
       return fila(34, nombre, false, "Excepción: " + e.message);
     } finally {
       window[agujaRed().a] = original;
+      volverAPing();
       try { UI.cargarTopologia(clonar(ejemploPorId("complejo").topologia)); } catch (e1) { /* se sigue igual */ }
       try { UI.setModo(previo); } catch (e2) { /* se sigue igual */ }
     }
   }
 
-  var CRITERIOS_TECNICOS = [crit01, crit09, crit10, crit11, crit13, crit14, crit15, crit16, crit24, crit25, crit26, crit27, crit28, crit30, crit32, crit33, crit34];
+  // Deja la simulación en «Ping», como la encuentran los demás criterios.
+  function volverAPing() {
+    try {
+      document.querySelectorAll(".siminf .modosim button").forEach(function (b) { if (b.textContent === "Ping") { b.click(); } });
+    } catch (e) { /* se sigue igual */ }
+  }
+
+  // La herramienta «Transmitir a la vez» en la interfaz.
+  function crit36() {
+    var nombre = "La herramienta «Transmitir a la vez» propone un par del mismo dominio, muestra pasos, tabla, consola y animación, y con un switch no hay colisión";
+    var previo = modoActualDom();
+    try {
+      var prob = [];
+      function inf() { return document.querySelector(".siminf"); }
+      function campo(rotulo) {
+        var r = null;
+        inf().querySelectorAll("label").forEach(function (l) { if (l.textContent === rotulo) { r = document.getElementById(l.htmlFor); } });
+        return r;
+      }
+      function herramienta(texto) {
+        var botones = inf().querySelectorAll(".modosim button");
+        for (var i = 0; i < botones.length; i++) { if (botones[i].textContent === texto) { botones[i].click(); return true; } }
+        return false;
+      }
+      function transmitir(ejemplo) {
+        UI.cargarTopologia(clonar(ejemploPorId(ejemplo).topologia));
+        document.getElementById("sim-tab-inf-simulacion").click();
+        if (!herramienta("Transmitir a la vez")) { return false; }
+        var b = inf().querySelector(".simctrl button.primario");
+        if (!campo("Equipo A") || !campo("Equipo B") || !b) { return false; }
+        b.click();
+        return true;
+      }
+      UI.setModo("topologia");
+      if (!transmitir("bus-hub")) { prob.push("no está la herramienta o sus campos"); }
+      else {
+        var a = campo("Equipo A"), bb = campo("Equipo B");
+        if (a.value === bb.value) { prob.push("propone el mismo equipo dos veces"); }
+        for (var i = 0; i < a.options.length; i++) { if (a.options[i].value === "hub") { prob.push("ofrece el hub como equipo"); } }
+        var res = inf().querySelector(".simres");
+        var texto = res ? res.textContent : "";
+        if (texto.indexOf("señal de atasco") < 0 || texto.indexOf("Espera aleatoria") < 0) { prob.push("el recorrido no explica colisión, jam y espera"); }
+        if (!res || !res.querySelector("table.intentos") || res.children.length !== 3) { prob.push("falta la tabla de esperas o la consola"); }
+        if (!res || !res.querySelector("[data-evento]")) { prob.push("los pasos no llevan a la animación"); }
+        else {
+          res.querySelector("[data-evento]").click();
+          if (!document.querySelector("circle.paquete-col")) { prob.push("un clic en un paso no dibuja la animación"); }
+        }
+        // Con A y B iguales la prueba no se hace, y el recorrido dice por qué.
+        campo("Equipo B").value = campo("Equipo A").value;
+        inf().querySelector(".simctrl button.primario").click();
+        var recorrido = inf().querySelector(".recorrido");
+        var aviso = recorrido ? recorrido.textContent : "";
+        if (aviso.indexOf("Elegí dos equipos distintos") < 0 || aviso.indexOf("dirección de destino") >= 0) { prob.push("con A igual a B no explica el motivo"); }
+        // Cargar otra red corta la animación y descarta el resultado.
+        transmitir("bus-hub");
+        UI.cargarTopologia(clonar(ejemploPorId("estrella").topologia));
+        if (document.querySelector("circle.paquete-col") || inf().querySelector(".simres [data-evento]")) { prob.push("al cargar otra red queda la prueba anterior"); }
+      }
+      if (!transmitir("estrella")) { prob.push("no se pudo probar con el switch"); }
+      else if (inf().querySelector(".simres").textContent.indexOf("Sin colisión") < 0) { prob.push("con el switch no dice «Sin colisión»"); }
+      if (prob.length === 0) { return fila(36, nombre, true, "Con el hub muestra la colisión, el jam, la espera y la tabla; con el switch, sin colisión."); }
+      return fila(36, nombre, false, "Falla: " + prob.join("; ") + ".");
+    } catch (e) {
+      return fila(36, nombre, false, "Excepción: " + e.message);
+    } finally {
+      volverAPing();
+      try { UI.cargarTopologia(clonar(ejemploPorId("complejo").topologia)); } catch (e1) { /* se sigue igual */ }
+      try { UI.setModo(previo); } catch (e2) { /* se sigue igual */ }
+    }
+  }
+
+  var CRITERIOS_TECNICOS = [crit01, crit09, crit10, crit11, crit13, crit14, crit15, crit16, crit24, crit25, crit26, crit27, crit28, crit30, crit32, crit33, crit34, crit36];
 
   function correr(opciones) {
     var tecnico = !!(opciones && opciones.tecnico);

@@ -343,6 +343,7 @@ var UI = (function () {
   }
 
   function reconstruirEstado() {
+    descartarColisionObsoleta();
     podarFallasVivas();
     try {
       S.estado = Motor.crearEstado(topologiaSimulada());
@@ -565,6 +566,13 @@ var UI = (function () {
     ".tabs .dnsreal{display:inline-flex;align-items:center;gap:8px;margin-right:12px;font-size:12px;color:var(--sim-tenue);}",
     ".tabs .dnsreal label{display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--sim-tenue);white-space:nowrap;}",
     ".tabs .dnsreal-nota{color:var(--sim-aviso,#b45309);font-weight:600;white-space:nowrap;}",
+    ".recorrido .linpaso[data-evento]{cursor:pointer;}",
+    ".recorrido .linpaso.actual{background:rgba(245,158,11,.18);outline:1px solid #f59e0b;border-radius:4px;}",
+    ".linpaso.choca .marca{color:var(--sim-mal);}",
+    ".intentos{border-collapse:collapse;margin-top:6px;font-size:12px;}",
+    ".intentos caption{text-align:left;color:var(--sim-tenue);padding-bottom:2px;}",
+    ".intentos th,.intentos td{border:1px solid var(--sim-borde);padding:2px 8px;text-align:center;}",
+    ".intentos tr.choca td{color:var(--sim-mal);font-weight:700;}",
     ".ctl-anim{display:inline-flex;align-items:center;gap:6px;font-style:normal;flex-wrap:wrap;}",
     ".ctl-anim select,.ctl-anim button{font-size:12px;padding:2px 6px;}",
     ".ctl-anim .ley{display:inline-flex;align-items:center;gap:3px;font-size:12px;color:var(--sim-tenue);}",
@@ -3482,7 +3490,13 @@ var UI = (function () {
   function resumenUltimoPing() {
     var u = S.ultimo;
     if (!u) { return "Todavía no se hizo ningún ping."; }
-    var base = "Último ping: " + nombreDe(u.origen) + " → " + u.destino + " · ";
+    if (u.colision) {
+      return "Transmitir a la vez: " + nombreDe(u.a) + " y " + nombreDe(u.b) + " · " +
+        (u.res.exito ? resumenColision(u.res) : u.res.diagnostico.titulo);
+    }
+    var que = u.dns ? "Última consulta DNS: " : (u.conexion ? "Última conexión: " : "Último ping: ");
+    var base = que + nombreDe(u.origen) + " → " + u.destino + " · ";
+    if (u.res.exito && (u.dns || u.conexion)) { return base + "éxito"; }
     if (u.res.exito) {
       var r = u.res.respuestas[0] || { ms: 1 };
       return base + "éxito en " + r.ms + " ms · " + cantidadSaltos(u.res) + " saltos";
@@ -3721,7 +3735,7 @@ var UI = (function () {
     var modos = el("div", "modosim");
     modos.setAttribute("role", "group");
     modos.setAttribute("aria-label", "Herramienta");
-    [["ping", "Ping"], ["dns", "Consultar DNS"], ["conectar", "Conectar"]].forEach(function (m) {
+    [["ping", "Ping"], ["dns", "Consultar DNS"], ["conectar", "Conectar"], ["colision", "Transmitir a la vez"]].forEach(function (m) {
       var b = boton(m[1], (S.modoSim || "ping") === m[0] ? "activo" : "");
       b.setAttribute("aria-pressed", String((S.modoSim || "ping") === m[0]));
       b.addEventListener("click", function () {
@@ -3742,6 +3756,26 @@ var UI = (function () {
     selTipoDns.value = S.tipoDns || "A";
     selTipoDns.addEventListener("change", function () { S.tipoDns = selTipoDns.value; });
     var enConectar = S.modoSim === "conectar";
+    var enColision = S.modoSim === "colision";
+    // Transmitir a la vez: dos equipos que envían tramas, no los que las reenvían.
+    var selB = document.createElement("select");
+    if (enColision) {
+      if (!S.estado) { reconstruirEstado(); }
+      var emisores = equiposQueTransmiten();
+      var idA = equipoInicialColision(emisores);
+      var idB = S.colisionB && S.colisionB !== idA && emisores.some(function (d) { return d.id === S.colisionB; })
+        ? S.colisionB : companeroDeColision(idA, emisores);
+      [[selO, idA], [selB, idB]].forEach(function (par) {
+        par[0].innerHTML = "";
+        emisores.forEach(function (d) {
+          var op = document.createElement("option"); op.value = d.id; op.textContent = d.nombre || d.id; par[0].appendChild(op);
+        });
+        if (par[1]) { par[0].value = par[1]; }
+      });
+      selO.setAttribute("data-foco", "equipo-a");
+      selO.addEventListener("change", function () { renderInferior(); });
+      selB.addEventListener("change", function () { S.colisionB = selB.value; });
+    }
     if (enConectar) {
       selD.placeholder = "IP o nombre, p. ej. www.google.com…";
       selD.value = S.ultimoConectar || "";
@@ -3767,10 +3801,16 @@ var UI = (function () {
     selServ.addEventListener("change", function () { S.servicioConectar = selServ.value; renderInferior(); });
     selProt.addEventListener("change", function () { S.protConectar = selProt.value; });
     inPuerto.addEventListener("change", function () { S.puertoConectar = inPuerto.value; });
-    var bPing = enDns ? boton("Consultar", "primario") : (enConectar ? boton("Conectar", "primario conectar") : boton("Ping", "primario"));
-    ctrl.appendChild(etiqueta("Origen", selO)); ctrl.appendChild(selO);
-    ctrl.appendChild(el("span", "flecha", "→")).setAttribute("aria-hidden", "true");
-    ctrl.appendChild(etiqueta(enDns ? "Nombre" : "Destino", selD)); ctrl.appendChild(selD);
+    var bPing = enDns ? boton("Consultar", "primario") : (enConectar ? boton("Conectar", "primario conectar")
+      : (enColision ? boton("Transmitir", "primario") : boton("Ping", "primario")));
+    if (enColision) {
+      ctrl.appendChild(etiqueta("Equipo A", selO)); ctrl.appendChild(selO);
+      ctrl.appendChild(etiqueta("Equipo B", selB)); ctrl.appendChild(selB);
+    } else {
+      ctrl.appendChild(etiqueta("Origen", selO)); ctrl.appendChild(selO);
+      ctrl.appendChild(el("span", "flecha", "→")).setAttribute("aria-hidden", "true");
+      ctrl.appendChild(etiqueta(enDns ? "Nombre" : "Destino", selD)); ctrl.appendChild(selD);
+    }
     if (enDns) { ctrl.appendChild(etiqueta("Tipo", selTipoDns)); ctrl.appendChild(selTipoDns); }
     // Cuántos paquetes manda el ping: como el ping real, 4 por defecto.
     var selCant = document.createElement("select");
@@ -3779,7 +3819,7 @@ var UI = (function () {
     });
     selCant.value = String(S.cantPing || 4);
     selCant.addEventListener("change", function () { S.cantPing = Number(selCant.value); });
-    if (!enDns && !enConectar) { ctrl.appendChild(etiqueta("Paquetes", selCant)); ctrl.appendChild(selCant); }
+    if (!enDns && !enConectar && !enColision) { ctrl.appendChild(etiqueta("Paquetes", selCant)); ctrl.appendChild(selCant); }
     if (enConectar) {
       ctrl.appendChild(etiqueta("Servicio", selServ)); ctrl.appendChild(selServ);
       if (selServ.value === "otro") {
@@ -3891,6 +3931,7 @@ var UI = (function () {
     function hacerPing() {
       if (S.modoSim === "dns") { hacerConsulta(); return; }
       if (S.modoSim === "conectar") { hacerConexion(); return; }
+      if (S.modoSim === "colision") { hacerColision(); return; }
       if (ocupadoPorDnsReal()) { return; }
       S.ultimoDestino = selD.value;
       S.origenElegido = selO.value;
@@ -3900,6 +3941,39 @@ var UI = (function () {
       conDnsReal(function () { return Motor.pingRepetido(S.estado, origen, destino, { cantidad: cantidad, semilla: semilla }); },
         "El ping falló por un error interno: ",
         function (qos) { mostrarPing(qos, origen, destino); });
+    }
+
+    function hacerColision() {
+      if (ocupadoPorDnsReal()) { return; }
+      if (!S.estado) { reconstruirEstado(); }
+      if (!S.estado) { avisar("La topología tiene errores: no se puede simular."); return; }
+      var a = selO.value, b = selB.value;
+      S.origenElegido = a;
+      // Cada prueba usa una semilla nueva: las esperas cambian de una a otra, como en la red real.
+      S.semillaColision = (S.semillaColision || 0) + 1;
+      var res;
+      try { res = Motor.transmitirALaVez(S.estado, a, b, { semilla: S.semillaColision }); }
+      catch (e) { registrar("error", "La prueba falló por un error interno: " + e.message); return; }
+      mostrarColision(res, a, b);
+    }
+
+    function mostrarColision(res, a, b) {
+      S.ultimo = { origen: res.equipo || a, destino: nombreDe(b), res: res, colision: true, a: a, b: b };
+      S.panelRes = "ping";
+      S.verTodos = true;
+      S.verTramas = false;
+      consolaAgregar("Transmitir a la vez: " + nombreDe(a) + " y " + nombreDe(b));
+      (res.intentos || []).forEach(function (i) {
+        consolaAgregar("Colisión " + i.n + ": " + nombreDe(a) + " espera " + i.esperaA + ", " + nombreDe(b) + " espera " + i.esperaB +
+          " (0 a " + i.rango + ")" + (i.colision ? " → chocan otra vez" : ""), i.colision);
+      });
+      if (res.diagnostico) { consolaAgregar(res.diagnostico.titulo, true); }
+      else { consolaAgregar(resumenColision(res)); }
+      registrar("colision", nombreDe(a) + " y " + nombreDe(b) + " transmiten a la vez: " +
+        (res.diagnostico ? res.diagnostico.titulo : resumenColision(res)));
+      renderInferior();
+      try { animarColision(res); }
+      catch (e2) { registrar("animacion", "Error en animación: " + e2.message); }
     }
 
     function mostrarPing(qos, origen, destino) {
@@ -4122,6 +4196,298 @@ var UI = (function () {
 
   /* ---------------- Resultado: reposo, ping, verificación ---------------- */
 
+  /* ---------------- Transmitir a la vez (CSMA/CD) ---------------- */
+
+  // Los equipos que envían tramas propias: ni conmutadores ni la nube.
+  function equiposQueTransmiten() {
+    return (S.topologia.dispositivos || []).filter(function (d) { return !Motor.esConmutador(d) && d.tipo !== "internet"; });
+  }
+
+  function dominiosDeColision() {
+    try { return S.estado ? Motor.dominios(S.estado).colision : []; } catch (e) { return []; }
+  }
+
+  function cuelgaDeHub(dominio) {
+    return dominio.dispositivos.some(function (id) { var d = buscarDisp(id); return d && Motor.esHub(d); });
+  }
+
+  // Los que hoy pueden transmitir (encendidos y con un enlace que pasa); si no hay ninguno, todos.
+  function preferirActivos(lista) {
+    var activos = S.estado ? lista.filter(function (d) { return Motor.puedeTransmitir(S.estado, d.id); }) : [];
+    return activos.length ? activos : lista;
+  }
+
+  function equipoInicialColision(emisores) {
+    function vale(id) { return emisores.some(function (d) { return d.id === id; }); }
+    if (S.origenElegido && vale(S.origenElegido)) { return S.origenElegido; }
+    if (S.seleccionado && vale(S.seleccionado)) { return S.seleccionado; }
+    var activos = preferirActivos(emisores);
+    var enHub = null;
+    dominiosDeColision().filter(cuelgaDeHub).forEach(function (dom) {
+      dom.dispositivos.forEach(function (id) { if (!enHub && activos.some(function (d) { return d.id === id; })) { enHub = id; } });
+    });
+    return enHub || (activos[0] ? activos[0].id : "");
+  }
+
+  // Un equipo que comparta el dominio de colisión de A (primero, el de un hub): ahí la prueba muestra algo.
+  function companeroDeColision(idA, emisores) {
+    var doms = dominiosDeColision().filter(function (d) { return d.dispositivos.indexOf(idA) >= 0; });
+    doms.sort(function (x, y) { return (cuelgaDeHub(y) ? 1 : 0) - (cuelgaDeHub(x) ? 1 : 0); });
+    var candidatos = preferirActivos(emisores.filter(function (d) { return d.id !== idA; }));
+    for (var i = 0; i < doms.length; i++) {
+      for (var j = 0; j < candidatos.length; j++) {
+        if (doms[i].dispositivos.indexOf(candidatos[j].id) >= 0) { return candidatos[j].id; }
+      }
+    }
+    return candidatos[0] ? candidatos[0].id : "";
+  }
+
+  function resumenColision(res) {
+    if (res.resultado === "colision") {
+      return "Las dos tramas llegaron después de " + res.colisiones + (res.colisiones === 1 ? " colisión." : " colisiones.");
+    }
+    if (res.resultado === "sin-colision") {
+      return res.ruta.length > 2 ? "Sin colisión: cada equipo está en su propio dominio."
+        : "Sin colisión: es un enlace punto a punto en full dúplex.";
+    }
+    if (res.resultado === "csma-ca") { return "Wi-Fi: las colisiones se evitan (CSMA/CA)."; }
+    return "No comparten el medio: sus tramas no se cruzan.";
+  }
+
+  function tarjetaColision(res) {
+    var a = nombreDe(S.ultimo.a), b = nombreDe(S.ultimo.b);
+    var html = "<b>" + (res.resultado === "colision" || res.resultado === "sin-colision" ? "✓ " : "") + escapar(resumenColision(res)) + "</b>";
+    if (res.intentos.length) {
+      html += "<table class='intentos'><caption>Espera elegida tras cada colisión, en ranuras</caption><tr><th>Colisión</th><th>Entre</th><th>" +
+        escapar(a) + "</th><th>" + escapar(b) + "</th></tr>" +
+        res.intentos.map(function (i) {
+          return "<tr" + (i.colision ? " class='choca'" : "") + "><td>" + i.n + "</td><td>0 y " + i.rango + "</td><td>" + i.esperaA +
+            "</td><td>" + i.esperaB + "</td></tr>";
+        }).join("") + "</table>";
+    }
+    return el("div", res.resultado === "colision" ? "banda-ok conperdida" : "banda-ok", html);
+  }
+
+  // La animación de la prueba: una fase por evento del Motor. Mismo manejo que la del DORA.
+  var colAnim = { token: 0, activo: false, pausado: false, res: null, i: 0, t: 0, paso: null };
+  var COLOR_ESTACION = { a: "#3987e5", b: "#a855f7" };
+
+  function avisarEstadoColision() {
+    if (!S.raiz) { return; }
+    var b = S.raiz.querySelector('[data-foco="pausa-col"]');
+    if (b) { b.textContent = colAnim.pausado ? "\u25B6 Reanudar" : "\u23F8 Pausar"; }
+  }
+
+  // Resalta el paso de la fase en curso: el último que apunta a ella o a una anterior.
+  function marcarPasoColision(i) {
+    if (!S.raiz) { return; }
+    var filas = S.raiz.querySelectorAll(".recorrido [data-evento]");
+    var actual = null;
+    Array.prototype.forEach.call(filas, function (f) {
+      f.classList.remove("actual");
+      if (i >= 0 && Number(f.getAttribute("data-evento")) <= i) { actual = f; }
+    });
+    if (!actual) { colAnim.paso = null; return; }
+    actual.classList.add("actual");
+    // Al cambiar de paso, la lista lo trae a la vista (sin mover la página); después se puede recorrer a mano.
+    if (colAnim.paso === actual) { return; }
+    colAnim.paso = actual;
+    var lista = actual.parentNode;
+    var fila = actual.getBoundingClientRect(), caja = lista.getBoundingClientRect();
+    if (fila.top < caja.top || fila.bottom > caja.bottom) { lista.scrollTop += fila.top - caja.top - 4; }
+  }
+
+  function detenerColision() {
+    if (!colAnim) { return; }
+    colAnim.token++;
+    colAnim.activo = false;
+    colAnim.pausado = false;
+    marcarPasoColision(-1);
+    avisarEstadoColision();
+  }
+
+  function puntosDeRuta(ids) {
+    return ids.map(buscarDisp).filter(Boolean).map(function (d) { return { x: d.x, y: d.y - 30 }; });
+  }
+
+  // Cada tramo que la animación recorre sigue teniendo sus dos equipos y su cable.
+  function rutasVigentes(res) {
+    var enlaces = (S.topologia && S.topologia.enlaces) || [];
+    function unidos(x, y) {
+      return enlaces.some(function (e) {
+        return (e.a.dispositivo === x && e.b.dispositivo === y) || (e.a.dispositivo === y && e.b.dispositivo === x);
+      });
+    }
+    return (res.eventos || []).every(function (e) {
+      return (e.rutas || []).every(function (r) {
+        var ids = r.ids || r;
+        return ids.every(function (id, i) { return !!buscarDisp(id) && (i === 0 || unidos(ids[i - 1], id)); });
+      });
+    });
+  }
+
+  // Si al editar la red desaparece algo de la última prueba (un equipo o un cable), se la descarta.
+  // Las fallas en vivo no la descartan: no cambian el diseño.
+  function descartarColisionObsoleta() {
+    var u = S.ultimo;
+    if (!u || !u.colision) { return; }
+    if (buscarDisp(u.a) && buscarDisp(u.b) && rutasVigentes(u.res)) { return; }
+    limpiarAnim();
+    S.ultimo = null;
+  }
+
+  function puntoEnRuta(puntos, avance) {
+    if (puntos.length < 2) { return puntos[0]; }
+    var tramos = puntos.length - 1;
+    var pos = Math.max(0, Math.min(avance, 1)) * tramos;
+    var i = Math.min(Math.floor(pos), tramos - 1);
+    var f = pos - i;
+    return { x: puntos[i].x + (puntos[i + 1].x - puntos[i].x) * f, y: puntos[i].y + (puntos[i + 1].y - puntos[i].y) * f };
+  }
+
+  function nodoAnim(etiquetaSvg, atributos, texto) {
+    var n = document.createElementNS("http://www.w3.org/2000/svg", etiquetaSvg);
+    Object.keys(atributos).forEach(function (k) { n.setAttribute(k, atributos[k]); });
+    if (texto !== undefined) { n.textContent = texto; }
+    S.capaAnim.appendChild(n);
+    return n;
+  }
+
+  function puntoColision(p, color, dx, dy) {
+    if (!p) { return; }
+    nodoAnim("circle", { r: 7, fill: color, stroke: "#fff", "stroke-width": 2, cx: p.x + (dx || 0), cy: p.y + (dy || 0), "class": "paquete-col" });
+  }
+
+  function rotuloColision(x, y, texto, color) {
+    nodoAnim("text", { x: x, y: y, "text-anchor": "middle", "font-size": 14, "font-weight": 700, fill: color, stroke: "#fff",
+      "stroke-width": 3, "paint-order": "stroke", "class": "rotulo-col" }, texto);
+  }
+
+  function dibujarFaseColision(i, avance) {
+    var res = colAnim.res;
+    var e = res && res.eventos[i];
+    if (!e || !S.capaAnim) { return; }
+    vaciarCapaAnim();
+    if (e.tipo === "envio" || e.tipo === "duplex") {
+      e.rutas.forEach(function (r) {
+        // En full dúplex las dos señales se cruzan: van apenas separadas para que se vean las dos.
+        var corr = e.tipo === "duplex" ? (r.quien === "a" ? -7 : 7) : 0;
+        puntoColision(puntoEnRuta(puntosDeRuta(r.ids), avance), COLOR_ESTACION[r.quien], 0, corr);
+      });
+    } else if (e.tipo === "colision") {
+      e.rutas.forEach(function (ids) { puntoColision(puntoEnRuta(puntosDeRuta(ids), avance), "#d97706"); });
+      var hub = buscarDisp(e.en);
+      if (hub) {
+        nodoAnim("text", { x: hub.x, y: hub.y - 22, "text-anchor": "middle", "font-size": 40, fill: "#b42318", stroke: "#fff",
+          "stroke-width": 2, "paint-order": "stroke", "class": "choque-col" }, "\u2737");
+        rotuloColision(hub.x, hub.y - 66, "Colisión " + e.numero + " · jam", "#b42318");
+      }
+    } else if (e.tipo === "espera") {
+      [["a", res.a, e.esperaA], ["b", res.b, e.esperaB]].forEach(function (q) {
+        var d = buscarDisp(q[1]);
+        if (!d) { return; }
+        // La cuenta baja con el tiempo de la fase, a la par en las dos estaciones.
+        var quedan = Math.max(0, q[2] - Math.floor(avance * Math.max(e.esperaA, e.esperaB, 1)));
+        rotuloColision(d.x, d.y - 40, "espera " + q[2] + (avance > 0 && avance < 1 && q[2] ? " (" + (quedan === 1 ? "queda " : "quedan ") + quedan + ")" : ""), COLOR_ESTACION[q[0]]);
+      });
+    } else if (e.tipo === "entrega") {
+      e.rutas.forEach(function (ids) { puntoColision(puntoEnRuta(puntosDeRuta(ids), avance), COLOR_ESTACION[e.quien]); });
+      var destino = buscarDisp(e.destino);
+      if (destino && avance >= 1) { rotuloColision(destino.x, destino.y - 52, "\u2713 la recibe", "#1a7f37"); }
+    }
+    marcarPasoColision(i);
+  }
+
+  // Cuánto dura cada fase, en pasos de la velocidad elegida.
+  function duracionFase(e) {
+    var tramos = 1;
+    (e.rutas || []).forEach(function (r) { tramos = Math.max(tramos, (r.ids || r).length - 1); });
+    if (e.tipo === "espera") { return 2 + Math.min(Math.max(e.esperaA, e.esperaB), 8) * 0.3; }
+    return tramos + 0.6;
+  }
+
+  function arrancarColision() {
+    var miToken = ++colAnim.token;
+    colAnim.activo = true;
+    var ultimo = null;
+    function cuadro(t) {
+      if (miToken !== colAnim.token || !colAnim.activo) { return; }
+      try {
+        if (ultimo === null) { ultimo = t; }
+        if (!colAnim.pausado) { colAnim.t += Math.min(t - ultimo, 100) * animador.velocidad; }
+        ultimo = t;
+        var e = colAnim.res.eventos[colAnim.i];
+        var total = duracionFase(e) * msVelocidad();
+        // Los últimos 0,6 pasos de cada fase quedan quietos, para poder leerla.
+        var movimiento = total - 0.6 * msVelocidad();
+        dibujarFaseColision(colAnim.i, Math.min(colAnim.t / movimiento, 1));
+        if (colAnim.t >= total) {
+          if (colAnim.i + 1 >= colAnim.res.eventos.length) { colAnim.activo = false; return; }
+          colAnim.i += 1;
+          colAnim.t = 0;
+        }
+      } catch (err) {
+        detenerColision();
+        registrar("animacion", "Error en animación: " + err.message);
+        return;
+      }
+      requestAnimationFrame(cuadro);
+    }
+    requestAnimationFrame(cuadro);
+  }
+
+  // Prepara la capa del lienzo para la prueba, cancelando cualquier otra animación.
+  function tomarLienzo(res) {
+    detenerColision();
+    detenerDhcp();
+    animador.detener();
+    S.animToken++;
+    vaciarCapaAnim();
+    colAnim.res = res;
+    colAnim.i = 0;
+    colAnim.t = 0;
+  }
+
+  function animarColision(res) {
+    tomarLienzo(res);
+    if (!res || !res.eventos || !res.eventos.length) { return; }
+    if (movimientoReducido()) {
+      // Sin animación: queda a la vista la primera colisión (o el envío, si no la hay).
+      var i = 0;
+      res.eventos.some(function (e, k) { if (e.tipo === "colision") { i = k; return true; } return false; });
+      colAnim.i = i;
+      dibujarFaseColision(i, res.eventos[i].tipo === "duplex" ? 0.5 : 1);
+      return;
+    }
+    arrancarColision();
+  }
+
+  // Clic en un paso: la animación sigue desde su fase.
+  function irAFaseColision(res, i) {
+    if (!res || i < 0 || i >= res.eventos.length) { return; }
+    tomarLienzo(res);
+    colAnim.i = i;
+    if (movimientoReducido()) { dibujarFaseColision(i, res.eventos[i].tipo === "duplex" ? 0.5 : 1); return; }
+    dibujarFaseColision(i, 0);
+    arrancarColision();
+    avisarEstadoColision();
+  }
+
+  function controlesColision(res) {
+    var ctl = {
+      get pausado() { return colAnim.pausado; },
+      get velocidad() { return animador.velocidad; },
+      alternarPausa: function () {
+        if (colAnim.activo) { colAnim.pausado = !colAnim.pausado; }
+        avisarEstadoColision();
+      },
+      repetir: function () { animarColision(res); },
+      establecerVelocidad: function (f) { animador.establecerVelocidad(f); }
+    };
+    var hayChoque = res.eventos.some(function (e) { return e.tipo === "colision"; });
+    return controlesAnimacion(ctl, "pausa-col", hayChoque ? ["equipoA", "equipoB", "choque", "jam"] : ["equipoA", "equipoB"]);
+  }
+
   function renderResultado() {
     var cont = el("div", "simres");
     if (S.panelRes === "verificacion" && S.ultimaVerif) { return renderVerificacion(cont); }
@@ -4139,7 +4505,10 @@ var UI = (function () {
     // Con el resultado a la vista, la consola va en su propia columna, sea un
     // éxito o un diagnóstico: debajo de la tarjeta quedaba fuera de la vista.
     var conConsola = false;
-    if (S.ultimo.conexion) {
+    if (S.ultimo.colision) {
+      lado.appendChild(res.exito ? tarjetaColision(res) : renderDiagnostico(res.diagnostico));
+      conConsola = true;
+    } else if (S.ultimo.conexion) {
       // El socket y los segmentos, uno por línea: → del cliente, ← del servidor.
       var lineas = (res.segmentos || []).map(function (x) {
         var flecha = x.de === "cliente" ? "→" : "←";
@@ -4369,6 +4738,17 @@ var UI = (function () {
     return caja;
   }
 
+  function pasoDeAnimacion(linea, res, i) {
+    linea.setAttribute("data-evento", String(i));
+    linea.setAttribute("role", "button");
+    linea.tabIndex = 0;
+    linea.title = "Clic para ver este momento en la animación";
+    linea.addEventListener("click", function () { irAFaseColision(res, i); });
+    linea.addEventListener("keydown", function (ev) {
+      if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); irAFaseColision(res, i); }
+    });
+  }
+
   function renderRecorrido(res) {
     var caja = el("div", "recorrido");
     var pasos = res.pasos || [];
@@ -4376,9 +4756,17 @@ var UI = (function () {
     pasos.forEach(function (p, i) { if (!p.ok && fallo < 0) { fallo = i; } });
     var tramas = res.tramas || [];
     var enTramas = S.verTramas && tramas.length > 0;
+    // «Transmitir a la vez» trae eventos: sus pasos se animan y no son verificaciones.
+    var esColision = !!res.eventos;
     var cab = el("div", "cab", "<span>" + (enTramas ? "Cómo viaja el paquete" : "Recorrido paso a paso") + "</span>");
     if (enTramas) {
       cab.appendChild(el("span", "", tramas.length + (tramas.length === 1 ? " trama" : " tramas")));
+    } else if (esColision) {
+      if (res.exito) {
+        cab.appendChild(el("span", res.colisiones ? "mal" : "ok", res.colisiones
+          ? res.colisiones + (res.colisiones === 1 ? " colisión" : " colisiones")
+          : { "csma-ca": "CSMA/CA", "separados": "no comparten el medio" }[res.resultado] || "sin colisión"));
+      }
     } else if (res.exito) {
       cab.appendChild(el("span", "ok", pasos.length + " de " + pasos.length + " verificaciones correctas"));
     } else if (fallo >= 0) {
@@ -4390,9 +4778,10 @@ var UI = (function () {
     if (enTramas) {
       renderTramas(res, lista);
     } else if (!pasos.length) {
-      lista.appendChild(el("p", "", res.diagnostico && res.diagnostico.codigo === "ENTRADA"
-        ? "No se recorrió ningún paso: la dirección de destino no es válida."
-        : "No se recorrió ningún paso."));
+      var sinPasos = "No se recorrió ningún paso.";
+      if (esColision && res.diagnostico) { sinPasos = "La prueba no se hizo: " + escapar(res.diagnostico.titulo) + "."; }
+      else if (res.diagnostico && res.diagnostico.codigo === "ENTRADA") { sinPasos = "No se recorrió ningún paso: la dirección de destino no es válida."; }
+      lista.appendChild(el("p", "", sinPasos));
     } else if (S.verTodos) {
       visibles = pasos;
     } else if (res.exito) {
@@ -4403,9 +4792,13 @@ var UI = (function () {
     visibles.forEach(function (p) {
       if (p.ok) {
         var resumen = resumenPaso(p);
-        lista.appendChild(el("div", "linpaso",
-          "<span class='marca' aria-hidden='true'>✓</span>" + etiquetaCapa(p.capa) + "<b>" + p.n + ".</b> " + escapar(p.titulo) +
-          (resumen ? " — " + escapar(resumen) : "")));
+        var evento = esColision && p.evento !== undefined ? res.eventos[p.evento] : null;
+        var choca = !!evento && evento.tipo === "colision";
+        var linea = el("div", choca ? "linpaso choca" : "linpaso",
+          "<span class='marca' aria-hidden='true'>" + (choca ? "\u2737" : (esColision ? "•" : "✓")) + "</span>" + etiquetaCapa(p.capa) +
+          "<b>" + p.n + ".</b> " + escapar(p.titulo) + (resumen ? " — " + escapar(resumen) : ""));
+        if (evento) { pasoDeAnimacion(linea, res, p.evento); }
+        lista.appendChild(linea);
       } else {
         var f = el("div", "pasofallo",
           "<span class='marca' aria-hidden='true'>✗</span>" + etiquetaCapa(p.capa) + "<b>" + p.n + ". " + escapar(p.titulo) + "</b>");
@@ -4420,6 +4813,7 @@ var UI = (function () {
     });
     caja.appendChild(lista);
     var pie = el("div", "pie");
+    if (esColision && res.eventos.length && !movimientoReducido()) { pie.appendChild(controlesColision(res)); }
     if (!res.exito && fallo >= 0 && !S.verTodos && !enTramas) {
       pie.appendChild(el("span", "", "los pasos siguientes no se llegaron a verificar"));
     }
@@ -4437,7 +4831,7 @@ var UI = (function () {
       bEnc.addEventListener("click", function () { S.verEncabezados = !S.verEncabezados; renderInferior(); });
       pie.appendChild(bEnc);
     }
-    if (!enTramas && (pasos.length > visibles.length || S.verTodos)) {
+    if (!enTramas && !esColision && (pasos.length > visibles.length || S.verTodos)) {
       var bTodos = boton(S.verTodos ? "Ver resumen" : "Ver los " + pasos.length + " pasos");
       bTodos.setAttribute("data-foco", "todos");
       bTodos.addEventListener("click", function () { S.verTodos = !S.verTodos; renderInferior(); });
@@ -5453,6 +5847,7 @@ var UI = (function () {
   }
 
   function limpiarAnim() {
+    detenerColision();
     detenerDhcp();
     if (animador) { animador.detener(); }
     vaciarCapaAnim();
@@ -5702,6 +6097,7 @@ var UI = (function () {
   }
 
   function animarDhcp(resultado) {
+    detenerColision();
     detenerDhcp();
     animador.detener();
     S.animToken++;
@@ -5729,6 +6125,7 @@ var UI = (function () {
   function irAMensajeDhcp(res, k) {
     var msgs = (res && res.mensajes) || [];
     if (k < 0 || k >= msgs.length) { return; }
+    detenerColision();
     animador.detener();
     S.animToken++;
     dhcpAnim.res = res;
@@ -5772,7 +6169,11 @@ var UI = (function () {
     respuesta: ["#0ca30c", "respuesta"],
     apertura: ["#7c5cff", "apertura"],
     cierre: ["#d97706", "cierre"],
-    rechazo: ["#b42318", "rechazo"]
+    rechazo: ["#b42318", "rechazo"],
+    equipoA: ["#3987e5", "equipo A"],
+    equipoB: ["#a855f7", "equipo B"],
+    choque: ["#b42318", "colisión"],
+    jam: ["#d97706", "jam"]
   };
 
   function clasificarTrama(t, ctx) {
@@ -6193,6 +6594,9 @@ var UI = (function () {
   }
 
   function cargarTopologia(topologia) {
+    // Otra red: se corta la animación en curso y no queda una prueba que repetir sobre ella.
+    if (S.capaAnim) { S.animToken++; limpiarAnim(); }
+    if (S.ultimo && S.ultimo.colision) { S.ultimo = null; }
     S.topologia = clonar(topologia);
     S.fallasVivas = { enlaces: {}, equipos: {} };
     S.herramientaFalla = null;
