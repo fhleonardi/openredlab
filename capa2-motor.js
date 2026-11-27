@@ -319,9 +319,18 @@ var Motor = (function () {
     D25: {
       titulo: "El nombre no existe",
       tituloNoCargado: "La simulación no conoce ese nombre",
+      tituloSinTipo: "La simulación no tiene ese registro",
       explicacion: function (ctx) {
         ctx = ctx || {};
         var nombre = "\"" + valor(ctx.nombre, "ese nombre") + "\"";
+        if (ctx.zonaPropia) {
+          return nombre + " es de la zona " + ctx.zonaPropia + ", que en tu red atiende " + valor(ctx.servidorPropio, "otro servidor DNS") +
+            ". La internet simulada, donde preguntó " + valor(ctx.consultado, "el servidor DNS") + ", no llega a esa zona.";
+        }
+        if (ctx.sinTipo) {
+          return nombre + " está en la internet simulada, pero sin registros " + valor(ctx.tipo, "de ese tipo") +
+            " cargados. Esto no dice si los tiene en la internet real.";
+        }
         if (ctx.noCargado) {
           return nombre + " no está entre los pocos nombres de la internet simulada (google.com, wikipedia.org, dns.google y one.one.one.one). " +
             "Esto no dice si existe en la internet real.";
@@ -346,8 +355,13 @@ var Motor = (function () {
       },
       sugerencia: function (ctx) {
         ctx = ctx || {};
-        if (ctx.noCargado) {
-          return "Consultalo con «Resolver nombres reales». Si es un nombre de tu red, usá como DNS tu servidor de esa zona.";
+        if (ctx.zonaPropia) {
+          return "Usá como DNS a " + valor(ctx.servidorPropio, "tu servidor de esa zona") + ", y revisá el registro en su pestaña DNS.";
+        }
+        if (ctx.noCargado || ctx.sinTipo) {
+          return ctx.sinDnsReal
+            ? "El simulador no consulta ese tipo de registro afuera. Si es un nombre de tu red, usá como DNS tu servidor de esa zona."
+            : "Para preguntarlo afuera hace falta «Resolver nombres reales» prendido e internet. Si es de tu red, usá tu servidor DNS.";
         }
         if (ctx.sinRegistros) { return "Probá con otro tipo de registro (por ejemplo A, CNAME, MX o NS) o con otro nombre."; }
         if (ctx.noRecursivo) { return "Marcá «Resolver nombres de afuera» en el servidor, o usá otro servidor DNS para los nombres de internet."; }
@@ -546,7 +560,8 @@ var Motor = (function () {
     }
     return {
       codigo: codigo,
-      titulo: (ctx && ctx.aire && entrada.tituloAire) || (ctx && ctx.noCargado && entrada.tituloNoCargado) || entrada.titulo,
+      titulo: (ctx && ctx.aire && entrada.tituloAire) || (ctx && ctx.sinTipo && entrada.tituloSinTipo) ||
+        (ctx && ctx.noCargado && entrada.tituloNoCargado) || entrada.titulo,
       explicacion: explicacion,
       sugerencia: sugerencia
     };
@@ -3211,6 +3226,20 @@ var Motor = (function () {
     return nombreDnsValido(nombre) && SUFIJOS_RESERVADOS.indexOf(nombre.toLowerCase().split(".").pop()) < 0;
   }
 
+  // El servidor DNS de la red cuya zona contiene ese nombre, o null.
+  function servidorDeZona(estado, nombre) {
+    var mejor = null;
+    Object.keys(estado.porDispositivo).forEach(function (id) {
+      var d = estado.porDispositivo[id];
+      var dns = d.tipo === "servidor" && d.servicios && d.servicios.dns;
+      var zona = dns ? sinPuntoFinal(String(dns.zona || "").trim()) : "";
+      if (zona && dentroDeZona(nombre, zona) && (!mejor || zona.length > mejor.zona.length)) {
+        mejor = { zona: zona, servidor: d.nombre || d.id };
+      }
+    });
+    return mejor;
+  }
+
   function sinPuntoFinal(texto) {
     return typeof texto === "string" ? texto.toLowerCase().replace(/\.$/, "") : "";
   }
@@ -3375,11 +3404,15 @@ var Motor = (function () {
     if (!hallado || (!hallado.registros.length && !hallado.pendiente)) {
       var realEnZona = dnsRealDe(estado, nombre, tipo);
       if (realEnZona) { return respuestaDnsReal(realEnZona, nombre, tipo, quien, agregar); }
+      // El nombre está cargado pero sin ese tipo: no es lo mismo que no tenerlo.
+      var sinTipo = !!hallado;
+      noCargado = noCargado && !sinTipo;
       agregar("Preguntar al autoritativo de " + zona + " (consulta iterativa)", quien + " le pregunta a " + auth.ns +
         ", el servidor autoritativo de " + zona + (noCargado
           ? ", por " + nombre + " (tipo " + tipo + ")." + sinCargar
-          : ", y responde que " + nombre + " no tiene registros " + tipo + "."), false, auth.ip);
-      return { fallo: { quien: auth.ns, zona: zona, simulado: true, consulta: nombre, noCargado: noCargado } };
+          : sinTipo ? ", por " + nombre + ". La simulación no tiene registros " + tipo + " cargados para ese nombre."
+            : ", y responde que " + nombre + " no tiene registros " + tipo + "."), false, auth.ip);
+      return { fallo: { quien: auth.ns, zona: zona, simulado: true, consulta: nombre, noCargado: noCargado, sinTipo: sinTipo } };
     }
     agregar("Preguntar al autoritativo de " + zona + " (consulta iterativa)", quien + " le pregunta a " + auth.ns +
       ", el servidor autoritativo de " + zona + ", que responde: " + hallado.registros.map(textoRegistro).join("; ") + ".", true, auth.ip);
@@ -3580,9 +3613,14 @@ var Motor = (function () {
     if (resultado.fallo) {
       var ctxFallo = resultado.fallo;
       ctxFallo.nombre = nombre;
+      ctxFallo.tipo = tipo;
+      ctxFallo.sinDnsReal = TIPOS_DNS_REAL.indexOf(tipo) < 0;
+      var propia = ctxFallo.noCargado ? servidorDeZona(estado, ctxFallo.consulta || nombre) : null;
+      if (propia) { ctxFallo.zonaPropia = propia.zona; ctxFallo.servidorPropio = propia.servidor; ctxFallo.consultado = quien; }
       var fallado = fallar(ctxFallo.arpa ? "D35" : "D25", ctxFallo);
       // La simulación no conocía el nombre: la interfaz puede preguntar afuera, si el alumno lo pidió.
-      if (ctxFallo.simulado && TIPOS_DNS_REAL.indexOf(tipo) >= 0) {
+      // Un nombre de la red no se ofrece para preguntarlo afuera.
+      if (ctxFallo.simulado && !propia && !ctxFallo.sinDnsReal) {
         fallado.nombreSinResolver = { nombre: ctxFallo.consulta || nombre, tipo: tipo };
       }
       return fallado;
@@ -5358,6 +5396,29 @@ var Motor = (function () {
       comparar("DNS: un nombre reservado sigue sin existir afuera",
         [ping(est(), "pc1", "intranet.local").diagnostico.titulo, /\.local no existe en internet/.test(ping(est(), "pc1", "intranet.local").diagnostico.explicacion)],
         ["El nombre no existe", true]);
+      // Un nombre cargado, pedido con un tipo que la simulación no tiene, no es un nombre desconocido.
+      var sinTipo = consultarDns(est(), "pc1", "google.com", "CNAME");
+      comparar("DNS: un nombre cargado sin ese tipo no figura como desconocido",
+        [sinTipo.diagnostico.titulo, /no está entre/.test(sinTipo.diagnostico.explicacion),
+          /no tiene cargado ese nombre/.test(sinTipo.pasos.map(function (x) { return x.detalle; }).join(" ")), sinTipo.nombreSinResolver],
+        ["La simulación no tiene ese registro", false, false, { nombre: "google.com", tipo: "CNAME" }]);
+      // La sugerencia sirve con el interruptor apagado o prendido, y no lo ofrece para un PTR.
+      comparar("DNS: la sugerencia no manda a prender lo que puede estar prendido",
+        /^Para preguntarlo afuera hace falta/.test(ping(est(), "pc1", "mercadolibre.com").diagnostico.sugerencia), true);
+      var ptrNombre = consultarDns(est(), "pc1", "mercadolibre.com", "PTR");
+      comparar("DNS: un PTR de un nombre no sugiere el DNS real",
+        [/Resolver nombres reales/.test(ptrNombre.diagnostico.sugerencia), ptrNombre.nombreSinResolver || null], [false, null]);
+      // Un nombre de la zona de un servidor de la red no se ofrece afuera.
+      var conZona = conInternet(porDefecto, "8.8.8.8");
+      var srvZona = fabPc("srvz", "192.168.1.53", 24, "192.168.1.1");
+      srvZona.tipo = "servidor"; srvZona.nombre = "SRV-Escuela";
+      srvZona.servicios = { dns: { zona: "escuela.edu.ar", registros: [], recursivo: true } };
+      conZona.dispositivos.push(srvZona);
+      var interno = ping(crearEstado(conZona), "pc1", "intranet.escuela.edu.ar");
+      comparar("DNS: un nombre de una zona propia no se manda afuera",
+        [interno.diagnostico.codigo, interno.nombreSinResolver || null, /SRV-Escuela/.test(interno.diagnostico.explicacion),
+          /SRV-Escuela/.test(interno.diagnostico.sugerencia)],
+        ["D25", null, true, true]);
       // Un subdominio de una zona simulada (mail.google.com) también se puede preguntar afuera.
       var eSub = est();
       comparar("DNS real: un subdominio de una zona simulada avisa", ping(eSub, "pc1", "mail.google.com").nombreSinResolver, { nombre: "mail.google.com", tipo: "A" });

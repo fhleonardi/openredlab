@@ -1897,10 +1897,19 @@ var Autotest = (function () {
         if (llamadas.length !== 1 || llamadas[0].url !== "https://cloudflare-dns.com/dns-query?name=mercadolibre.com&type=A") {
           prob.push("el botón no hace una consulta a la URL fija");
         }
+        if (!document.activeElement || document.activeElement.getAttribute("data-foco") !== "dnsreal") {
+          prob.push("al apretar el botón se pierde el foco");
+        }
         // Apagar y descartar lo que cuenta: lo que sigue arranca como antes.
         interruptor().click();
         llamadas.length = 0;
       }
+      // Al abrir otra red, el resultado anterior no se puede repetir sobre ella.
+      consultar("clarin.com");
+      if (!inf().querySelector("button.consultareal")) { prob.push("no ofrece el DNS real para clarin.com"); }
+      UI.cargarTopologia(clonar(ejemploPorId("oficina-dns").topologia));
+      document.getElementById("sim-tab-inf-simulacion").click();
+      if (inf().querySelector("button.consultareal")) { prob.push("en otra red queda el botón de la prueba anterior"); }
 
       interruptor().click();
       if (!interruptor() || !interruptor().checked) { prob.push("no se pudo prender el interruptor"); }

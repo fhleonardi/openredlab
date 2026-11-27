@@ -3932,11 +3932,17 @@ var UI = (function () {
   function botonDnsReal() {
     var pendiente = pendienteDnsReal(S.ultimo && S.ultimo.res);
     if (S.dnsRealActivo || !pendiente || !nombreConsultable(pendiente.nombre)) { return null; }
+    // La prueba de otra red, o de un equipo que ya no está, no se puede repetir.
+    if (S.ultimo.otraRed || !buscarDisp(S.ultimo.origen)) { return null; }
     var b = boton("Consultar en el DNS real (Cloudflare)", "irconfig consultareal");
     b.title = "Prende «Resolver nombres reales (requiere internet)», pregunta " + pendiente.nombre + " y repite la prueba";
     b.addEventListener("click", function () {
       var repetir = S.ultimo && S.ultimo.repetir;
+      if (!S.ultimo || !buscarDisp(S.ultimo.origen)) { avisar("El equipo de origen ya no está en la red."); return; }
       activarDnsReal(true);
+      // El botón desaparece al redibujar: el foco pasa al interruptor que acaba de prender.
+      var sw = S.inf.querySelector("[data-foco=dnsreal]");
+      if (sw) { try { sw.focus(); } catch (e) { /* se sigue igual */ } }
       if (repetir) { repetir(); }
     });
     return b;
@@ -7041,6 +7047,7 @@ var UI = (function () {
     // Otra red: se corta la animación en curso y no queda una prueba que repetir sobre ella.
     if (S.capaAnim) { S.animToken++; limpiarAnim(); }
     if (S.ultimo && S.ultimo.colision) { S.ultimo = null; }
+    if (S.ultimo) { S.ultimo.otraRed = true; }
     S.topologia = clonar(topologia);
     S.fallasVivas = { enlaces: {}, equipos: {} };
     S.herramientaFalla = null;
