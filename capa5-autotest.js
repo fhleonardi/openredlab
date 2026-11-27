@@ -1882,7 +1882,25 @@ var Autotest = (function () {
 
       if (!consultar("example.com")) { prob.push("no se encontró el formulario de consulta DNS"); }
       if (llamadas.length !== 0) { prob.push("apagado, salió " + llamadas.length + " petición(es) a la red"); }
-      if (!/El nombre no existe/.test(inf().textContent)) { prob.push("apagado, example.com no da D25"); }
+      if (!/D25/.test(inf().textContent)) { prob.push("apagado, example.com no da D25"); }
+      consultar("host.home");
+      if (!/El nombre no existe/.test(inf().textContent)) { prob.push("un nombre reservado no figura como inexistente"); }
+      if (inf().querySelector("button.consultareal")) { prob.push("ofrece el DNS real para un nombre reservado"); }
+      consultar("mercadolibre.com");
+      if (llamadas.length !== 0) { prob.push("apagado, mercadolibre.com salió a la red"); }
+      if (!/La simulación no conoce ese nombre/.test(inf().textContent)) { prob.push("apagado, un nombre sin cargar se declara inexistente"); }
+      var bReal = inf().querySelector("button.consultareal");
+      if (!bReal) { prob.push("no ofrece consultar en el DNS real"); }
+      else {
+        bReal.click();
+        if (!interruptor() || !interruptor().checked) { prob.push("el botón no prende el interruptor"); }
+        if (llamadas.length !== 1 || llamadas[0].url !== "https://cloudflare-dns.com/dns-query?name=mercadolibre.com&type=A") {
+          prob.push("el botón no hace una consulta a la URL fija");
+        }
+        // Apagar y descartar lo que cuenta: lo que sigue arranca como antes.
+        interruptor().click();
+        llamadas.length = 0;
+      }
 
       interruptor().click();
       if (!interruptor() || !interruptor().checked) { prob.push("no se pudo prender el interruptor"); }
