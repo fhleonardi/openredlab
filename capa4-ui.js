@@ -159,6 +159,10 @@ var UI = (function () {
       var a = disp.interfaces[i];
       if (a.habilitada && a.ip && Red.esIpValida(String(a.ip))) { return a; }
     }
+    // Un router cuya única IP es la del bridge se presenta con ella.
+    if (disp.tipo === "router" && disp.bridge && disp.bridge.ip && Red.esIpValida(String(disp.bridge.ip))) {
+      return { id: "bridge", nombre: "bridge", medio: "bridge", habilitada: true, ip: disp.bridge.ip, prefijo: disp.bridge.prefijo, mac: null };
+    }
     for (i = 0; i < disp.interfaces.length; i++) {
       var b = disp.interfaces[i];
       if (b.ip && Red.esIpValida(String(b.ip))) { return b; }
@@ -175,6 +179,9 @@ var UI = (function () {
       var todas = (disp.interfaces || []).filter(function (f) {
         return f.ip && Red.esIpValida(String(f.ip));
       }).map(function (f) { return f.id + " " + f.ip + "/" + f.prefijo; });
+      if (disp.bridge && disp.bridge.ip && Red.esIpValida(String(disp.bridge.ip))) {
+        todas.push("bridge " + disp.bridge.ip + "/" + disp.bridge.prefijo);
+      }
       return todas.length ? todas : ["sin IP"];
     }
     var prim = primeraIp(disp);
@@ -457,7 +464,11 @@ var UI = (function () {
     ".simprop table.registros th,.simprop table.registros td{text-align:left;padding:2px 4px;border-bottom:1px dotted var(--sim-borde);overflow-wrap:anywhere;}",
     ".simprop table.registros td:nth-child(2){white-space:nowrap;}",
     ".filaif{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:12px;padding:6px 0;border-bottom:1px dotted var(--sim-borde);}",
-    ".filaif .datos{flex:1;min-width:0;}",
+    ".filaif .datos{flex:1;min-width:10em;}",
+    ".simprop .bridge{padding-bottom:8px;margin-bottom:4px;border-bottom:1px solid var(--sim-borde);}",
+    ".simprop .bridge p{font-size:12px;margin:4px 0;}",
+    ".simprop .bridge p b{font-size:14px;}",
+    ".simprop .bridge .tenue{color:var(--sim-tenue);}",
     ".filaif label{margin:0;}",
     ".filaif select{width:auto;}",
     ".siminf{height:clamp(290px,38vh,480px);flex:0 1 clamp(290px,38vh,480px);background:var(--sim-panel);border-top:1px solid var(--sim-borde);padding:6px 12px 8px;box-sizing:border-box;overflow:hidden;display:flex;flex-direction:column;}",
@@ -637,6 +648,7 @@ var UI = (function () {
     "svg .nodo,svg .enlace,svg .asa{cursor:pointer;}",
     "svg .asa:focus-visible{outline:3px solid var(--sim-acento);outline-offset:2px;}",
     "svg .puerto{cursor:pointer;stroke:#333;stroke-width:1;}",
+    "svg .puerto.enbridge{stroke:#16a34a;}",
     "svg text{font-family:system-ui,Arial,sans-serif;}",
     "svg .etiqueta text.mono{font-family:ui-monospace,Consolas,monospace;}",
     "svg .fondoetq{fill:var(--sim-fondo);fill-opacity:.9;}",
@@ -1484,22 +1496,27 @@ var UI = (function () {
         c.setAttribute("class", "puerto");
         c.setAttribute("tabindex", "0");
         c.setAttribute("role", "button");
-        c.setAttribute("aria-label", d.id + ":" + iface.id + (iface.habilitada ? "" : ", deshabilitada"));
+        var enBridge = enElBridge(d, iface);
+        if (enBridge) { c.setAttribute("class", "puerto enbridge"); c.style.strokeWidth = "2.5"; }
+        c.setAttribute("aria-label", d.id + ":" + iface.id + (iface.habilitada ? "" : ", deshabilitada") + (enBridge ? ", en el bridge" : ""));
         var ocupado = !!enlaceEnPuerto(d.id, iface.id);
         var comparte = puertoAdmiteMultiplesEnlaces(d, iface);
         c.setAttribute("fill", !iface.habilitada ? "#999" : (ocupado ? "#0b5fa5" : "#fff"));
         var tit = document.createElementNS(svgNS, "title");
-        tit.textContent = iface.id + " (" + iface.medio + ")" + (!iface.habilitada ? " deshabilitada" : (ocupado ? (comparte ? " AP activo" : " ocupada") : " libre"));
+        tit.textContent = iface.id + " (" + iface.medio + ")" + (!iface.habilitada ? " deshabilitada" : (ocupado ? (comparte ? " AP activo" : " ocupada") : " libre")) +
+          (enBridge ? ", en el bridge" : "");
         c.appendChild(tit);
         if (S.herramientaCable || S.cableOrigen) {
           var comp = !S.cableOrigen || (iface.medio === S.cableTipo && (!ocupado || comparte) && iface.id !== undefined);
           c.setAttribute("opacity", comp ? "1" : "0.3");
           c.setAttribute("stroke-width", comp ? "2" : "1");
+          c.style.strokeWidth = "";
         } else if (S.moviendoExtremo) {
           var em = buscarEnlace(S.moviendoExtremo.enlace);
           var sirve = !!em && !motivoPuertoInvalido(em, S.moviendoExtremo.lado, d, iface);
           c.setAttribute("opacity", sirve ? "1" : "0.3");
           c.setAttribute("stroke-width", sirve ? "2" : "1");
+          c.style.strokeWidth = "";
         }
         c.addEventListener("pointerenter", function (ev) {
           mostrarTipPuerto(ev, d, iface);
@@ -1720,7 +1737,8 @@ var UI = (function () {
   function mostrarTipPuerto(ev, d, iface) {
     var enl = enlaceEnPuerto(d.id, iface.id);
     S.tooltip.innerHTML = "<b>" + escapar((d.nombre || d.id) + " · " + iface.id) + "</b><br>puerto " +
-      escapar(palabraCable(iface.medio)) + "<br>" + (enl ? escapar("conectado a " + nombreDe(enl.a.dispositivo === d.id && enl.a.interfaz === iface.id ? enl.b.dispositivo : enl.a.dispositivo)) : "libre");
+      escapar(palabraCable(iface.medio)) + (enElBridge(d, iface) ? ", en el bridge" : "") + "<br>" +
+      (enl ? escapar("conectado a " + nombreDe(enl.a.dispositivo === d.id && enl.a.interfaz === iface.id ? enl.b.dispositivo : enl.a.dispositivo)) : "libre");
     S.tooltip.style.display = "block";
     posicionarTip(ev);
   }
@@ -2699,48 +2717,66 @@ var UI = (function () {
     var selIf = document.createElement("select");
     (d.interfaces || []).forEach(function (f) {
       var op = document.createElement("option");
-      op.value = f.id; op.textContent = f.id + " (" + f.medio + ")";
+      op.value = f.id; op.textContent = f.id + " (" + f.medio + (enElBridge(d, f) ? ", en el bridge" : "") + ")";
       selIf.appendChild(op);
     });
-    var interfazInicial = S.interfazEditada[d.id] || (principal ? principal.id : (d.interfaces[0] && d.interfaces[0].id));
+    var conBridge = d.tipo === "router" && !!d.bridge;
+    if (conBridge) {
+      var opB = document.createElement("option");
+      opB.value = "bridge"; opB.textContent = "bridge (sus puertos conmutan entre sí)";
+      selIf.appendChild(opB);
+    }
+    var interfazInicial = S.interfazEditada[d.id] || (conBridge && d.bridge.ip ? "bridge" : null) ||
+      (principal ? principal.id : (d.interfaces[0] && d.interfaces[0].id));
+    if (interfazInicial === "bridge" && !conBridge) { interfazInicial = principal ? principal.id : (d.interfaces[0] && d.interfaces[0].id); }
     if (interfazInicial) { selIf.value = interfazInicial; }
     c.appendChild(etiqueta("Interfaz que se edita", selIf)); c.appendChild(selIf);
-    var editada = buscarIface(d, selIf.value) || d.interfaces[0];
+    var esBridge = conBridge && selIf.value === "bridge";
+    var editada = esBridge ? d.bridge : (buscarIface(d, selIf.value) || d.interfaces[0]);
     selIf.addEventListener("change", function () {
       S.interfazEditada[d.id] = selIf.value;
       renderPropiedades();
     });
     if (!editada) { return; }
-
-    var selModo = document.createElement("select");
-    selModo.innerHTML = "<option value='estatico'>estática</option><option value='dhcp'>DHCP</option>";
-    selModo.value = editada.modo || "estatico";
-    selModo.addEventListener("change", function () {
-      // Pedir por DHCP ya guarda el historial y vuelve a dibujar todo.
-      if (selModo.value === "dhcp") { solicitarDhcp(d.id, editada.id); return; }
-      empujarHistorial(); editada.modo = selModo.value;
-      reconstruirEstado(); renderTodo();
-    });
-    c.appendChild(etiqueta("Modo", selModo)); c.appendChild(selModo);
-
-    campoTexto(c, "Dirección IP", editada.ip || "", function (v) {
-      editada.ip = v.trim() === "" ? null : v.trim();
-      reconstruirEstado(); renderLienzo(); refrescarCalculo();
-    }, function (v) { return v.trim() === "" || Red.esIpValida(v.trim()); }, true);
-
-    var selM = document.createElement("select");
-    for (var p = 8; p <= 30; p++) {
-      var op = document.createElement("option");
-      op.value = String(p);
-      op.textContent = "/" + p + " — " + Red.prefijoAMascara(p);
-      selM.appendChild(op);
+    var miembro = !esBridge && enElBridge(d, editada);
+    if (miembro) {
+      c.appendChild(el("p", "tenue", escapar(editada.id) + " está en el bridge: no lleva IP propia. La IP del bridge se edita eligiendo «bridge» " +
+        "en esta lista o en la pestaña Interfaces."));
     }
-    selM.value = String(editada.prefijo);
-    selM.addEventListener("change", function () {
-      empujarHistorial(); editada.prefijo = parseInt(selM.value, 10);
-      reconstruirEstado(); renderTodo();
-    });
-    c.appendChild(etiqueta("Máscara (prefijo y decimal)", selM)); c.appendChild(selM);
+
+    if (!esBridge && !miembro) {
+      var selModo = document.createElement("select");
+      selModo.innerHTML = "<option value='estatico'>estática</option><option value='dhcp'>DHCP</option>";
+      selModo.value = editada.modo || "estatico";
+      selModo.addEventListener("change", function () {
+        // Pedir por DHCP ya guarda el historial y vuelve a dibujar todo.
+        if (selModo.value === "dhcp") { solicitarDhcp(d.id, editada.id); return; }
+        empujarHistorial(); editada.modo = selModo.value;
+        reconstruirEstado(); renderTodo();
+      });
+      c.appendChild(etiqueta("Modo", selModo)); c.appendChild(selModo);
+    }
+
+    if (!miembro) {
+      campoTexto(c, esBridge ? "Dirección IP del bridge" : "Dirección IP", editada.ip || "", function (v) {
+        editada.ip = v.trim() === "" ? null : v.trim();
+        reconstruirEstado(); renderLienzo(); refrescarCalculo();
+      }, function (v) { return v.trim() === "" || Red.esIpValida(v.trim()); }, true);
+
+      var selM = document.createElement("select");
+      for (var p = 8; p <= 30; p++) {
+        var op = document.createElement("option");
+        op.value = String(p);
+        op.textContent = "/" + p + " — " + Red.prefijoAMascara(p);
+        selM.appendChild(op);
+      }
+      selM.value = String(editada.prefijo);
+      selM.addEventListener("change", function () {
+        empujarHistorial(); editada.prefijo = parseInt(selM.value, 10);
+        reconstruirEstado(); renderTodo();
+      });
+      c.appendChild(etiqueta("Máscara (prefijo y decimal)", selM)); c.appendChild(selM);
+    }
     void habiles;
 
     if (d.tipo !== "switch-l2") {
@@ -2842,13 +2878,99 @@ var UI = (function () {
       empujarHistorial();
       d.interfaces = d.interfaces.filter(function (x) { return x !== f; });
       if (S.interfazEditada[d.id] === f.id) { delete S.interfazEditada[d.id]; }
+      var texto = "Se quitó el puerto " + f.id + " de " + (d.nombre || d.id) + ".";
+      if (d.bridge && !d.interfaces.some(function (x) { return x.enBridge; })) {
+        delete d.bridge;
+        texto += " El bridge quedó sin puertos y se quitó.";
+        Escenarios.renombrarReferencias(S.topologia, d.id, { bridge: null });
+        avisar(texto);
+      }
       reconstruirEstado(); renderTodo();
-      registrar("topologia", "Se quitó el puerto " + f.id + " de " + (d.nombre || d.id) + ".");
+      registrar("topologia", texto);
     });
     fila.appendChild(bQuitar);
   }
 
+  function enElBridge(d, f) {
+    return !!d && d.tipo === "router" && !!d.bridge && !!f && !!f.enBridge;
+  }
+
+  // Bridge del router (como en RouterOS): los puertos marcados conmutan entre sí como un switch interno
+  // y comparten una sola IP, la del bridge.
+  function seccionBridge(c, d) {
+    var miembros = (d.interfaces || []).filter(function (f) { return f.enBridge; }).map(function (f) { return f.id; });
+    var caja = el("div", "bridge");
+    caja.setAttribute("data-foco", "bridge");
+    caja.appendChild(el("p", "", "<b>Bridge</b>"));
+    if (!d.bridge) {
+      caja.appendChild(el("p", "tenue", "Sin bridge: cada puerto es ruteado y lleva su propia red. Marcá «en el bridge» en dos o más puertos " +
+        "para que conmuten entre sí como un switch y compartan una sola IP, como en la configuración de fábrica de un MikroTik."));
+      c.appendChild(caja);
+      return;
+    }
+    caja.appendChild(el("p", "tenue", "Puertos en el bridge: " + escapar(miembros.join(", ") || "ninguno") + ". Entre ellos la trama pasa como en un " +
+      "switch, sin enrutar; hacia los demás puertos, el router enruta desde la IP del bridge."));
+    campoTexto(caja, "IP del bridge", d.bridge.ip || "", function (v) {
+      empujarHistorialSuave(); d.bridge.ip = v.trim() === "" ? null : v.trim();
+      reconstruirEstado(); renderLienzo(); refrescarCalculo();
+    }, function (v) { return v.trim() === "" || Red.esIpValida(v.trim()); }, true);
+    var selM = document.createElement("select");
+    for (var p = 8; p <= 30; p++) {
+      var op = document.createElement("option");
+      op.value = String(p);
+      op.textContent = "/" + p + " — " + Red.prefijoAMascara(p);
+      selM.appendChild(op);
+    }
+    selM.value = String(d.bridge.prefijo);
+    selM.addEventListener("change", function () {
+      empujarHistorial(); d.bridge.prefijo = parseInt(selM.value, 10);
+      reconstruirEstado(); renderTodo();
+    });
+    caja.appendChild(etiqueta("Máscara del bridge", selM)); caja.appendChild(selM);
+    c.appendChild(caja);
+  }
+
+  // Meter o sacar un puerto del bridge. Al entrar pierde su IP, que pasa a ser la del bridge si no tenía una.
+  function alternarBridge(d, f, adentro) {
+    empujarHistorial();
+    var texto;
+    if (adentro) {
+      f.enBridge = true;
+      var nuevo = !d.bridge;
+      if (nuevo) { d.bridge = { ip: null, prefijo: f.ip ? f.prefijo : 24 }; }
+      if (f.ip) {
+        if (!d.bridge.ip) { d.bridge.ip = f.ip; d.bridge.prefijo = f.prefijo; }
+        texto = f.id + " entró al bridge de " + (d.nombre || d.id) + ". Su IP " + f.ip + "/" + f.prefijo +
+          (d.bridge.ip === f.ip ? " pasó a ser la del bridge." : " se borró: en el bridge, la IP va en el bridge.");
+        f.ip = null;
+      } else {
+        texto = f.id + " entró al bridge de " + (d.nombre || d.id) + "." + (nuevo ? " Cargá la IP del bridge." : "");
+      }
+      if (f.nat) {
+        delete f.nat;
+        texto += " Se le quitó el NAT: el tráfico sale por el bridge.";
+      }
+      // Lo que entraba por este puerto ahora entra por el bridge.
+      var cambio = {};
+      cambio[f.id] = "bridge";
+      Escenarios.renombrarReferencias(S.topologia, d.id, cambio);
+    } else {
+      delete f.enBridge;
+      texto = f.id + " salió del bridge de " + (d.nombre || d.id) + ": ahora es un puerto ruteado y necesita su propia IP.";
+      if (!(d.interfaces || []).some(function (x) { return x.enBridge; })) {
+        delete d.bridge;
+        texto += " El bridge quedó sin puertos y se quitó.";
+        // Lo que entraba por el bridge ahora entra por el puerto que quedó.
+        Escenarios.renombrarReferencias(S.topologia, d.id, { bridge: f.id });
+      }
+    }
+    reconstruirEstado(); renderTodo();
+    registrar("bridge", texto);
+    avisar(texto);
+  }
+
   function panelInterfaces(c, d) {
+    if (d.tipo === "router") { seccionBridge(c, d); }
     (d.interfaces || []).forEach(function (f) {
       var fila = el("div", "filaif");
       var enl = enlaceEnPuerto(d.id, f.id);
@@ -2885,8 +3007,9 @@ var UI = (function () {
       fila.appendChild(labH);
       if (d.tipo === "router") {
         // NAT de salida: lo que sale por este puerto con IP privada se va
-        // con la IP de este puerto.
+        // con la IP de este puerto. En un puerto del bridge no se aplica.
         var labN = el("label", "enlinea");
+        if (enElBridge(d, f)) { labN.style.display = "none"; }
         var cbNat = document.createElement("input");
         cbNat.type = "checkbox"; cbNat.checked = !!f.nat;
         cbNat.addEventListener("change", function () {
@@ -2900,6 +3023,15 @@ var UI = (function () {
         labN.setAttribute("title", "NAT al salir por este puerto: el router cambia la IP privada de origen por la IP de este puerto, " +
           "y a la respuesta la traduce de vuelta. Se activa en el puerto que va a internet; sin NAT, la respuesta de internet no vuelve (D28).");
         fila.appendChild(labN);
+        var labB = el("label", "enlinea");
+        var cbB = document.createElement("input");
+        cbB.type = "checkbox"; cbB.checked = !!f.enBridge;
+        cbB.setAttribute("data-foco", "bridge-" + f.id);
+        cbB.addEventListener("change", function () { alternarBridge(d, f, cbB.checked); });
+        labB.appendChild(cbB);
+        labB.appendChild(document.createTextNode("en el bridge"));
+        labB.setAttribute("title", "Los puertos del bridge conmutan entre sí como un switch y comparten la IP del bridge.");
+        fila.appendChild(labB);
       }
       controlesPuerto(fila, d, f, enl);
       c.appendChild(fila);
@@ -3200,8 +3332,12 @@ var UI = (function () {
       var selEnt = document.createElement("select");
       var oCual = document.createElement("option"); oCual.value = ""; oCual.textContent = "Entra por cualquier puerto"; selEnt.appendChild(oCual);
       (d.interfaces || []).forEach(function (f) {
+        if (enElBridge(d, f)) { return; }
         var o = document.createElement("option"); o.value = f.id; o.textContent = "Entra por " + f.id; selEnt.appendChild(o);
       });
+      if (d.bridge) {
+        var oB = document.createElement("option"); oB.value = "bridge"; oB.textContent = "Entra por el bridge"; selEnt.appendChild(oB);
+      }
       selEnt.value = r.entrada || "";
       selEnt.setAttribute("aria-label", "Regla " + (i + 1) + ": puerto por el que entra el paquete");
       selEnt.addEventListener("change", function () {
@@ -3347,10 +3483,10 @@ var UI = (function () {
       c.appendChild(el("p", "", "<b>Tabla ARP:</b><br>" + (arp.length ? escapar(arp.map(function (x) { return x.ip + " → " + x.mac; }).join(", ")) : "vacía")));
       if (d.tipo === "switch-l2" && d.modelo === "hub") {
         c.appendChild(el("p", "", "<b>Tabla MAC:</b> un hub no tiene. Repite cada trama por todos sus puertos, sin mirar la MAC."));
-      } else if (d.tipo === "switch-l2") {
+      } else if (d.tipo === "switch-l2" || (d.tipo === "router" && d.bridge)) {
         var mac = [];
         try { mac = Motor.tablaMac(S.estado, d.id) || []; } catch (e) { mac = []; }
-        c.appendChild(el("p", "", "<b>Tabla MAC:</b><br>" + (mac.length ? escapar(mac.map(function (x) { return x.mac + " → " + x.puerto; }).join(", ")) : "vacía")));
+        c.appendChild(el("p", "", "<b>Tabla MAC" + (d.tipo === "router" ? " del bridge" : "") + ":</b><br>" + (mac.length ? escapar(mac.map(function (x) { return x.mac + " → " + x.puerto; }).join(", ")) : "vacía")));
       }
       // Un laboratorio (una red con objetivos) no avisa sus fallas plantadas,
       // en ningún modo: encontrarlas es el ejercicio. El modo Docente tampoco.
@@ -5721,7 +5857,7 @@ var UI = (function () {
     catch (e) { registrar("D16", "DHCP falló: " + e.message); avisar("DHCP falló: " + e.message); return null; }
     empujarHistorial();
     var topologiaAnterior = S.topologia;
-    S.topologia = clonar(S.estado.topologia);
+    S.topologia = Motor.topologiaDe(S.estado);
     restaurarFallasVivas(S.topologia, topologiaAnterior);
     reconstruirEstado();
     S.dhcpSel = { equipo: idDisp, interfaz: idIf };

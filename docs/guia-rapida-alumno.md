@@ -186,6 +186,15 @@ En la franja de Simulación elegí **Transmitir a la vez**, un **Equipo A** y un
 
 Fijate en la tabla de esperas: repetí la prueba varias veces y anotá cuántas colisiones hubo. ¿Por qué cada vez es menos probable que vuelvan a chocar? En la animación, las dos tramas salen exactamente al mismo tiempo (el peor caso); en la red real basta con que empiecen antes de enterarse una de la otra.
 
+### El bridge del router: un switch adentro del router
+
+Un router como el MikroTik viene de fábrica con casi todos sus puertos en un **bridge**: ether2 a ether5 y el Wi-Fi conmutan entre sí como un switch y comparten una sola IP (192.168.88.1/24), mientras ether1 va a internet. Abrí el ejemplo *MikroTik de fábrica*:
+
+- Un ping de PC-1 a PC-2 no pasa por el enrutamiento: están en la misma red y el bridge reenvía la trama como un switch, sin bajar el TTL.
+- Un ping de PC-1 al servidor sí pasa por el router: el servidor está en ether6, un puerto ruteado con otra red, y el TTL baja.
+
+En la pestaña **Interfaces** del router se marca qué puertos van **en el bridge** y se carga su IP. En el lienzo, los puertos del bridge tienen borde verde, y en la pestaña Estado se ve la tabla MAC del bridge. Un puerto del bridge no lleva IP propia: la IP va en el bridge.
+
 ## Wi-Fi: router inalámbrico y punto de acceso
 
 Cada interfaz inalámbrica tiene un modo de radio, que elegís en la pestaña Interfaces del panel derecho. En modo **ap** sostiene la red Wi-Fi (la celda) y admite varios clientes; en modo **cliente** se asocia a un ap; en modo **bridge** une dos puntos a distancia. Dos clientes no se conectan entre sí: siempre hace falta un ap.

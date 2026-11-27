@@ -167,6 +167,13 @@ var Autotest = (function () {
       esperado: "Con el hub las señales chocan: se ve la colisión, la señal de atasco y la espera al azar, y las dos tramas llegan en un reintento. " +
         "Con el switch cada equipo está en su propio dominio de colisión: no hay choque."
     },
+    37: {
+      conError: false,
+      situacion: "En «MikroTik de fábrica», ether2 a ether5 y el Wi-Fi están en un bridge con la IP 192.168.88.1/24. PC-1 (ether2) le hace ping " +
+        "a PC-2 (ether3) y después al servidor, que está en ether6, un puerto ruteado con la red 10.0.6.0/24.",
+      esperado: "Entre PC-1 y PC-2 el bridge reenvía la trama como un switch: misma red, entrega directa, sin enrutar y sin bajar el TTL. " +
+        "Hacia el servidor el paquete sí pasa por el router: entra por el bridge, sale por ether6 y el TTL baja."
+    },
     31: {
       conError: true,
       situacion: "En «Servidor publicado con redirección de puertos», SRV-Web tiene IP privada (192.168.50.10). PC-Casa se conecta por HTTP a la IP pública " +
@@ -1213,7 +1220,25 @@ var Autotest = (function () {
     }
   }
 
-  var CRITERIOS_DIDACTICOS = [crit02, crit17, crit03, crit04, crit05, crit06, crit20, crit18, crit19, crit21, crit22, crit23, crit29, crit31, crit35, crit07, crit08, crit12];
+  function crit37() {
+    var nombre = "Bridge: dos puertos del bridge están en la misma red; hacia un puerto ruteado el paquete pasa por el router";
+    try {
+      var est = Motor.crearEstado(clonar(ejemploPorId("mikrotik").topologia));
+      var mismo = Motor.ping(est, "pc1", "192.168.88.12");
+      var ruteado = Motor.ping(est, "pc1", "10.0.6.10");
+      var enruto = function (r) { return r.pasos.some(function (p) { return /Buscar ruta/.test(p.titulo); }); };
+      var porRouter = ruteado.saltos.some(function (x) { return x.dispositivo === "r1"; });
+      var pasa = mismo.exito && !enruto(mismo) && mismo.saltos.length === 2 && ruteado.exito && enruto(ruteado) && porRouter;
+      return fila(37, nombre, pasa, pasa
+        ? "PC-1 → PC-2: entrega directa por el bridge, sin enrutar. PC-1 → servidor: pasa por el router (bridge → ether6)."
+        : "Falla: PC-1 → PC-2 " + (mismo.exito ? (enruto(mismo) ? "se enrutó" : "llegó con " + mismo.saltos.length + " saltos") : "no llegó") +
+          "; PC-1 → servidor " + (ruteado.exito ? (porRouter ? "llegó" : "no pasó por el router") : "no llegó") + ".");
+    } catch (e) {
+      return fila(37, nombre, false, "Excepción: " + e.message);
+    }
+  }
+
+  var CRITERIOS_DIDACTICOS = [crit02, crit17, crit03, crit04, crit05, crit06, crit20, crit18, crit19, crit21, crit22, crit23, crit29, crit31, crit35, crit37, crit07, crit08, crit12];
   // La pestaña Laboratorio: sólo en modo Docente, con sus cuatro secciones
   // y sin scroll de página. correr() restaura la red del usuario.
   function crit24() {
@@ -1950,7 +1975,49 @@ var Autotest = (function () {
     }
   }
 
-  var CRITERIOS_TECNICOS = [crit01, crit09, crit10, crit11, crit13, crit14, crit15, crit16, crit24, crit25, crit26, crit27, crit28, crit30, crit32, crit33, crit34, crit36];
+  // La sección Bridge de la pestaña Interfaces y la marca de sus puertos en el lienzo.
+  function crit38() {
+    var nombre = "El router muestra su bridge en Interfaces y en el lienzo, y meter un puerto en el bridge le quita la IP";
+    var previo = modoActualDom();
+    try {
+      var prob = [];
+      UI.setModo("topologia");
+      UI.cargarTopologia(clonar(ejemploPorId("mikrotik").topologia));
+      if (document.querySelectorAll("rect.puerto.enbridge").length !== 5) { prob.push("el lienzo no marca los 5 puertos del bridge"); }
+      UI.seleccionar("r1");
+      var pestana = null;
+      document.querySelectorAll(".simprop button").forEach(function (b) { if (b.textContent === "Interfaces") { pestana = b; } });
+      if (!pestana) { prob.push("no está la pestaña Interfaces"); }
+      else {
+        pestana.click();
+        var seccion = document.querySelector("[data-foco=bridge]");
+        var ip = null;
+        if (seccion) { seccion.querySelectorAll("label").forEach(function (l) { if (l.textContent === "IP del bridge") { ip = document.getElementById(l.htmlFor); } }); }
+        if (!seccion || !ip || ip.value !== "192.168.88.1") { prob.push("falta la sección Bridge con su IP"); }
+        var cb = document.querySelector("[data-foco='bridge-ether6']");
+        if (!cb || cb.checked) { prob.push("falta la casilla «en el bridge» de ether6"); }
+        else {
+          cb.click();
+          var r1 = null;
+          UI.topologiaActual().dispositivos.forEach(function (d) { if (d.id === "r1") { r1 = d; } });
+          var e6 = null;
+          r1.interfaces.forEach(function (f) { if (f.id === "ether6") { e6 = f; } });
+          if (!e6.enBridge || e6.ip) { prob.push("al meter ether6 en el bridge no se le quitó la IP"); }
+          if (!Escenarios.validarTopologia(UI.topologiaActual()).ok) { prob.push("la red quedó inválida"); }
+        }
+      }
+      if (prob.length === 0) { return fila(38, nombre, true, "La sección Bridge muestra 192.168.88.1, el lienzo marca sus 5 puertos y ether6 entró al bridge sin IP propia."); }
+      return fila(38, nombre, false, "Falla: " + prob.join("; ") + ".");
+    } catch (e) {
+      return fila(38, nombre, false, "Excepción: " + e.message);
+    } finally {
+      try { UI.seleccionar(null); } catch (e0) { /* se sigue igual */ }
+      try { UI.cargarTopologia(clonar(ejemploPorId("complejo").topologia)); } catch (e1) { /* se sigue igual */ }
+      try { UI.setModo(previo); } catch (e2) { /* se sigue igual */ }
+    }
+  }
+
+  var CRITERIOS_TECNICOS = [crit01, crit09, crit10, crit11, crit13, crit14, crit15, crit16, crit24, crit25, crit26, crit27, crit28, crit30, crit32, crit33, crit34, crit36, crit38];
 
   function correr(opciones) {
     var tecnico = !!(opciones && opciones.tecnico);

@@ -21,7 +21,7 @@ Esta guía explica cómo usar OpenRedLab en clase, qué mostrar en cada unidad d
 
 | Para | Ejemplos |
 |---|---|
-| Direccionamiento y subnetting | *Básica*, *Dos subredes*, *Complejo turístico*, *Complejo roto (docente)* (con fallas y objetivos), *Desafío VLSM (complejo)* y *Router de 8 puertos* |
+| Direccionamiento y subnetting | *Básica*, *Dos subredes*, *Complejo turístico*, *Complejo roto (docente)* (con fallas y objetivos), *Desafío VLSM (complejo)*, *Router de 8 puertos* y *MikroTik de fábrica* |
 | Topologías y dispositivos | *Topología en estrella*, *Bus (medio compartido con un hub)*, *Malla entre tres routers* y *Dos LAN unidas por una WAN* |
 | Internet, NAT y servicios | *Oficina con DNS propio*, *Dos ISP: peering y tránsito*, *Dos sitios por internet* y *Servidor publicado con redirección de puertos* |
 
@@ -54,6 +54,13 @@ La forma más rápida de mostrar una idea es hacer un ping, mostrar el recorrido
 **Topologías y alcance.** Los ejemplos de estrella, bus, malla y LAN-WAN sirven para comparar: en la estrella, un cable cortado deja afuera a un solo equipo; en el bus (un hub) todos comparten el medio; en la malla cada red llega a las otras por un enlace directo (con rutas estáticas, si se corta uno hay que cambiar la ruta a mano: la redundancia la aprovecha un protocolo de ruteo dinámico, que el simulador no tiene); y la WAN une dos LAN lejanas. La tarjeta *Topologías y alcance* de la Ayuda lo resume.
 
 **Dispositivos y dominios.** Con el selector **Dominios** del lienzo se cuentan los dominios de colisión y de broadcast de cualquier red. Pasar un switch a *Hub de 8 puertos* (Configuración → Modelo) y ver cómo cambia la cuenta es un buen ejercicio: «¿cuántos dominios de colisión y de broadcast hay?» se responde a mano y se comprueba en pantalla. El recorrido de un ping por un hub dice que la trama se repite por todos los puertos.
+
+**Bridge del router.** El ejemplo *MikroTik de fábrica* reproduce la configuración de fábrica de RouterOS: ether1 hacia internet con NAT y un bridge con ether2 a ether5 y el Wi-Fi, con 192.168.88.1/24 y DHCP; ether6 queda afuera, ruteado. Sirve para discutir conmutación contra enrutamiento en un mismo equipo:
+1. Comparar el TTL y los pasos del ping de PC-1 a PC-2 (por el bridge) con los del ping al servidor (por el router).
+2. Sacar un puerto del bridge en la pestaña Interfaces y ver que el equipo de ese puerto queda aislado hasta darle una red propia.
+3. Comparar con el ejemplo *Router de 8 puertos*, donde cada puerto es ruteado.
+
+El bridge tiene simplificaciones: es uno solo por router, sin VLAN ni STP.
 
 **Colisiones (CSMA/CD).** La herramienta **Transmitir a la vez** hace que dos equipos envíen en el mismo instante y muestra colisión, jam, espera y reintento sobre el lienzo, con una tabla de los valores sorteados. Sirve para la clase de medio compartido: (1) en *Bus (medio compartido con un hub)* pedir que **predigan** entre qué valores sortea cada estación después de la primera y la segunda colisión, antes de mirar la tabla; (2) juntar los resultados de varias pruebas del curso y comparar con la teoría (la primera espera coincide la mitad de las veces); (3) cambiar el hub por un switch (o abrir *Topología en estrella*) y discutir por qué desaparecen las colisiones. Cada prueba sortea esperas nuevas, y al recargar la página la secuencia vuelve a empezar, así que dos compus recién abiertas ven lo mismo si hacen lo mismo. Simplificaciones: las dos estaciones arrancan exactamente a la vez, la de menor espera transmite primero y no hay otro tráfico.
 

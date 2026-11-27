@@ -29,7 +29,7 @@ var Escenarios = (function () {
 
   // Versión de la app (semver). Cada PR que toca una capa la sube y suma su
   // entrada en CHANGELOG.md; el ensamblador controla que coincidan.
-  var VERSION_APP = "1.9.0";
+  var VERSION_APP = "1.10.0";
 
   // Versión del formato de archivo que escribe esta capa. Sube sólo si un
   // campo existente cambia o desaparece, y cada subida trae su migración.
@@ -341,8 +341,21 @@ var Escenarios = (function () {
         if (e[lado].dispositivo === d.id && cambios[e[lado].interfaz]) { e[lado].interfaz = cambios[e[lado].interfaz]; }
       });
     });
-    renombrarEnEscenario(topologia.escenario, d.id, cambios);
+    renombrarReferencias(topologia, d.id, cambios);
     return { ok: true, cambios: cambios };
+  }
+
+  // Lo que nombra puertos de un equipo (el escenario y la entrada de sus reglas) sigue a los puertos
+  // renombrados. Un cambio a null borra la entrada de la regla (vale para cualquier puerto).
+  function renombrarReferencias(topologia, idDispositivo, cambios) {
+    var conNombre = {};
+    Object.keys(cambios).forEach(function (k) { if (cambios[k]) { conNombre[k] = cambios[k]; } });
+    renombrarEnEscenario(topologia.escenario, idDispositivo, conNombre);
+    var d = buscarDispositivo(topologia, idDispositivo);
+    ((d && Array.isArray(d.reglas)) ? d.reglas : []).forEach(function (r) {
+      if (!r || !r.entrada || !Object.prototype.hasOwnProperty.call(cambios, r.entrada)) { return; }
+      if (cambios[r.entrada]) { r.entrada = cambios[r.entrada]; } else { delete r.entrada; }
+    });
   }
 
   // Las referencias "equipo:puerto" del escenario siguen al puerto renombrado.
@@ -444,6 +457,19 @@ var Escenarios = (function () {
     return null;
   }
 
+  // El bridge de un router visto como una interfaz más (la que crea el Motor), o null.
+  function interfazBridge(dispositivo) {
+    if (!dispositivo || dispositivo.tipo !== "router" || !dispositivo.bridge || typeof dispositivo.bridge !== "object") { return null; }
+    return { id: "bridge", nombre: "bridge", medio: "bridge", habilitada: true, ip: dispositivo.bridge.ip || null, prefijo: dispositivo.bridge.prefijo };
+  }
+
+  // Las interfaces con IP posible de un equipo: sus puertos, salvo los del bridge, y el bridge.
+  function interfacesConIp(dispositivo) {
+    var lista = (dispositivo.interfaces || []).filter(function (f) { return !(f.enBridge && interfazBridge(dispositivo)); });
+    var b = interfazBridge(dispositivo);
+    return b ? lista.concat([b]) : lista;
+  }
+
   // Primera interfaz con IP válida: primero entre las habilitadas, si no
   // entre todas. Sirve para saber con qué dirección se presenta un equipo.
   function primeraIpDe(dispositivo) {
@@ -451,14 +477,15 @@ var Escenarios = (function () {
       return null;
     }
     var i;
-    for (i = 0; i < dispositivo.interfaces.length; i++) {
-      var a = dispositivo.interfaces[i];
+    var interfaces = interfacesConIp(dispositivo);
+    for (i = 0; i < interfaces.length; i++) {
+      var a = interfaces[i];
       if (a.habilitada && textoNoVacio(a.ip) && Red.esIpValida(a.ip)) {
         return { interfaz: a, ip: a.ip.trim(), prefijo: a.prefijo };
       }
     }
-    for (i = 0; i < dispositivo.interfaces.length; i++) {
-      var b = dispositivo.interfaces[i];
+    for (i = 0; i < interfaces.length; i++) {
+      var b = interfaces[i];
       if (textoNoVacio(b.ip) && Red.esIpValida(b.ip)) {
         return { interfaz: b, ip: b.ip.trim(), prefijo: b.prefijo };
       }
@@ -467,6 +494,57 @@ var Escenarios = (function () {
   }
 
   /* ---------------- Validación e importación ---------------- */
+
+  // Bridge de un router (como en RouterOS): "bridge": { ip, prefijo } en el router y "enBridge": true en
+  // cada puerto miembro. La IP va en el bridge; sus puertos no llevan IP. La IP puede faltar, como en
+  // cualquier puerto (por ejemplo, en un desafío sin direccionar).
+  function validarBridge(d, etiqueta, anotar) {
+    var nombre = "\"" + d.id + "\"";
+    var miembros = d.interfaces.filter(function (f) { return f && f.enBridge === true; });
+    d.interfaces.forEach(function (f) {
+      if (f && f.enBridge !== undefined && f.enBridge !== null && typeof f.enBridge !== "boolean") {
+        anotar(etiqueta + ".interfaces." + f.id + ".enBridge", "El puerto " + f.id + " del equipo " + nombre + " no indica bien si está en el bridge (va true o false).");
+      }
+    });
+    var hayBridge = d.bridge !== undefined && d.bridge !== null;
+    if ((hayBridge || miembros.length) && d.tipo !== "router") {
+      anotar(etiqueta + ".bridge", "Sólo los routers tienen bridge, y " + nombre + " es " + d.tipo + ".");
+      return;
+    }
+    if (!hayBridge) {
+      if (miembros.length) {
+        anotar(etiqueta + ".bridge", "El router " + nombre + " tiene puertos marcados en el bridge (" + miembros.map(function (f) { return f.id; }).join(", ") +
+          "), pero no tiene bridge: falta configurarlo con su IP y su máscara.");
+      }
+      return;
+    }
+    if (typeof d.bridge !== "object" || Array.isArray(d.bridge)) {
+      anotar(etiqueta + ".bridge", "El bridge del router " + nombre + " no tiene el formato correcto.");
+      return;
+    }
+    if (d.bridge.ip !== undefined && d.bridge.ip !== null && String(d.bridge.ip).trim() !== "" && !Red.esIpValida(String(d.bridge.ip))) {
+      anotar(etiqueta + ".bridge.ip", "El bridge del router " + nombre + " tiene una IP que no es válida (" + JSON.stringify(d.bridge.ip) + ").");
+    }
+    if (!esEnteroPrefijo(d.bridge.prefijo)) {
+      anotar(etiqueta + ".bridge.prefijo", "El bridge del router " + nombre + " tiene un prefijo inválido: tiene que ser un número entre 0 y 32.");
+    }
+    if (!miembros.length) {
+      anotar(etiqueta + ".bridge", "El bridge del router " + nombre + " no tiene puertos: marcá al menos uno «en el bridge».");
+    }
+    if (buscarInterfaz(d, "bridge")) {
+      anotar(etiqueta + ".interfaces.bridge", "El router " + nombre + " tiene un puerto llamado bridge, que es el nombre reservado de su bridge.");
+    }
+    miembros.forEach(function (f) {
+      if (f.nat === true) {
+        anotar(etiqueta + ".interfaces." + f.id + ".nat", "El puerto " + f.id + " del router " + nombre + " está en el bridge y tiene NAT: " +
+          "el tráfico sale por el bridge, así que el NAT de ese puerto no se aplica. El NAT va en el puerto que da a internet.");
+      }
+      if (f.ip !== undefined && f.ip !== null && String(f.ip).trim() !== "") {
+        anotar(etiqueta + ".interfaces." + f.id + ".ip", "El puerto " + f.id + " del router " + nombre + " está en el bridge y tiene la IP " + f.ip +
+          ": la IP va en el bridge, no en sus puertos.");
+      }
+    });
+  }
 
   function validarTopologia(obj) {
     var errores = [];
@@ -640,6 +718,8 @@ var Escenarios = (function () {
         }
       }
 
+      validarBridge(d, etiqueta, anotar);
+
       // Puerta de enlace y DNS, cuando están presentes.
       if (d.gateway !== undefined && d.gateway !== null && String(d.gateway).trim() !== "") {
         if (!Red.esIpValida(String(d.gateway))) {
@@ -715,7 +795,12 @@ var Escenarios = (function () {
                 anotar(campoRegla + ".puerto", "La regla " + (g + 1) + " de \"" + d.id + "\" tiene un puerto inválido: va de 1 a 65535.");
               }
             }
-            if (regla && regla.entrada && !buscarInterfaz(d, regla.entrada)) {
+            var puertoEntrada = regla && regla.entrada ? buscarInterfaz(d, regla.entrada) : null;
+            if (puertoEntrada && puertoEntrada.enBridge && d.bridge) {
+              anotar(campoRegla + ".entrada", "La regla " + (g + 1) + " de \"" + d.id + "\" dice que el paquete entra por " + regla.entrada +
+                ", que está en el bridge: lo que llega por sus puertos entra al router por el bridge. Elegí «bridge».");
+            }
+            if (regla && regla.entrada && !puertoEntrada && !(regla.entrada === "bridge" && d.bridge)) {
               anotar(campoRegla + ".entrada", "La regla " + (g + 1) + " de \"" + d.id + "\" dice que el paquete entra por " + regla.entrada + ", pero ese puerto no existe.");
             }
           }
@@ -1287,7 +1372,7 @@ var Escenarios = (function () {
     }
     var iface = null;
     if (idIf !== null) {
-      iface = buscarInterfaz(disp, idIf);
+      iface = buscarInterfaz(disp, idIf) || (idIf === "bridge" ? interfazBridge(disp) : null);
       if (!iface) {
         return { etiqueta: texto, error: "El desafío nombra el puerto " + idIf + " de " + (disp.nombre || disp.id) + ", que no existe." };
       }
@@ -1556,6 +1641,9 @@ var Escenarios = (function () {
             if (conmutadores.indexOf(d) < 0) { conmutadores.push(d); }
             return;
           }
+          // Los puertos del bridge conmutan: el router está en la red por su interfaz bridge.
+          var puertoK = buscarInterfaz(d, k.slice(corte + 1));
+          if (puertoK && puertoK.enBridge && interfazBridge(d)) { return; }
           miembros.push(k);
           if (d.tipo === "router") { routers.push({ d: d, puerto: k.slice(corte + 1), clave: k }); }
         });
@@ -1767,11 +1855,14 @@ var Escenarios = (function () {
       });
     } else if (c === "interfaz") {
       if (campo.opcional) { simple(null, "Cualquier puerto"); }
+      var deEntrada = campo.clave === "regla.entrada";
       ((dev && dev.interfaces) || []).forEach(function (f) {
         if (campo.filtro === "conIp" && !textoNoVacio(f.ip)) { return; }
         if (campo.filtro === "nat" && !f.nat) { return; }
+        if (deEntrada && f.enBridge && interfazBridge(dev)) { return; }
         simple(f.id, textoInterfaz(f));
       });
+      if (deEntrada && interfazBridge(dev)) { simple("bridge", "bridge"); }
     } else if (c === "enlace") {
       (topologia.enlaces || []).forEach(function (e) {
         simple(e.id, nombreDisp(topologia, e.a.dispositivo) + " (" + e.a.interfaz + ") — " +
@@ -1938,7 +2029,7 @@ var Escenarios = (function () {
   function sugerenciasDestino(topologia) {
     var lista = [];
     (topologia.dispositivos || []).forEach(function (d) {
-      (d.interfaces || []).forEach(function (f) {
+      interfacesConIp(d).forEach(function (f) {
         if (textoNoVacio(f.ip)) { lista.push({ valor: f.ip, texto: (d.nombre || d.id) + " " + f.id }); }
       });
       var regs = (d.servicios && d.servicios.dns && d.servicios.dns.registros) || [];
@@ -1994,7 +2085,7 @@ var Escenarios = (function () {
     }
     if (c === "interfaz") {
       var dev = buscarDispositivo(topologia, item.dispositivo);
-      var f = dev && buscarInterfaz(dev, valor);
+      var f = dev && (buscarInterfaz(dev, valor) || (campo.clave === "regla.entrada" && valor === "bridge" ? interfazBridge(dev) : null));
       if (!f) { return "El puerto " + valor + " no existe en " + quien + "."; }
       if (campo.filtro === "nat") { return "El puerto " + valor + " de " + quien + " no tiene NAT: la falla no cambiaría nada."; }
       if (campo.filtro === "conIp") { return "El puerto " + valor + " de " + quien + " no tiene IP."; }
@@ -2128,6 +2219,7 @@ var Escenarios = (function () {
       d.rutas = [];
       d.dhcp = null;
       if (Array.isArray(d.redirecciones)) { d.redirecciones = []; }
+      if (d.bridge && typeof d.bridge === "object") { d.bridge.ip = null; d.bridge.prefijo = 24; }
     });
     return topologia;
   }
@@ -2515,6 +2607,60 @@ var Escenarios = (function () {
     };
   }
 
+  // Como un MikroTik recién sacado de la caja: ether1 hacia internet con NAT y el resto de la LAN en un
+  // bridge con una sola IP y DHCP. ether6 queda afuera, ruteado, con los servidores.
+  function topologiaMikrotik() {
+    var ifs = ["ether1", "ether2", "ether3", "ether4", "ether5", "ether6", "ether7", "ether8"].map(function (id) {
+      return interfaz(id, "ethernet", null, 24, true);
+    });
+    ifs.push(interfaz("sfp1", "fibra", null, 24, true));
+    var wlan = interfaz("wlan1", "wireless", null, 24, true);
+    wlan.modoRadio = "ap";
+    ifs.push(wlan);
+    ifs[0].ip = "200.45.8.2";
+    ifs[0].prefijo = 30;
+    ifs[0].nat = true;
+    [1, 2, 3, 4, 9].forEach(function (k) { ifs[k].enBridge = true; });
+    ifs[5].ip = "10.0.6.1";
+    var router = {
+      id: "r1", tipo: "router", modelo: "8-puertos", nombre: "MikroTik", x: 400, y: 150, encendido: true, interfaces: ifs,
+      bridge: { ip: "192.168.88.1", prefijo: 24 },
+      gateway: null, dns: null, rutas: [{ destino: "0.0.0.0", prefijo: 0, siguienteSalto: "200.45.8.1" }],
+      dhcp: { habilitado: true, desde: "192.168.88.10", hasta: "192.168.88.254", prefijo: 24, gateway: "192.168.88.1" }
+    };
+    var nube = {
+      id: "nube", tipo: "internet", nombre: "Internet", x: 400, y: 20, encendido: true,
+      interfaces: [interfaz("eth0", "ethernet", "200.45.8.1", 30, true)],
+      gateway: null, dns: null, rutas: [], dhcp: null
+    };
+    var pc1 = armarPc("pc1", "PC-1", 170, 440, "192.168.88.11", 24, "192.168.88.1");
+    var pc2 = armarPc("pc2", "PC-2", 360, 460, "192.168.88.12", 24, "192.168.88.1");
+    // PC-3 recibió su dirección por DHCP del bridge.
+    var pc3 = armarPc("pc3", "PC-3", 550, 440, "192.168.88.10", 24, "192.168.88.1");
+    pc3.interfaces[0].modo = "dhcp";
+    var notebook = armarPcWifi("notebook", "Notebook", 190, 230, "192.168.88.13", 24, "192.168.88.1");
+    var srv = {
+      id: "srv", tipo: "servidor", nombre: "Servidor", x: 720, y: 330, encendido: true,
+      interfaces: [interfaz("eth0", "ethernet", "10.0.6.10", 24, true)],
+      gateway: "10.0.6.1", dns: null, rutas: [], dhcp: null,
+      servicios: { escuchando: [{ protocolo: "tcp", puerto: 80, nombre: "HTTP" }] }
+    };
+    return {
+      version: 1,
+      nombre: "MikroTik de fábrica",
+      dispositivos: [router, nube, pc1, pc2, pc3, notebook, srv],
+      enlaces: [
+        armarEnlace("l-wan", "r1", "ether1", "nube", "eth0", "ethernet"),
+        armarEnlace("l-pc1", "r1", "ether2", "pc1", "eth0", "ethernet"),
+        armarEnlace("l-pc2", "r1", "ether3", "pc2", "eth0", "ethernet"),
+        armarEnlace("l-pc3", "r1", "ether4", "pc3", "eth0", "ethernet"),
+        armarEnlace("l-wifi", "r1", "wlan1", "notebook", "wlan0", "wireless"),
+        armarEnlace("l-srv", "r1", "ether6", "srv", "eth0", "ethernet")
+      ],
+      escenario: null
+    };
+  }
+
   /* ---------------- Topologías físicas y de alcance ----------------
    * Ejemplos para la unidad 7: estrella, bus (medio compartido con un hub),
    * malla entre routers, y dos LAN unidas por una WAN. */
@@ -2798,6 +2944,12 @@ var Escenarios = (function () {
       nombre: "Router de 8 puertos",
       descripcion: "Tres subredes colgadas de un mismo router, cada puerto con su propia red (como un MikroTik con los puertos fuera del bridge).",
       topologia: topologiaRouter8()
+    },
+    {
+      id: "mikrotik",
+      nombre: "MikroTik de fábrica",
+      descripcion: "ether1 hacia internet con NAT y la LAN en un bridge (ether2 a ether5 y el Wi-Fi) con una sola IP y DHCP; ether6 queda afuera, ruteado, con un servidor.",
+      topologia: topologiaMikrotik()
     },
     {
       id: "oficina-dns",
@@ -3228,6 +3380,64 @@ var Escenarios = (function () {
       comparar("diseño libre con hosts pedidos", dice(sectorDe(inf, "R1 g0/0 · SW-Admin"), "el sector necesita 40"), true);
     })();
 
+    // Bridge entre puertos del router.
+    (function () {
+      var mk = clonar(ejemploPorId("mikrotik").topologia);
+      comparar("bridge: el ejemplo MikroTik valida", validarTopologia(mk).ok, true);
+      var est = Motor.crearEstado(mk);
+      comparar("bridge: el ejemplo MikroTik conmuta en el bridge y enruta hacia ether6 e internet",
+        [Motor.ping(est, "pc1", "192.168.88.12").exito, Motor.ping(est, "notebook", "192.168.88.11").exito,
+          Motor.ping(est, "pc1", "10.0.6.10").exito, Motor.ping(est, "pc1", "8.8.8.8").exito], [true, true, true, true]);
+      function errores(cambio) {
+        var t = clonar(ejemploPorId("mikrotik").topologia);
+        cambio(t.dispositivos[0], t);
+        return validarTopologia(t).errores.map(function (e) { return e.campo; });
+      }
+      comparar("bridge: un puerto del bridge con IP es un error",
+        errores(function (r) { r.interfaces[1].ip = "192.168.88.2"; }), ["dispositivos.r1.interfaces.ether2.ip"]);
+      comparar("bridge: puertos en el bridge sin bridge es un error", errores(function (r) { delete r.bridge; }), ["dispositivos.r1.bridge"]);
+      comparar("bridge: un bridge sin puertos es un error",
+        errores(function (r) { r.interfaces.forEach(function (f) { delete f.enBridge; }); }), ["dispositivos.r1.bridge"]);
+      comparar("bridge: IP y prefijo inválidos",
+        errores(function (r) { r.bridge = { ip: "300.1.1.1", prefijo: 40 }; }), ["dispositivos.r1.bridge.ip", "dispositivos.r1.bridge.prefijo"]);
+      comparar("bridge: sólo en routers",
+        errores(function (r, t) { t.dispositivos[2].bridge = { ip: "1.1.1.1", prefijo: 24 }; }), ["dispositivos.pc1.bridge"]);
+      var cambio = clonar(ejemploPorId("mikrotik").topologia);
+      cambiarModelo(cambio, "r1", null);
+      comparar("bridge: al cambiar de modelo los puertos siguen en el bridge",
+        [cambio.dispositivos[0].interfaces.filter(function (f) { return f.enBridge; }).map(function (f) { return f.id; }), validarTopologia(cambio).ok],
+        [["g0/1", "g0/2", "g0/3", "g0/4", "wlan0"], true]);
+      var diseno = verificarDiseno(clonar(ejemploPorId("mikrotik").topologia));
+      var errDiseno = [];
+      (diseno.porSector || []).forEach(function (x) {
+        (x.hallazgos || []).forEach(function (h) { if (h.nivel === "error") { errDiseno.push(h.mensaje); } });
+      });
+      comparar("bridge: Verificar diseño ve un sector para el bridge, sin errores",
+        [(diseno.porSector || []).map(function (x) { return x.id; }), errDiseno], [["r1:bridge", "r1:ether6"], []]);
+      comparar("bridge: las sugerencias de destino incluyen la IP del bridge",
+        sugerenciasDestino(clonar(ejemploPorId("mikrotik").topologia)).some(function (x) { return x.valor === "192.168.88.1"; }), true);
+      comparar("bridge: una regla que entra por un puerto del bridge es un error",
+        errores(function (r) { r.reglas = [{ accion: "bloquear", origen: "0.0.0.0/0", destino: "10.0.6.0/24", entrada: "ether2" }]; }),
+        ["dispositivos.r1.reglas[0].entrada"]);
+      comparar("bridge: una regla puede entrar por el bridge",
+        errores(function (r) { r.reglas = [{ accion: "bloquear", origen: "0.0.0.0/0", destino: "10.0.6.0/24", entrada: "bridge" }]; }), []);
+      var desafio = vaciarDireccionamiento(clonar(ejemploPorId("mikrotik").topologia));
+      comparar("bridge: NAT en un puerto del bridge es un error",
+        errores(function (r) { r.interfaces[1].nat = true; }), ["dispositivos.r1.interfaces.ether2.nat"]);
+      var conReglas = clonar(ejemploPorId("mikrotik").topologia);
+      conReglas.dispositivos[0].reglas = [{ accion: "bloquear", origen: "0.0.0.0/0", destino: "0.0.0.0/0", entrada: "ether6" },
+        { accion: "bloquear", origen: "0.0.0.0/0", destino: "0.0.0.0/0", entrada: "bridge" }];
+      renombrarReferencias(conReglas, "r1", { ether6: "bridge", bridge: null });
+      comparar("referencias: las reglas siguen al puerto y una entrada sin puerto se borra",
+        conReglas.dispositivos[0].reglas.map(function (r) { return r.entrada || null; }), ["bridge", null]);
+      var estandar = clonar(ejemploPorId("oficina-dns").topologia);
+      estandar.dispositivos.forEach(function (d) { if (d.id === "r1") { d.reglas = [{ accion: "permitir", origen: "0.0.0.0/0", destino: "0.0.0.0/0", entrada: "g0/1" }]; } });
+      cambiarModelo(estandar, "r1", "8-puertos");
+      comparar("cambiar de modelo renombra la entrada de las reglas",
+        [estandar.dispositivos.filter(function (d) { return d.id === "r1"; })[0].reglas[0].entrada, validarTopologia(estandar).ok], ["ether2", true]);
+      comparar("bridge: un desafío borra la IP del bridge y sigue validando", [desafio.dispositivos[0].bridge.ip, validarTopologia(desafio).ok], [null, true]);
+    })();
+
     // Router de 8 puertos: valida, enruta entre puertos y rechaza modelos raros.
     (function () {
       var r8 = topologiaRouter8();
@@ -3601,6 +3811,7 @@ var Escenarios = (function () {
     verificarDesafio: verificarDesafio,
     nombrePuertoLibre: nombrePuertoLibre,
     cambiarModelo: cambiarModelo,
+    renombrarReferencias: renombrarReferencias,
     PUERTOS_ROUTER_MAX: PUERTOS_ROUTER_MAX,
     detectarSectores: detectarSectores,
     TIPOS_FALLA: TIPOS_FALLA,
