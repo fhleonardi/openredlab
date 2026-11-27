@@ -11694,7 +11694,7 @@ var UI = (function () {
     pal.appendChild(labCable);
     pal.appendChild(selCable);
     var bCable = boton("Conectar con un cable", "herramienta");
-    bCable.title = "Hacé clic en dos puertos para unirlos (Esc cancela)";
+    bCable.title = "Hacé clic en dos puertos para unirlos. También se empieza tocando un puerto; tocar un equipo o Esc cancela";
     bCable.setAttribute("aria-pressed", "false");
     bCable.addEventListener("click", function () {
       S.herramientaCable = !S.herramientaCable; S.cableOrigen = null;
@@ -12158,7 +12158,11 @@ var UI = (function () {
           (enBridge ? ", en el bridge" : "");
         c.appendChild(tit);
         if (S.herramientaCable || S.cableOrigen) {
-          var comp = !S.cableOrigen || (iface.medio === S.cableTipo && (!ocupado || comparte) && iface.id !== undefined);
+          // Sin origen todavía, sirve cualquier puerto habilitado y libre (el
+          // tipo de cable se ajusta a él); con origen, además, el mismo medio.
+          var comp = !S.cableOrigen
+            ? (iface.habilitada && (!ocupado || comparte))
+            : (iface.medio === S.cableTipo && (!ocupado || comparte) && iface.id !== undefined);
           c.setAttribute("opacity", comp ? "1" : "0.3");
           c.setAttribute("stroke-width", comp ? "2" : "1");
           c.style.strokeWidth = "";
@@ -12178,6 +12182,8 @@ var UI = (function () {
         c.addEventListener("click", function (ev) {
           ev.stopPropagation();
           if (S.herramientaFalla === "equipo") { alternarFalla("equipo", d.id); return; }
+          // Soltar un equipo arrastrado desde un puerto no arranca un cable.
+          if (S.nodoArrastrado) { S.nodoArrastrado = false; return; }
           clicPuerto(d, iface);
         });
         c.addEventListener("keydown", function (ev) {
@@ -12238,7 +12244,14 @@ var UI = (function () {
         if (ev.target !== g) { return; }
         if (ev.key === "Enter" || ev.key === " ") {
           ev.preventDefault();
-          if (S.herramientaFalla === "equipo") { alternarFalla("equipo", d.id); } else { seleccionar(d.id); enfocarNodo(d.id); }
+          if (S.herramientaFalla === "equipo") { alternarFalla("equipo", d.id); return; }
+          // Como con el clic: en modo cableado, el equipo saca del modo.
+          if ((S.herramientaCable || S.cableOrigen) && !S.colocando && !S.moviendoExtremo) {
+            salirModoCable(d);
+          } else {
+            seleccionar(d.id);
+          }
+          enfocarNodo(d.id);
           return;
         }
         if (moverConTeclado(d, ev)) { ev.preventDefault(); ev.stopPropagation(); }
@@ -12468,10 +12481,14 @@ var UI = (function () {
     ev.stopPropagation();
     var inicio = { x: ev.clientX, y: ev.clientY, dx: d.x, dy: d.y };
     var movio = false;
+    // Si el equipo se arrastra agarrado de un puerto, el clic que llega al
+    // soltar no tiene que arrancar un cable (ver el clic del puerto).
+    S.nodoArrastrado = false;
     if (S.colocando || S.herramientaCable || S.herramientaFalla === "equipo") { return; }
     function mover(e2) {
       var rect = S.svg.getBoundingClientRect();
       var k = S.vista.k;
+      if (Math.abs(e2.clientX - inicio.x) > 3 || Math.abs(e2.clientY - inicio.y) > 3) { S.nodoArrastrado = true; }
       d.x = Math.round((inicio.dx + (e2.clientX - inicio.x) / k) / 10) * 10;
       d.y = Math.round((inicio.dy + (e2.clientY - inicio.y) / k) / 10) * 10;
       movio = true;
@@ -12766,7 +12783,7 @@ var UI = (function () {
     seleccionar(d.id);
     renderLienzo();
     avisar("Saliste del modo cableado" + (pendiente ? " (el cable que empezaste en " + (pendiente.nombre || pendiente.id) + " quedó sin hacer)" : "") +
-      ". Para seguir conectando, volvé a tocar «Conectar con un cable».");
+      ". Para seguir conectando, tocá un puerto.");
   }
 
   function cancelarHerramientas() {
@@ -12975,14 +12992,35 @@ var UI = (function () {
 
   function clicPuerto(d, iface) {
     if (S.moviendoExtremo) { moverExtremo(d, iface); return; }
-    if (!S.herramientaCable && !S.cableOrigen) { return; }
+    // Fuera del modo cable, tocar un puerto lo activa y ya deja ese puerto
+    // como origen. Con otra herramienta en curso, la hoja del celular abierta
+    // o en presentación, no. Un puerto deshabilitado u ocupado avisa sin dejar
+    // el modo activado y sin código D: no hubo un cable que fallara.
+    var desdePuerto = false;
+    var enModo = !!(S.herramientaCable || S.cableOrigen);
+    var ocupado = !!enlaceEnPuerto(d.id, iface.id) && !puertoAdmiteMultiplesEnlaces(d, iface);
+    if (!enModo) {
+      if (S.colocando || S.herramientaFalla || S.presentacion || S.hoja) { return; }
+      if (iface.habilitada && !ocupado) {
+        S.herramientaCable = true;
+        desdePuerto = true;
+        registrar("cable", "Herramienta de cable activada al tocar " + puertoTexto(d.id, iface.id) + ".");
+      }
+    }
     if (!iface.habilitada) {
-      avisoCable("D01", mayus(puertoTexto(d.id, iface.id)) + " está deshabilitado: habilitalo en la pestaña Interfaces.");
+      avisoCable(enModo ? "D01" : "cable", mayus(puertoTexto(d.id, iface.id)) + " está deshabilitado: habilitalo en la pestaña Interfaces.");
       S.cableOrigen = null;
       renderLienzo();
       return;
     }
     if (!S.cableOrigen) {
+      // Un puerto ocupado no sirve de origen: se avisa ya, no al tocar el segundo.
+      if (ocupado) {
+        avisoCable(enModo ? "D02" : "cable", mayus(puertoTexto(d.id, iface.id)) + " ya tiene un cable" +
+          (enModo ? ". Elegí uno libre." : ": para conectar, tocá uno libre."));
+        renderLienzo();
+        return;
+      }
       // El tipo de cable se ajusta al primer puerto: si es una wlan, el cable
       // es wireless. Si la otra punta es de otro medio, sigue el D03.
       var ajustado = iface.medio !== S.cableTipo;
@@ -12990,14 +13028,24 @@ var UI = (function () {
         S.cableTipo = iface.medio;
         if (S.selectCable) { S.selectCable.value = iface.medio; }
       }
-      S.cableOrigen = { dispositivo: d.id, interfaz: iface.id };
+      S.cableOrigen = { dispositivo: d.id, interfaz: iface.id, desdePuerto: desdePuerto };
       avisoCable("cable", "Cable " + palabraCable(S.cableTipo) + " desde " + (d.nombre || d.id) + " (" + iface.id + "): elegí el otro puerto." +
-        (ajustado ? " El tipo de cable se ajustó a ese puerto." : ""));
+        (ajustado ? " El tipo de cable se ajustó a ese puerto." : "") +
+        (desdePuerto ? " Tocá un equipo o Esc para cancelar." : ""));
       renderLienzo();
       return;
     }
     var o = S.cableOrigen;
-    if (o.dispositivo === d.id && o.interfaz === iface.id) { S.cableOrigen = null; renderLienzo(); return; }
+    if (o.dispositivo === d.id && o.interfaz === iface.id) {
+      S.cableOrigen = null;
+      // Si el modo lo abrió este mismo puerto, volver a tocarlo lo cierra.
+      if (o.desdePuerto) {
+        S.herramientaCable = false;
+        registrar("cable", "Herramienta de cable desactivada al volver a tocar " + puertoTexto(d.id, iface.id) + ".");
+        avisar("Cable cancelado.");
+      }
+      renderLienzo(); return;
+    }
     var od = buscarDisp(o.dispositivo);
     var oi = od ? buscarIface(od, o.interfaz) : null;
     if (!oi) { S.cableOrigen = null; renderLienzo(); return; }
@@ -16732,7 +16780,7 @@ var UI = (function () {
     caja.appendChild(el("section", "",
       "<h3>Cómo empezar</h3><ol>" +
       "<li>Arrastrá equipos desde la paleta, o abrí <i>Ejemplos…</i> o <i>Importar</i>.</li>" +
-      "<li><i>Conectar con un cable</i> y clic en dos puertos.</li>" +
+      "<li>Tocá un puerto y después otro para unirlos con un cable.</li>" +
       "<li>Seleccioná cada equipo y cargá IP, máscara y puerta de enlace.</li>" +
       "<li>Probá con <i>Ping</i>: si falla, el recorrido dice dónde y por qué.</li>" +
       "<li><i>Verificar</i> revisa tu diseño y los objetivos del ejercicio.</li></ol>"));

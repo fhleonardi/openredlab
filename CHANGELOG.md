@@ -15,6 +15,11 @@ Los archivos de red llevan el número de su formato (`version`) y la versión de
 - **La animación sigue a los equipos.** Al mover un equipo (arrastrándolo, con las flechas o con Deshacer y Rehacer), el recorrido del DORA, la prueba de colisión, el paquete que quedó en el lienzo y el cable resaltado de una trama se vuelven a dibujar en el lugar nuevo. Antes quedaban donde estaban los equipos al hacer la prueba. Si se borra un equipo por donde pasó el paquete, la animación se descarta.
 - **La captura vuelve al principio** al cambiar el filtro o tocar Limpiar. Antes quedaba desplazada donde estaba.
 
+## 1.10.2 — 2026-11-27
+
+- **Cablear tocando un puerto.** Tocar un puerto libre arranca un cable desde ahí, sin pasar antes por «Conectar con un cable». Volver a tocar el mismo puerto cancela el cable, y tocar el cuerpo de un equipo (con el mouse o con Enter) sale del modo cableado. Arrastrar un equipo agarrándolo de un puerto lo sigue moviendo, sin arrancar un cable.
+- **Puerto ocupado, aviso en el primer toque.** Si el puerto de partida ya tiene un cable, el aviso aparece al tocarlo y no recién al elegir el segundo puerto. Un puerto ocupado o deshabilitado avisa sin activar el modo, y con el modo activo esos puertos se ven atenuados desde el principio.
+
 ## 1.10.1 — 2026-11-27
 
 - **La captura no se traba con muchos paquetes.** Con más de 50 paquetes, la tabla dibuja sólo las filas que se ven y las demás a medida que se baja, así refrescarla durante una captura no pesa en las compus del aula. Con las flechas, Re Pág, Av Pág, Inicio y Fin se pasa de un paquete a otro, y al volver a la pestaña la tabla queda donde estaba.

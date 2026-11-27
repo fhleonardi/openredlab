@@ -28,7 +28,7 @@ Las pestañas del panel derecho dependen del equipo:
 
 ## Lo primero que tenés que saber hacer
 
-1. **Conectar dos equipos:** apretá *Conectar con un cable* en la columna izquierda, hacé clic en un puerto libre del primer equipo y después en un puerto libre del segundo. Si el puerto se atenúa, ese cable no va ahí.
+1. **Conectar dos equipos:** hacé clic en un puerto libre del primer equipo (eso arranca el cable) y después en un puerto libre del segundo. Si el puerto se atenúa, ese cable no va ahí. Para salir sin conectar, tocá un equipo o apretá Esc. El botón *Conectar con un cable* de la columna izquierda también arranca el modo, y ahí elegís el tipo de cable.
 2. **Configurar un equipo:** hacé clic sobre él y completá IP, máscara y puerta de enlace en el panel derecho.
 3. **Probar:** en la pestaña **Simulación**, elegí el origen, escribí la IP de destino y apretá **Ping**.
 
