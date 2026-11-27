@@ -399,11 +399,14 @@ var UI = (function () {
     ".simbarra button,.simbarra select{background:transparent;color:var(--sim-cabtexto);border-color:rgba(255,255,255,.28);}",
     ".simbarra button:hover:not(:disabled),.simbarra select:hover{background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.6);}",
     ".simbarra select option{color:var(--sim-texto);background:var(--sim-panel);}",
-    ".simbarra select{max-width:260px;min-width:0;}",
+    // El selector de ejemplos cede ancho (hasta 150 px) antes de que la barra pase a otra fila.
+    ".simbarra select{flex:100 1 150px;max-width:260px;min-width:0;}",
     ".simbarra button.activo,.simbarra button.activo:hover{background:var(--sim-cabtexto);color:var(--sim-cabecera);border-color:var(--sim-cabtexto);}",
     ".saltar{position:absolute;left:8px;top:-48px;z-index:30;background:var(--sim-panel);color:var(--sim-acento);border:2px solid var(--sim-acento);border-radius:6px;padding:6px 12px;font-weight:600;text-decoration:none;}",
     ".saltar:focus{top:8px;}",
     ".simbarra .espacio{flex:1;}",
+    ".simraiz .simbarra .bacerca{position:relative;min-width:34px;}",
+    ".simbarra .bacerca .rotulo{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;}",
     ".simbarra .enpres{display:none;font-size:13px;opacity:.85;}",
     ".simcuerpo{flex:1;display:flex;min-height:0;}",
     ".simpaleta{width:200px;flex:0 0 200px;background:var(--sim-panel);border-right:1px solid var(--sim-borde);padding:8px;overflow:auto;scrollbar-width:thin;box-sizing:border-box;}",
@@ -707,9 +710,12 @@ var UI = (function () {
       ".simbarra h1{font-size:16px;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:0;}" +
       ".simbarra .menucel{display:inline-block;min-width:44px;min-height:40px;font-size:18px;}" +
       ".simbarra>*:not(h1):not(.menucel){display:none;}" +
+      ".simbarra .bacerca .rotulo{position:static;width:auto;height:auto;clip:auto;margin-left:6px;}" +
       ".simbarra.menuabierto{flex-wrap:wrap;}" +
       ".simbarra.menuabierto>.modos{display:flex;width:100%;flex-wrap:wrap;}" +
       ".simbarra.menuabierto>select,.simbarra.menuabierto>button:not(.menucel){display:block;width:100%;max-width:none;padding:8px;}" +
+      ".simbarra.menuabierto>select{flex-basis:100%;}" +
+      ".simbarra.menuabierto>button[hidden]{display:none;}" +
       ".simcuerpo{flex:1;min-height:0;}" +
       ".simpaleta,.simprop,.siminf{display:none;}" +
       ".simacciones{display:flex;}" +
@@ -732,6 +738,25 @@ var UI = (function () {
       ".simraiz input,.simraiz select{font-size:16px;}" +
     "}",
     ".simraiz h2,.simraiz h3{text-wrap:balance;}",
+    ".simraiz dialog.acerca{width:min(620px,calc(100vw - 24px));max-width:none;max-height:calc(100vh - 24px);max-height:calc(100dvh - 24px);padding:0;border:1px solid var(--sim-borde);border-radius:12px;background:var(--sim-panel);color:var(--sim-texto);overflow:hidden;box-shadow:0 12px 40px rgba(0,0,0,.35);}",
+    ".simraiz dialog.acerca[open]{display:flex;flex-direction:column;}",
+    ".simraiz dialog.acerca:not([open]){display:none;}",
+    ".simraiz dialog.acerca.sinmodal{position:fixed;left:0;right:0;top:12px;margin:0 auto;z-index:50;}",
+    ".simraiz dialog.acerca::backdrop{background:rgba(0,0,0,.55);}",
+    ".acerca .cabacerca{display:flex;align-items:center;gap:12px;padding:12px 16px;background:var(--sim-cabecera);color:var(--sim-cabtexto);flex:0 0 auto;}",
+    ".acerca .cabacerca .logo{width:40px;height:40px;}",
+    ".acerca .cabacerca div{flex:1;min-width:0;}",
+    ".acerca .cabacerca h2{margin:0;font-size:18px;}",
+    ".acerca .cabacerca p{margin:0;font-size:12px;opacity:.85;}",
+    ".acerca .cabacerca button.cerraracerca{background:transparent;color:var(--sim-cabtexto);border-color:rgba(255,255,255,.28);min-width:40px;min-height:40px;font-size:16px;}",
+    ".acerca .cuerpoacerca{overflow:auto;overscroll-behavior:contain;padding:4px 16px 14px;font-size:13.5px;line-height:1.5;}",
+    ".acerca .cuerpoacerca:focus-visible{outline:3px solid var(--sim-acento);outline-offset:-3px;}",
+    ".acerca .cuerpoacerca h3{margin:14px 0 2px;font-size:14px;color:var(--sim-acento);}",
+    ".acerca .cuerpoacerca p{margin:6px 0;}",
+    ".acerca .cuerpoacerca ul{margin:4px 0;padding-left:18px;}",
+    ".acerca .cuerpoacerca a{color:var(--sim-acento);overflow-wrap:anywhere;}",
+    ".acerca .cuerpoacerca summary{cursor:pointer;color:var(--sim-tenue);}",
+    ".acerca .licencia{font-size:12px;color:var(--sim-tenue);}",
     "@media (prefers-reduced-motion:reduce){.simraiz *,.simraiz *::before,.simraiz *::after{scroll-behavior:auto;transition:none !important;animation:none !important;}}",
     ".fantasma{position:fixed;pointer-events:none;opacity:.6;z-index:40;background:var(--sim-panel);border:1px dashed var(--sim-acento);border-radius:8px;padding:4px 8px;font-size:12px;}"
   ].join("\n");
@@ -1033,7 +1058,13 @@ var UI = (function () {
     bPres.addEventListener("click", alternarPresentacion);
     S.botonPres = bPres;
     barra.appendChild(bImp); barra.appendChild(bExp); barra.appendChild(bAlu);
-    barra.appendChild(bTema); barra.appendChild(bPres);
+    // En la barra va sólo el icono, para que no pase a otra fila; en el menú del celular, con su nombre.
+    var bAcerca = boton("", "enedicion bacerca");
+    bAcerca.innerHTML = "<span aria-hidden='true'>ⓘ</span><span class='rotulo'>Acerca de</span>";
+    bAcerca.title = "Acerca de";
+    bAcerca.setAttribute("aria-haspopup", "dialog");
+    bAcerca.addEventListener("click", abrirAcerca);
+    barra.appendChild(bTema); barra.appendChild(bPres); barra.appendChild(bAcerca);
     S.raiz.appendChild(barra);
 
     var cuerpo = el("main", "simcuerpo");
@@ -1250,8 +1281,10 @@ var UI = (function () {
     autoguardar();
     renderTodo();
     registrar("inicio", "Simulador listo. Pestaña activa: Simulación.");
-    seguirEnlaceAEjemplo();
-    window.addEventListener("hashchange", seguirEnlaceAEjemplo);
+    S.acerca = armarAcerca();
+    S.raiz.appendChild(S.acerca);
+    seguirEnlace();
+    window.addEventListener("hashchange", seguirEnlace);
   }
 
   function recontarNombres() {
@@ -2680,6 +2713,12 @@ var UI = (function () {
   }
 
   function atajos(ev) {
+    // Con «Acerca de» abierta, las teclas son de la ventana. Esc la cierra el navegador; si no tiene
+    // <dialog>, se cierra acá.
+    if (acercaAbierta()) {
+      if (ev.key === "Escape" && S.acerca.classList.contains("sinmodal")) { cerrarAcerca(); }
+      return;
+    }
     var mod = ev.ctrlKey || ev.metaKey;
     var foco = document.activeElement;
     var escribiendo = !!foco && (foco.tagName === "INPUT" || foco.tagName === "TEXTAREA");
@@ -7018,6 +7057,107 @@ var UI = (function () {
     var b = S.raiz && S.raiz.querySelector('.recorrido [data-foco="pausa"]');
     if (b) { b.textContent = animador.pausado ? "\u25B6 Reanudar" : "\u23F8 Pausar"; }
   };
+
+  /* ---------------- Acerca de ---------------- */
+
+  var URL_REPO = "https://github.com/fhleonardi/openredlab";
+  var URL_SITIO = "https://fhleonardi.github.io/openredlab/";
+  // El texto de la licencia MIT, que debe acompañar a cada copia: es el mismo para las dos obras.
+  var TEXTO_MIT = [
+    "Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:",
+    "The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.",
+    "THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE."
+  ];
+
+  function enlaceExterno(url, texto) {
+    return "<a href='" + url + "' target='_blank' rel='noopener'>" + texto + "</a>";
+  }
+
+  function armarAcerca() {
+    var d = el("dialog", "acerca");
+    d.setAttribute("aria-labelledby", "acerca-titulo");
+    var cab = el("div", "cabacerca",
+      "<img class='logo' src='" + LOGO_BLANCO + "' alt=''>" +
+      "<div><h2 id='acerca-titulo'>Acerca de OpenRedLab</h2>" +
+      "<p>Versión " + escapar(Escenarios.VERSION_APP) + "</p></div>");
+    var cerrar = boton("✕", "cerraracerca");
+    cerrar.setAttribute("aria-label", "Cerrar");
+    cerrar.addEventListener("click", cerrarAcerca);
+    cab.appendChild(cerrar);
+    d.appendChild(cab);
+    var cuerpo = el("div", "cuerpoacerca",
+      "<p>Simulador de redes para aprender direccionamiento IP, subredes y diagnóstico. Es un solo archivo: " +
+      "anda sin instalar nada y sin conexión.</p>" +
+      "<h3>Quién lo hace</h3>" +
+      "<p>Francisco Leonardi con " + enlaceExterno("https://opentecnologia.ar", "Open Tecnología") +
+      " (Gualeguaychú, Entre Ríos). Nació para la cátedra de redes y se publica como código abierto para que " +
+      "cualquier docente o alumno lo use y lo mejore.</p>" +
+      "<h3>Código y licencia</h3><ul>" +
+      "<li>Repositorio: " + enlaceExterno(URL_REPO, "github.com/fhleonardi/openredlab") + "</li>" +
+      "<li>En línea: " + enlaceExterno(URL_SITIO, "fhleonardi.github.io/openredlab") + "</li>" +
+      "<li>" + enlaceExterno(URL_REPO + "/blob/main/CHANGELOG.md", "Qué cambió en cada versión") + "</li>" +
+      "<li>" + enlaceExterno(URL_REPO + "/issues", "Reportar un problema") + ": adjuntá la red (<i>Exportar</i>) y los pasos para repetirlo.</li>" +
+      "<li>Licencia MIT © 2026 Francisco Leonardi.</li></ul>" +
+      "<h3>Tus datos</h3>" +
+      "<p>La red se guarda sólo en este navegador, y en los archivos que exportes. Lo que hacés no sale a " +
+      "internet, salvo que actives <i>Resolver nombres reales</i> (o uses <i>Consultar en el DNS real</i>): " +
+      "en ese caso el nombre que quieras resolver se le pregunta a Cloudflare.</p>" +
+      "<h3>Bibliografía</h3><ul>" +
+      "<li>Stallings, W. <cite>Comunicaciones y redes de computadores</cite> (Pearson, 2011).</li>" +
+      "<li>Tanenbaum, A., Feamster, N. y Wetherall, D. <cite lang='en'>Computer Networks</cite> (Pearson, 2021).</li>" +
+      "<li>Kurose, J. y Ross, K. <cite lang='en'>Computer Networking: A Top-Down Approach</cite> (9.ª ed.).</li>" +
+      "<li>Sanders, C. <cite lang='en'>Practical Packet Analysis</cite> (3.ª ed.).</li></ul>" +
+      "<h3>Terceros</h3>" +
+      "<p>Los iconos de PC, servidor, firewall, internet, cámara, punto de acceso e IoT son de " +
+      enlaceExterno("https://tabler.io/icons", "Tabler Icons") + " (v3.49.0, licencia MIT, © 2020-2026 Paweł Kuna). " +
+      "Los de router, switch y hub son propios.</p>" +
+      "<details><summary>Texto de la licencia MIT</summary><div class='licencia' lang='en' translate='no'>" +
+      "<p>Copyright (c) 2026 Francisco Leonardi (OpenRedLab)<br>Copyright (c) 2020-2026 Paweł Kuna (Tabler Icons)</p>" +
+      TEXTO_MIT.map(function (p) { return "<p>" + escapar(p) + "</p>"; }).join("") + "</div></details>");
+    // Con el teclado se puede desplazar el texto.
+    cuerpo.tabIndex = 0;
+    d.appendChild(cuerpo);
+    // Tocar afuera cierra. Se mira dónde empezó el toque: soltar afuera al seleccionar texto no cierra.
+    var empezoAfuera = false;
+    d.addEventListener("pointerdown", function (ev) { empezoAfuera = ev.target === d; });
+    d.addEventListener("click", function (ev) { if (ev.target === d && empezoAfuera) { cerrarAcerca(); } });
+    return d;
+  }
+
+  // Se mira el atributo: un navegador sin <dialog> no tiene la propiedad «open».
+  function acercaAbierta() { return !!S.acerca && S.acerca.hasAttribute("open"); }
+
+  function abrirAcerca() {
+    var d = S.acerca;
+    if (!d || acercaAbierta()) { return; }
+    ocultarTip();
+    if (typeof d.showModal === "function") { d.showModal(); }
+    else { d.classList.add("sinmodal"); d.setAttribute("open", ""); }
+    d.querySelector(".cuerpoacerca").scrollTop = 0;
+  }
+
+  function cerrarAcerca() {
+    if (!acercaAbierta()) { return; }
+    if (typeof S.acerca.close === "function") { S.acerca.close(); } else { S.acerca.removeAttribute("open"); }
+  }
+
+  function esEnlaceAcerca(hash) { return /^#acerca[.,;:)]*$/i.test(hash); }
+
+  // La dirección puede pedir la ventana «Acerca de» o un ejemplo.
+  function seguirEnlace(ev) {
+    if (!esEnlaceAcerca(location.hash)) {
+      cerrarAcerca();
+      seguirEnlaceAEjemplo();
+      return;
+    }
+    // «#acerca» no queda en la dirección: vuelve a ser la de antes. Así sigue nombrando el ejemplo
+    // abierto y «Atrás» del navegador no lo vuelve a cargar encima del trabajo.
+    var antes = ev && ev.oldURL && ev.oldURL.indexOf("#") >= 0 ? ev.oldURL.slice(ev.oldURL.indexOf("#")) : "";
+    if (esEnlaceAcerca(antes)) { antes = ""; }
+    try { history.replaceState(null, "", antes || location.pathname + location.search); }
+    catch (e) { /* sin permiso para cambiar la dirección: queda como estaba */ }
+    abrirAcerca();
+  }
 
   /* ---------------- Ejemplos y enlaces a un ejemplo ---------------- */
 

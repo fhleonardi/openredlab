@@ -2279,7 +2279,63 @@ var Autotest = (function () {
     }
   }
 
-  var CRITERIOS_TECNICOS = [crit01, crit09, crit10, crit11, crit13, crit14, crit15, crit16, crit24, crit25, crit26, crit27, crit28, crit30, crit32, crit33, crit34, crit36, crit38, crit39, crit40, crit42];
+  function crit43() {
+    var nombre = "«Acerca de» se abre con su botón y con #acerca, muestra autoría, repositorio, licencia y bibliografía, y no deja actuar los atajos del lienzo";
+    var previo = modoActualDom();
+    var direccion = location.href;
+    var d = document.querySelector("dialog.acerca");
+    try {
+      var prob = [];
+      UI.setModo("topologia");
+      UI.cargarTopologia(clonar(ejemploPorId("complejo").topologia));
+      var bAbrir = document.querySelector(".simbarra button.bacerca");
+      if (!bAbrir || !d) { return fila(43, nombre, false, "Falla: no está el botón o la ventana «Acerca de»."); }
+      if (bAbrir.textContent.indexOf("Acerca de") < 0) { prob.push("el botón no tiene nombre"); }
+      bAbrir.focus();
+      bAbrir.click();
+      if (!d.open) { prob.push("el botón no abre la ventana"); }
+      var texto = d.textContent;
+      ["Versión " + Escenarios.VERSION_APP, "Francisco Leonardi", "Open Tecnología", "cátedra de redes", "Licencia MIT", "Cloudflare",
+        "Stallings", "Tanenbaum", "Kurose", "Sanders", "Paweł Kuna", "WITHOUT WARRANTY"].forEach(function (t) {
+        if (texto.indexOf(t) < 0) { prob.push("falta «" + t + "»"); }
+      });
+      if (!d.querySelector("a[href='https://github.com/fhleonardi/openredlab']")) { prob.push("falta el link al repositorio"); }
+      d.querySelectorAll("a").forEach(function (a) {
+        if (a.target !== "_blank" || a.rel.indexOf("noopener") < 0) { prob.push("el enlace «" + a.textContent + "» reemplaza al simulador"); }
+      });
+      var r = d.getBoundingClientRect();
+      if (r.left < 0 || r.top < 0 || r.right > window.innerWidth + 1 || r.bottom > window.innerHeight + 1) { prob.push("la ventana se sale de la pantalla"); }
+      var equipos = UI.topologiaActual().dispositivos.length;
+      UI.seleccionar(UI.topologiaActual().dispositivos[0].id);
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", bubbles: true }));
+      if (UI.topologiaActual().dispositivos.length !== equipos) { prob.push("Supr borró un equipo con la ventana abierta"); }
+      d.querySelector("button.cerraracerca").click();
+      if (d.open) { prob.push("el botón Cerrar no la cierra"); }
+      history.replaceState(null, "", "#acerca");
+      window.dispatchEvent(new Event("hashchange"));
+      if (!d.open) { prob.push("#acerca no la abre"); }
+      d.querySelector("button.cerraracerca").click();
+      if (location.hash === "#acerca") { prob.push("la dirección sigue en #acerca"); }
+      // Con un ejemplo en la dirección, «#acerca» no lo reemplaza ni lo vuelve a cargar.
+      var base = location.href.split("#")[0];
+      history.replaceState(null, "", "#acerca");
+      window.dispatchEvent(new HashChangeEvent("hashchange", { oldURL: base + "#ejemplo=mikrotik", newURL: base + "#acerca" }));
+      if (!d.open || location.hash !== "#ejemplo=mikrotik") { prob.push("con #acerca la dirección deja de nombrar el ejemplo abierto"); }
+      d.querySelector("button.cerraracerca").click();
+      if (UI.topologiaActual().dispositivos.length !== equipos) { prob.push("abrirla cambió la red"); }
+      if (prob.length === 0) { return fila(43, nombre, true, "Abre con el botón y con #acerca, trae autoría, repositorio, datos, bibliografía y licencias, entra en la pantalla y Supr no toca la red."); }
+      return fila(43, nombre, false, "Falla: " + prob.join("; ") + ".");
+    } catch (e) {
+      return fila(43, nombre, false, "Excepción: " + e.message);
+    } finally {
+      try { if (d && d.open) { d.close(); } } catch (e0) { /* se sigue igual */ }
+      try { history.replaceState(null, "", direccion); } catch (e1) { /* se sigue igual */ }
+      try { UI.seleccionar(null); UI.cargarTopologia(clonar(ejemploPorId("complejo").topologia)); } catch (e2) { /* se sigue igual */ }
+      try { UI.setModo(previo); } catch (e3) { /* se sigue igual */ }
+    }
+  }
+
+  var CRITERIOS_TECNICOS = [crit01, crit09, crit10, crit11, crit13, crit14, crit15, crit16, crit24, crit25, crit26, crit27, crit28, crit30, crit32, crit33, crit34, crit36, crit38, crit39, crit40, crit42, crit43];
 
   function correr(opciones) {
     var tecnico = !!(opciones && opciones.tecnico);
@@ -2294,6 +2350,11 @@ var Autotest = (function () {
       }
       return { total: 0, pasadas: 0, resultados: [], detalleCapas: "capas faltantes", fallos: 0 };
     }
+    // Con «Acerca de» abierta las teclas son de la ventana y los criterios de teclado fallarían.
+    try {
+      var abierta = document.querySelector("dialog.acerca[open] button.cerraracerca");
+      if (abierta) { abierta.click(); }
+    } catch (e) { /* se sigue igual */ }
     var respaldoTopo = null;
     var respaldoModo = "topologia";
     var teniaUI = true;
