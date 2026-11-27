@@ -2872,8 +2872,14 @@ var UI = (function () {
       empujarHistorial();
       d.interfaces = d.interfaces.filter(function (x) { return x !== f; });
       if (S.interfazEditada[d.id] === f.id) { delete S.interfazEditada[d.id]; }
+      var texto = "Se quitó el puerto " + f.id + " de " + (d.nombre || d.id) + ".";
+      if (d.bridge && !d.interfaces.some(function (x) { return x.enBridge; })) {
+        delete d.bridge;
+        texto += " El bridge quedó sin puertos y se quitó.";
+        avisar(texto);
+      }
       reconstruirEstado(); renderTodo();
-      registrar("topologia", "Se quitó el puerto " + f.id + " de " + (d.nombre || d.id) + ".");
+      registrar("topologia", texto);
     });
     fila.appendChild(bQuitar);
   }
@@ -3308,8 +3314,12 @@ var UI = (function () {
       var selEnt = document.createElement("select");
       var oCual = document.createElement("option"); oCual.value = ""; oCual.textContent = "Entra por cualquier puerto"; selEnt.appendChild(oCual);
       (d.interfaces || []).forEach(function (f) {
+        if (enElBridge(d, f)) { return; }
         var o = document.createElement("option"); o.value = f.id; o.textContent = "Entra por " + f.id; selEnt.appendChild(o);
       });
+      if (d.bridge) {
+        var oB = document.createElement("option"); oB.value = "bridge"; oB.textContent = "Entra por el bridge"; selEnt.appendChild(oB);
+      }
       selEnt.value = r.entrada || "";
       selEnt.setAttribute("aria-label", "Regla " + (i + 1) + ": puerto por el que entra el paquete");
       selEnt.addEventListener("change", function () {

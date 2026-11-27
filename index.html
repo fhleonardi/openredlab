@@ -1326,6 +1326,18 @@ var Motor = (function () {
     return todos;
   }
 
+  // El enlace por el que sale la trama de un puerto hacia otro puerto del segmento: el suyo o, desde
+  // el bridge, el del miembro que lleva al destino.
+  function enlaceHacia(estado, dispositivo, iface, idDestino, ifDestino) {
+    if (!esInterfazBridge(iface)) { return enlacesDe(estado, dispositivo.id, iface.id)[0] || null; }
+    var ids = caminoL2(estado, dispositivo.id, iface.id, idDestino, ifDestino);
+    var todos = estado.topologia.enlaces || [];
+    for (var i = 0; i < todos.length; i++) {
+      if (todos[i].id === ids[0]) { return todos[i]; }
+    }
+    return null;
+  }
+
   // La nube "internet" representa todas las direcciones públicas: es dueña
   // de cualquier destino público que no esté en sus propias redes.
   // Filtrado mínimo y sin estado: cada regla tiene una acción (bloquear o
@@ -1817,9 +1829,9 @@ var Motor = (function () {
         unir(todos);
       } else {
         dev.interfaces.forEach(function (f) { unir(idsDe(dev, f)); });
-        if (tieneBridge(dev)) {
+        if (tieneBridge(dev) && dev.encendido) {
           var delBridge = [];
-          miembrosBridge(dev).forEach(function (f) { delBridge = delBridge.concat(idsDe(dev, f)); });
+          miembrosBridge(dev).forEach(function (f) { if (f.habilitada) { delBridge = delBridge.concat(idsDe(dev, f)); } });
           unir(delBridge);
         }
       }
@@ -2556,7 +2568,9 @@ var Motor = (function () {
     if (enlacesOrigen.length === 0) {
       return fallar("D02", { origen: nom(origen.id), interfaz: srcIface.id },
         "Revisar la conexión física",
-        "El puerto " + srcIface.id + " de " + nom(origen.id) + " no tiene ningún cable conectado.", 1);
+        esInterfazBridge(srcIface)
+          ? "Ningún puerto del bridge de " + nom(origen.id) + " tiene un cable conectado."
+          : "El puerto " + srcIface.id + " de " + nom(origen.id) + " no tiene ningún cable conectado.", 1);
     }
     var enlaceUsable = null;
     var problemaOrigen = null;
@@ -2636,7 +2650,9 @@ var Motor = (function () {
         codigo: "D02",
         ctx: { origen: nom(origen.id), interfaz: srcIface.id },
         titulo: "Revisar la conexión física",
-        detalle: "Ningún cable del puerto " + srcIface.id + " está activo."
+        detalle: esInterfazBridge(srcIface)
+          ? "Ningún cable de los puertos del bridge de " + nom(origen.id) + " está activo."
+          : "Ningún cable del puerto " + srcIface.id + " está activo."
       };
       agregarPaso(po.titulo, po.detalle, false, 1);
       return {
@@ -3224,9 +3240,9 @@ var Motor = (function () {
             : "el switch reenvía la trama por el puerto donde está " + nombreDestinoFinal + ": un switch se guía por direcciones MAC, no por IP.")
           : "el paquete llega directo a " + nombreDestinoFinal + " por el cable.");
         agregarPaso("Entregar el paquete al destino", textoSwitch + textoTtl, true, 2);
-        var enlacesFinal = enlacesDePuerto(estado, buscarDispositivo(estado, actualId), actualIface);
-        if (enlacesFinal.length > 0) {
-          msTotal += (enlacesFinal[0].retardoMs || 0) + 1;
+        var enlaceFinal = enlaceHacia(estado, buscarDispositivo(estado, actualId), actualIface, destPar.dispositivo.id, destPar.interfaz.id);
+        if (enlaceFinal) {
+          msTotal += (enlaceFinal.retardoMs || 0) + 1;
         } else {
           msTotal += 1;
         }
@@ -3408,9 +3424,9 @@ var Motor = (function () {
           nom(actualId) + " pregunta en su red quién tiene " + gw + ", y " + nom(respGw[0].dispositivo.id) +
           " responde con su dirección MAC.", true, 2);
         anotarTrama(actualId, actualIface, respGw[0].dispositivo.id, respGw[0].interfaz, ttl);
-        var enlacesUsados = enlacesDePuerto(estado, buscarDispositivo(estado, actualId), actualIface);
-        if (enlacesUsados.length > 0) {
-          msTotal += (enlacesUsados[0].retardoMs || 0) + 1;
+        var enlaceUsado = enlaceHacia(estado, buscarDispositivo(estado, actualId), actualIface, respGw[0].dispositivo.id, respGw[0].interfaz.id);
+        if (enlaceUsado) {
+          msTotal += (enlaceUsado.retardoMs || 0) + 1;
         } else {
           msTotal += 1;
         }
@@ -6699,6 +6715,15 @@ var Motor = (function () {
       var sinCables = ping(oficina(function (t) { t.enlaces = t.enlaces.filter(function (e) { return e.id === "l3"; }); }), "p3", "192.168.88.12");
       comparar("bridge: sin ningún miembro conectado, D02 nombra el bridge",
         [sinCables.diagnostico && sinCables.diagnostico.codigo, /Ningún puerto del bridge/.test(sinCables.pasos[sinCables.pasos.length - 1].detalle)], ["D02", true]);
+      var lento = oficina(function (t) { t.enlaces.forEach(function (e) { if (e.id === "l2") { e.retardoMs = 50; } }); });
+      var otroLento = oficina(function (t) { t.enlaces.forEach(function (e) { if (e.id === "l1") { e.retardoMs = 50; } }); });
+      comparar("bridge: el retardo es el del cable que usa la trama",
+        [ping(lento, "p3", "192.168.88.12").respuestas[0].ms > 50, ping(otroLento, "p3", "192.168.88.12").respuestas[0].ms < 50], [true, true]);
+      comparar("bridge: con el router apagado no hay un dominio de broadcast del bridge",
+        dominios(oficina(function (t) { t.dispositivos[0].encendido = false; })).broadcast.filter(function (d) { return d.enlaces.indexOf("l1") >= 0; })[0].enlaces, ["l1"]);
+      var routerSolo = ping(oficina(function (t) { t.enlaces = t.enlaces.filter(function (e) { return e.id === "l3"; }); }), "r1", "192.168.88.11");
+      comparar("bridge: el router sin cables en el bridge lo dice así",
+        /Ningún puerto del bridge de r1/.test(routerSolo.pasos[routerSolo.pasos.length - 1].detalle), true);
       comparar("bridge: la topología que vuelve al diseño no trae la interfaz virtual",
         topologiaDe(est).dispositivos[0].interfaces.map(function (f) { return f.id; }).indexOf("bridge"), -1);
       comparar("bridge: transmitir a la vez nombra al bridge",
@@ -7203,19 +7228,33 @@ var Escenarios = (function () {
 
   // Primera interfaz con IP válida: primero entre las habilitadas, si no
   // entre todas. Sirve para saber con qué dirección se presenta un equipo.
+  // El bridge de un router visto como una interfaz más (la que crea el Motor), o null.
+  function interfazBridge(dispositivo) {
+    if (!dispositivo || dispositivo.tipo !== "router" || !dispositivo.bridge || typeof dispositivo.bridge !== "object") { return null; }
+    return { id: "bridge", nombre: "bridge", medio: "bridge", habilitada: true, ip: dispositivo.bridge.ip || null, prefijo: dispositivo.bridge.prefijo };
+  }
+
+  // Las interfaces con IP posible de un equipo: sus puertos, salvo los del bridge, y el bridge.
+  function interfacesConIp(dispositivo) {
+    var lista = (dispositivo.interfaces || []).filter(function (f) { return !(f.enBridge && interfazBridge(dispositivo)); });
+    var b = interfazBridge(dispositivo);
+    return b ? lista.concat([b]) : lista;
+  }
+
   function primeraIpDe(dispositivo) {
     if (!dispositivo || !dispositivo.interfaces) {
       return null;
     }
     var i;
-    for (i = 0; i < dispositivo.interfaces.length; i++) {
-      var a = dispositivo.interfaces[i];
+    var interfaces = interfacesConIp(dispositivo);
+    for (i = 0; i < interfaces.length; i++) {
+      var a = interfaces[i];
       if (a.habilitada && textoNoVacio(a.ip) && Red.esIpValida(a.ip)) {
         return { interfaz: a, ip: a.ip.trim(), prefijo: a.prefijo };
       }
     }
-    for (i = 0; i < dispositivo.interfaces.length; i++) {
-      var b = dispositivo.interfaces[i];
+    for (i = 0; i < interfaces.length; i++) {
+      var b = interfaces[i];
       if (textoNoVacio(b.ip) && Red.esIpValida(b.ip)) {
         return { interfaz: b, ip: b.ip.trim(), prefijo: b.prefijo };
       }
@@ -7521,7 +7560,12 @@ var Escenarios = (function () {
                 anotar(campoRegla + ".puerto", "La regla " + (g + 1) + " de \"" + d.id + "\" tiene un puerto inválido: va de 1 a 65535.");
               }
             }
-            if (regla && regla.entrada && !buscarInterfaz(d, regla.entrada) && !(regla.entrada === "bridge" && d.bridge)) {
+            var puertoEntrada = regla && regla.entrada ? buscarInterfaz(d, regla.entrada) : null;
+            if (puertoEntrada && puertoEntrada.enBridge && d.bridge) {
+              anotar(campoRegla + ".entrada", "La regla " + (g + 1) + " de \"" + d.id + "\" dice que el paquete entra por " + regla.entrada +
+                ", que está en el bridge: lo que llega por sus puertos entra al router por el bridge. Elegí «bridge».");
+            }
+            if (regla && regla.entrada && !puertoEntrada && !(regla.entrada === "bridge" && d.bridge)) {
               anotar(campoRegla + ".entrada", "La regla " + (g + 1) + " de \"" + d.id + "\" dice que el paquete entra por " + regla.entrada + ", pero ese puerto no existe.");
             }
           }
@@ -8093,7 +8137,7 @@ var Escenarios = (function () {
     }
     var iface = null;
     if (idIf !== null) {
-      iface = buscarInterfaz(disp, idIf);
+      iface = buscarInterfaz(disp, idIf) || (idIf === "bridge" ? interfazBridge(disp) : null);
       if (!iface) {
         return { etiqueta: texto, error: "El desafío nombra el puerto " + idIf + " de " + (disp.nombre || disp.id) + ", que no existe." };
       }
@@ -8362,6 +8406,9 @@ var Escenarios = (function () {
             if (conmutadores.indexOf(d) < 0) { conmutadores.push(d); }
             return;
           }
+          // Los puertos del bridge conmutan: el router está en la red por su interfaz bridge.
+          var puertoK = buscarInterfaz(d, k.slice(corte + 1));
+          if (puertoK && puertoK.enBridge && interfazBridge(d)) { return; }
           miembros.push(k);
           if (d.tipo === "router") { routers.push({ d: d, puerto: k.slice(corte + 1), clave: k }); }
         });
@@ -8573,11 +8620,14 @@ var Escenarios = (function () {
       });
     } else if (c === "interfaz") {
       if (campo.opcional) { simple(null, "Cualquier puerto"); }
+      var deEntrada = campo.clave === "regla.entrada";
       ((dev && dev.interfaces) || []).forEach(function (f) {
         if (campo.filtro === "conIp" && !textoNoVacio(f.ip)) { return; }
         if (campo.filtro === "nat" && !f.nat) { return; }
+        if (deEntrada && f.enBridge && interfazBridge(dev)) { return; }
         simple(f.id, textoInterfaz(f));
       });
+      if (deEntrada && interfazBridge(dev)) { simple("bridge", "bridge"); }
     } else if (c === "enlace") {
       (topologia.enlaces || []).forEach(function (e) {
         simple(e.id, nombreDisp(topologia, e.a.dispositivo) + " (" + e.a.interfaz + ") — " +
@@ -8744,7 +8794,7 @@ var Escenarios = (function () {
   function sugerenciasDestino(topologia) {
     var lista = [];
     (topologia.dispositivos || []).forEach(function (d) {
-      (d.interfaces || []).forEach(function (f) {
+      interfacesConIp(d).forEach(function (f) {
         if (textoNoVacio(f.ip)) { lista.push({ valor: f.ip, texto: (d.nombre || d.id) + " " + f.id }); }
       });
       var regs = (d.servicios && d.servicios.dns && d.servicios.dns.registros) || [];
@@ -8800,7 +8850,7 @@ var Escenarios = (function () {
     }
     if (c === "interfaz") {
       var dev = buscarDispositivo(topologia, item.dispositivo);
-      var f = dev && buscarInterfaz(dev, valor);
+      var f = dev && (buscarInterfaz(dev, valor) || (campo.clave === "regla.entrada" && valor === "bridge" ? interfazBridge(dev) : null));
       if (!f) { return "El puerto " + valor + " no existe en " + quien + "."; }
       if (campo.filtro === "nat") { return "El puerto " + valor + " de " + quien + " no tiene NAT: la falla no cambiaría nada."; }
       if (campo.filtro === "conIp") { return "El puerto " + valor + " de " + quien + " no tiene IP."; }
@@ -9350,10 +9400,9 @@ var Escenarios = (function () {
     };
     var pc1 = armarPc("pc1", "PC-1", 170, 440, "192.168.88.11", 24, "192.168.88.1");
     var pc2 = armarPc("pc2", "PC-2", 360, 460, "192.168.88.12", 24, "192.168.88.1");
-    var pc3 = armarPc("pc3", "PC-3", 550, 440, null, 24, null);
+    // PC-3 recibió su dirección por DHCP del bridge.
+    var pc3 = armarPc("pc3", "PC-3", 550, 440, "192.168.88.10", 24, "192.168.88.1");
     pc3.interfaces[0].modo = "dhcp";
-    pc3.interfaces[0].habilitada = true;
-    pc3.dns = null;
     var notebook = armarPcWifi("notebook", "Notebook", 190, 230, "192.168.88.13", 24, "192.168.88.1");
     var srv = {
       id: "srv", tipo: "servidor", nombre: "Servidor", x: 720, y: 330, encendido: true,
@@ -10123,6 +10172,20 @@ var Escenarios = (function () {
       comparar("bridge: al cambiar de modelo los puertos siguen en el bridge",
         [cambio.dispositivos[0].interfaces.filter(function (f) { return f.enBridge; }).map(function (f) { return f.id; }), validarTopologia(cambio).ok],
         [["g0/1", "g0/2", "g0/3", "g0/4", "wlan0"], true]);
+      var diseno = verificarDiseno(clonar(ejemploPorId("mikrotik").topologia));
+      var errDiseno = [];
+      (diseno.porSector || []).forEach(function (x) {
+        (x.hallazgos || []).forEach(function (h) { if (h.nivel === "error") { errDiseno.push(h.mensaje); } });
+      });
+      comparar("bridge: Verificar diseño ve un sector para el bridge, sin errores",
+        [(diseno.porSector || []).map(function (x) { return x.id; }), errDiseno], [["r1:bridge", "r1:ether6"], []]);
+      comparar("bridge: las sugerencias de destino incluyen la IP del bridge",
+        sugerenciasDestino(clonar(ejemploPorId("mikrotik").topologia)).some(function (x) { return x.valor === "192.168.88.1"; }), true);
+      comparar("bridge: una regla que entra por un puerto del bridge es un error",
+        errores(function (r) { r.reglas = [{ accion: "bloquear", origen: "0.0.0.0/0", destino: "10.0.6.0/24", entrada: "ether2" }]; }),
+        ["dispositivos.r1.reglas[0].entrada"]);
+      comparar("bridge: una regla puede entrar por el bridge",
+        errores(function (r) { r.reglas = [{ accion: "bloquear", origen: "0.0.0.0/0", destino: "10.0.6.0/24", entrada: "bridge" }]; }), []);
       var desafio = vaciarDireccionamiento(clonar(ejemploPorId("mikrotik").topologia));
       comparar("bridge: un desafío borra la IP del bridge y sigue validando", [desafio.dispositivos[0].bridge.ip, validarTopologia(desafio).ok], [null, true]);
     })();
@@ -13398,8 +13461,14 @@ var UI = (function () {
       empujarHistorial();
       d.interfaces = d.interfaces.filter(function (x) { return x !== f; });
       if (S.interfazEditada[d.id] === f.id) { delete S.interfazEditada[d.id]; }
+      var texto = "Se quitó el puerto " + f.id + " de " + (d.nombre || d.id) + ".";
+      if (d.bridge && !d.interfaces.some(function (x) { return x.enBridge; })) {
+        delete d.bridge;
+        texto += " El bridge quedó sin puertos y se quitó.";
+        avisar(texto);
+      }
       reconstruirEstado(); renderTodo();
-      registrar("topologia", "Se quitó el puerto " + f.id + " de " + (d.nombre || d.id) + ".");
+      registrar("topologia", texto);
     });
     fila.appendChild(bQuitar);
   }
@@ -13834,8 +13903,12 @@ var UI = (function () {
       var selEnt = document.createElement("select");
       var oCual = document.createElement("option"); oCual.value = ""; oCual.textContent = "Entra por cualquier puerto"; selEnt.appendChild(oCual);
       (d.interfaces || []).forEach(function (f) {
+        if (enElBridge(d, f)) { return; }
         var o = document.createElement("option"); o.value = f.id; o.textContent = "Entra por " + f.id; selEnt.appendChild(o);
       });
+      if (d.bridge) {
+        var oB = document.createElement("option"); oB.value = "bridge"; oB.textContent = "Entra por el bridge"; selEnt.appendChild(oB);
+      }
       selEnt.value = r.entrada || "";
       selEnt.setAttribute("aria-label", "Regla " + (i + 1) + ": puerto por el que entra el paquete");
       selEnt.addEventListener("change", function () {
