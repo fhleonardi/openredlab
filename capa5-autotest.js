@@ -1238,7 +1238,102 @@ var Autotest = (function () {
     }
   }
 
-  var CRITERIOS_DIDACTICOS = [crit02, crit17, crit03, crit04, crit05, crit06, crit20, crit18, crit19, crit21, crit22, crit23, crit29, crit31, crit35, crit37, crit07, crit08, crit12];
+  // Un equipo apagado se nombra: no es lo mismo que una IP que nadie tiene.
+  function crit41() {
+    var nombre = "Si el siguiente salto es un equipo apagado, el ping lo nombra y dice que está apagado";
+    try {
+      var prob = [];
+      var topo = clonar(ejemploPorId("oficina-dns").topologia);
+      var nube = topo.dispositivos.filter(function (d) { return d.tipo === "internet"; })[0];
+      var sana = Motor.ping(Motor.crearEstado(topo), "pc1", "8.8.8.8");
+      if (!sana.exito) { prob.push("la red encendida no responde"); }
+      nube.encendido = false;
+      var res = Motor.ping(Motor.crearEstado(topo), "pc1", "8.8.8.8");
+      var dg = res.diagnostico || {};
+      if (dg.codigo !== "D22") { prob.push("no da D22"); }
+      if (String(dg.explicacion).indexOf(nube.nombre) < 0 || !/está apagado/.test(dg.explicacion)) { prob.push("el diagnóstico no nombra a la nube apagada"); }
+      if (String(dg.sugerencia).indexOf("Encendé " + nube.nombre) < 0) { prob.push("la sugerencia no dice que hay que encenderla"); }
+      if (prob.length === 0) { return fila(41, nombre, true, dg.explicacion); }
+      return fila(41, nombre, false, "Falla: " + prob.join("; ") + ".");
+    } catch (e) {
+      return fila(41, nombre, false, "Excepción: " + e.message);
+    }
+  }
+
+  // La guía de configuración en el panel de propiedades.
+  function crit42() {
+    var nombre = "La guía de configuración aparece al agregar un equipo, sigue lo que se carga, se oculta y no aparece en un ejercicio";
+    var previo = modoActualDom();
+    try {
+      var prob = [];
+      function panel() { return document.querySelector(".simprop"); }
+      function guia() { return panel().querySelector("section.simguia"); }
+      // Un clic sin puntero (como Enter en la paleta) agrega el equipo en el centro del lienzo.
+      function agregar(tipo) {
+        var item = document.querySelector(".palitem[data-tipo='" + tipo + "']");
+        if (item) { item.click(); }
+        return !!item;
+      }
+      function vacia() { return { version: 1, nombre: "guia", dispositivos: [], enlaces: [], escenario: null }; }
+      UI.setModo("topologia");
+      UI.cargarTopologia(vacia());
+      if (!agregar("internet")) { return fila(42, nombre, false, "Falla: no se encontró Internet en la paleta."); }
+      if (!guia()) { return fila(42, nombre, false, "Falla: al agregar un equipo no aparece la guía."); }
+      if (guia().textContent.indexOf("0 de 2 pasos") < 0) { prob.push("la nube nueva no muestra 0 de 2 pasos"); }
+      if (/\d+\.\d+\.\d+\.\d+/.test(guia().textContent)) { prob.push("la guía sugiere una dirección"); }
+      var bIp = guia().querySelector("li[data-paso=ip] button");
+      if (!bIp) { prob.push("no está el paso de la IP"); }
+      else {
+        bIp.click();
+        var campo = document.activeElement;
+        if (!campo || campo.tagName !== "INPUT" || campo.name.indexOf("direcci") !== 0) { prob.push("el paso no lleva al campo de la IP"); }
+        else {
+          campo.value = "200.45.7.1";
+          campo.dispatchEvent(new Event("input", { bubbles: true }));
+          if (!guia() || guia().textContent.indexOf("1 de 2 pasos") < 0) { prob.push("al cargar la IP el paso no se marca"); }
+          if (document.activeElement !== campo) { prob.push("al actualizarse la guía se pierde el foco del campo"); }
+        }
+      }
+      var bOcultar = guia() && guia().querySelector("button.ocultar");
+      if (bOcultar) { bOcultar.click(); }
+      if (guia() || !panel().querySelector("button.simguia-ver")) { prob.push("no se puede ocultar y volver a ver"); }
+      else {
+        panel().querySelector("button.simguia-ver").click();
+        if (!guia()) { prob.push("no vuelve a mostrarse"); }
+      }
+      UI.setModo("docente");
+      if (panel().querySelector(".simguia, .simguia-ver")) { prob.push("aparece en modo Docente"); }
+      UI.setModo("topologia");
+      // Otra red: las guías eran de la anterior.
+      UI.cargarTopologia(clonar(ejemploPorId("oficina-dns").topologia));
+      var nodo = document.querySelector("svg .nodo");
+      if (nodo) { nodo.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })); }
+      if (panel().querySelector(".simguia, .simguia-ver")) { prob.push("aparece en un equipo que no se agregó acá"); }
+      // Volver con Deshacer a la red anterior también descarta las guías.
+      UI.cargarTopologia(vacia());
+      agregar("pc");
+      var sel = document.querySelector(".simbarra select[aria-label='Topologías de ejemplo']");
+      sel.value = "oficina-dns";
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+      if (document.activeElement && document.activeElement.blur) { document.activeElement.blur(); }
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true }));
+      var vuelto = document.querySelector("svg .nodo");
+      if (!vuelto) { prob.push("Deshacer no trae la red anterior"); }
+      else {
+        vuelto.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+        if (panel().querySelector(".simguia, .simguia-ver")) { prob.push("tras Deshacer a otra red queda la guía"); }
+      }
+      if (prob.length === 0) { return fila(42, nombre, true, "Aparece al agregar, marca la IP cargada sin sacar el foco, se oculta y no aparece en modo Docente."); }
+      return fila(42, nombre, false, "Falla: " + prob.join("; ") + ".");
+    } catch (e) {
+      return fila(42, nombre, false, "Excepción: " + e.message);
+    } finally {
+      try { UI.cargarTopologia(clonar(ejemploPorId("complejo").topologia)); } catch (e1) { /* se sigue igual */ }
+      try { UI.setModo(previo); } catch (e2) { /* se sigue igual */ }
+    }
+  }
+
+  var CRITERIOS_DIDACTICOS = [crit02, crit17, crit03, crit04, crit05, crit06, crit20, crit18, crit19, crit21, crit22, crit23, crit29, crit31, crit35, crit37, crit41, crit07, crit08, crit12];
   // La pestaña Laboratorio: sólo en modo Docente, con sus cuatro secciones
   // y sin scroll de página. correr() restaura la red del usuario.
   function crit24() {
@@ -2162,7 +2257,7 @@ var Autotest = (function () {
     }
   }
 
-  var CRITERIOS_TECNICOS = [crit01, crit09, crit10, crit11, crit13, crit14, crit15, crit16, crit24, crit25, crit26, crit27, crit28, crit30, crit32, crit33, crit34, crit36, crit38, crit39, crit40];
+  var CRITERIOS_TECNICOS = [crit01, crit09, crit10, crit11, crit13, crit14, crit15, crit16, crit24, crit25, crit26, crit27, crit28, crit30, crit32, crit33, crit34, crit36, crit38, crit39, crit40, crit42];
 
   function correr(opciones) {
     var tecnico = !!(opciones && opciones.tecnico);

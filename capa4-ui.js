@@ -64,6 +64,9 @@ var UI = (function () {
     registroDescartadas: 0,
     avisoGuardado: false,
     interfazEditada: {},
+    // Guía de configuración: sólo de los equipos agregados acá. true = abierta, false = oculta.
+    guias: {},
+    guiaPaso: {},
     contadores: { pc: 0, servidor: 0, router: 0, "switch-l2": 0, camara: 0, iot: 0 },
     abajo: null,
     ultimo: null,
@@ -360,6 +363,7 @@ var UI = (function () {
       S.estado = null;
     }
     inyectarDnsReal();
+    actualizarGuia();
   }
 
   /* ---------------- CSS inyectado ---------------- */
@@ -441,6 +445,17 @@ var UI = (function () {
     ".simprop{width:295px;max-width:100%;flex:0 0 295px;background:var(--sim-panel);border-left:1px solid var(--sim-borde);overflow:auto;padding:10px;box-sizing:border-box;}",
     ".simprop.colapsado{display:none;}",
     ".simprop h2{font-size:17px;margin:10px 0 4px;}",
+    ".simguia{border:1px solid var(--sim-borde);border-left:4px solid var(--sim-acento);border-radius:8px;padding:6px 8px;margin-bottom:10px;font-size:13px;}",
+    ".simguia h3{display:flex;justify-content:space-between;gap:8px;margin:0 0 4px;font-size:13px;}",
+    ".simguia h3 span{font-weight:400;color:var(--sim-tenue);font-variant-numeric:tabular-nums;}",
+    ".simguia ol{list-style:none;margin:0;padding:0;}",
+    ".simguia li{margin:2px 0;}",
+    ".simguia li.hecho{color:var(--sim-ok);padding:2px 7px;}",
+    ".simraiz .simguia li button{width:100%;text-align:left;border-color:transparent;padding:2px 6px;}",
+    ".simraiz .simguia li.actual button{border-color:var(--sim-acento);font-weight:600;}",
+    ".simguia p{margin:3px 7px 5px;color:var(--sim-tenue);line-height:1.35;}",
+    ".simguia .ocultar{font-size:12px;margin-top:4px;}",
+    ".simraiz button.verguia{width:100%;margin-bottom:10px;}",
     ".simprop h2 small{font-size:12px;font-weight:400;color:var(--sim-tenue);}",
     ".simprop .tabs,.siminf .tabs{display:flex;gap:4px;flex-wrap:wrap;align-items:center;margin-bottom:8px;}",
     ".simprop label{display:block;font-size:12px;color:var(--sim-tenue);margin:8px 0 3px;}",
@@ -2495,9 +2510,113 @@ var UI = (function () {
     if (equipo.modelo === "firewall") { nuevo.reglas = [{ accion: "bloquear", origen: "0.0.0.0/0", destino: "0.0.0.0/0", entrada: "wan" }]; }
     if (tipo === "servidor") { nuevo.servicios = { dns: { zona: "red.local", recursivo: true, registros: [] } }; }
     lista.push(nuevo);
+    S.guias[id] = true;
+    delete S.guiaPaso[id];
+    S.pestañaProps = "config";
     reconstruirEstado(); renderTodo();
     seleccionar(id);
     registrar("topologia", "Se agregó " + nombre + " (" + tipo + ").");
+  }
+
+  /* ---------------- Guía de configuración ---------------- */
+
+  // En un laboratorio, un desafío o el modo Docente la guía no aparece: encontrar qué falta es el ejercicio.
+  function guiaPermitida() {
+    var esc = S.topologia.escenario;
+    var ejercicio = !!(esc && ((esc.objetivos && esc.objetivos.length) || esc.sectores || esc.requerimientos));
+    return S.modo !== "docente" && S.modo !== "desafio" && !ejercicio;
+  }
+
+  function bloqueGuia(d) {
+    if (!d || S.guias[d.id] === undefined || !guiaPermitida()) { return null; }
+    if (!S.guias[d.id]) {
+      var bVer = boton("Ver la guía de configuración", "simguia-ver verguia");
+      bVer.addEventListener("click", function () { S.guias[d.id] = true; renderPropiedades(); });
+      return bVer;
+    }
+    var pasos = Motor.guiaDeEquipo(S.topologia, d.id);
+    var caja = el("section", "simguia");
+    caja.setAttribute("aria-label", "Guía de configuración de " + (d.nombre || d.id));
+    var hechos = pasos.filter(function (p) { return p.hecho; }).length;
+    caja.appendChild(el("h3", "", "Guía de configuración <span>" + hechos + " de " + pasos.length + " pasos</span>"));
+    var pendientes = pasos.filter(function (p) { return !p.hecho; });
+    var obligatorios = pendientes.filter(function (p) { return !p.opcional; });
+    var actual = pendientes.filter(function (p) { return p.id === S.guiaPaso[d.id]; })[0] || obligatorios[0] || null;
+    var lista = el("ol", "");
+    pasos.forEach(function (p) {
+      var li = el("li", p.hecho ? "hecho" : (actual === p ? "actual" : ""));
+      li.setAttribute("data-paso", p.id);
+      if (p.hecho) {
+        li.innerHTML = "<span aria-hidden='true'>✓ </span>" + escapar(p.titulo) + "<span class='oculto-visual'> (hecho)</span>";
+      } else {
+        var b = boton((actual === p ? "→ " : "○ ") + p.titulo + (p.opcional ? " (opcional)" : ""));
+        if (actual === p) { b.setAttribute("aria-current", "step"); }
+        b.addEventListener("click", function () { irAlPaso(d, p); });
+        li.appendChild(b);
+        if (actual === p) { li.appendChild(el("p", "", escapar(p.motivo))); }
+      }
+      lista.appendChild(li);
+    });
+    caja.appendChild(lista);
+    if (!obligatorios.length) {
+      caja.appendChild(el("p", "lista", "Lo básico está. Probalo con un ping: el recorrido dice si algo no coincide."));
+    }
+    var bOcultar = boton("Ocultar la guía", "ocultar");
+    bOcultar.addEventListener("click", function () { S.guias[d.id] = false; renderPropiedades(); });
+    caja.appendChild(bOcultar);
+    return caja;
+  }
+
+  // Lo escrito en un campo cambia la guía sin redibujar el panel, que le sacaría el foco al campo.
+  function actualizarGuia() {
+    if (!S.prop || !S.topologia) { return; }
+    var vieja = S.prop.querySelector(".simguia");
+    if (!vieja) { return; }
+    var nueva = bloqueGuia(S.seleccionado ? buscarDisp(S.seleccionado) : null);
+    if (!nueva) { vieja.parentNode.removeChild(vieja); return; }
+    var conFocoEnGuia = vieja.contains(document.activeElement);
+    conFoco(S.prop, function () { vieja.parentNode.replaceChild(nueva, vieja); });
+    if (!conFocoEnGuia) { return; }
+    var destino = nueva.querySelector("button");
+    if (destino) { destino.focus(); }
+  }
+
+  // Abre la pestaña del paso y deja el foco en su campo.
+  function irAlPaso(d, p) {
+    S.guiaPaso[d.id] = p.id;
+    if (p.pestana) { S.pestañaProps = p.pestana; }
+    if (p.pestana === "config" && p.interfaz) { S.interfazEditada[d.id] = p.interfaz; }
+    renderPropiedades();
+    var destino = campoDelPaso(d, p);
+    if (!destino) { return; }
+    try {
+      destino.focus();
+      destino.scrollIntoView({ block: "nearest" });
+    } catch (e) { /* se sigue igual */ }
+  }
+
+  function campoDelPaso(d, p) {
+    function porRotulo(inicio) {
+      var rotulos = S.prop.querySelectorAll("label");
+      for (var i = 0; i < rotulos.length; i++) {
+        if (rotulos[i].textContent.indexOf(inicio) === 0 && rotulos[i].htmlFor) { return document.getElementById(rotulos[i].htmlFor); }
+      }
+      return null;
+    }
+    function marcado(clave) { return S.prop.querySelector("[data-guia='" + clave + "']"); }
+    if (p.campo === "ip") { return porRotulo("Dirección IP"); }
+    if (p.campo === "gateway") { return porRotulo("Puerta de enlace predeterminada"); }
+    if (p.campo === "dns") { return porRotulo("DNS"); }
+    if (p.campo === "encendido") { return marcado("encendido"); }
+    if (p.campo === "habilitada") { return marcado("hab-" + p.interfaz); }
+    if (p.campo === "nat") { return marcado("nat-" + p.interfaz); }
+    if (p.campo === "radio") { return marcado("radio-" + p.interfaz); }
+    if (p.campo === "ruta") {
+      var rutas = d.rutas || [];
+      for (var i = 0; i < rutas.length; i++) { if (!rutas[i].siguienteSalto) { return marcado("salto-" + i); } }
+      return marcado("ruta-defecto");
+    }
+    return null;
   }
 
   function borrarSeleccion() {
@@ -2718,6 +2837,8 @@ var UI = (function () {
       c.innerHTML = "<h2>Propiedades</h2><p style='font-size:13px'>Seleccioná un equipo o un cable del lienzo para configurarlo. Con el teclado: Tab hasta el equipo y Enter.</p>";
       return;
     }
+    var guia = bloqueGuia(d);
+    if (guia) { c.appendChild(guia); }
     var tabs = el("div", "tabs");
     tabs.setAttribute("role", "tablist");
     tabs.setAttribute("aria-label", "Propiedades de " + (d.nombre || d.id));
@@ -2892,6 +3013,7 @@ var UI = (function () {
     var labE = el("label", "enlinea");
     var chk = document.createElement("input");
     chk.type = "checkbox"; chk.checked = !!d.encendido;
+    chk.setAttribute("data-guia", "encendido");
     chk.addEventListener("change", function () {
       empujarHistorial(); d.encendido = chk.checked; reconstruirEstado(); renderTodo();
     });
@@ -3077,11 +3199,13 @@ var UI = (function () {
         var labR = etiqueta("Modo de radio de " + f.id, selR);
         labR.className = "oculto-visual";
         fila.appendChild(labR);
+        selR.setAttribute("data-guia", "radio-" + f.id);
         fila.appendChild(selR);
       }
       var labH = el("label", "enlinea");
       var sw = document.createElement("input");
       sw.type = "checkbox"; sw.checked = !!f.habilitada;
+      sw.setAttribute("data-guia", "hab-" + f.id);
       sw.addEventListener("change", function () {
         empujarHistorial(); f.habilitada = sw.checked;
         reconstruirEstado(); renderTodo();
@@ -3098,6 +3222,7 @@ var UI = (function () {
         if (enElBridge(d, f)) { labN.style.display = "none"; }
         var cbNat = document.createElement("input");
         cbNat.type = "checkbox"; cbNat.checked = !!f.nat;
+        cbNat.setAttribute("data-guia", "nat-" + f.id);
         cbNat.addEventListener("change", function () {
           empujarHistorial();
           if (cbNat.checked) { f.nat = true; } else { delete f.nat; }
@@ -3308,6 +3433,7 @@ var UI = (function () {
       d.rutas.push({ destino: "0.0.0.0", prefijo: 0, siguienteSalto: "" });
       reconstruirEstado(); renderPropiedades();
     });
+    bDef.setAttribute("data-guia", "ruta-defecto");
     c.appendChild(bDef);
     var bUna = boton("Agregar ruta");
     bUna.addEventListener("click", function () {
@@ -3316,7 +3442,7 @@ var UI = (function () {
       reconstruirEstado(); renderPropiedades();
     });
     c.appendChild(bUna);
-    (d.rutas || []).forEach(function (r) {
+    (d.rutas || []).forEach(function (r, i) {
       campoTexto(c, "Destino", r.destino, function (v) { r.destino = v.trim(); reconstruirEstado(); }, function (v) { return Red.esIpValida(v.trim()); }, true);
       campoTexto(c, "Prefijo (0–32)", String(r.prefijo), function (v) {
         var n = parseInt(v, 10);
@@ -3324,7 +3450,7 @@ var UI = (function () {
       });
       campoTexto(c, "Siguiente salto", r.siguienteSalto || "", function (v) {
         r.siguienteSalto = v.trim() === "" ? null : v.trim(); reconstruirEstado();
-      }, function (v) { return v.trim() === "" || Red.esIpValida(v.trim()); }, true);
+      }, function (v) { return v.trim() === "" || Red.esIpValida(v.trim()); }, true).setAttribute("data-guia", "salto-" + i);
     });
   }
 
@@ -7139,6 +7265,7 @@ var UI = (function () {
   // Cambia la red del lienzo: se corta la animación en curso, no queda una prueba que repetir sobre
   // ella y se descartan las fallas en vivo, el DNS real y la selección.
   function olvidarRed() {
+    S.guias = {}; S.guiaPaso = {};
     if (S.capaAnim) { S.animToken++; limpiarAnim(); }
     if (S.ultimo && S.ultimo.colision) { S.ultimo = null; }
     if (S.ultimo) { S.ultimo.otraRed = true; }
