@@ -467,7 +467,8 @@ var UI = (function () {
     ".filaif .datos{flex:1;min-width:10em;}",
     ".simprop .bridge{padding-bottom:8px;margin-bottom:4px;border-bottom:1px solid var(--sim-borde);}",
     ".simprop .bridge p{font-size:12px;margin:4px 0;}",
-    ".simprop .bridge p b{font-size:14px;}",
+    ".simprop h3{font-size:14px;margin:10px 0 4px;}",
+    ".simprop .bridge h3{margin-top:4px;}",
     ".simprop .bridge .tenue{color:var(--sim-tenue);}",
     ".filaif label{margin:0;}",
     ".filaif select{width:auto;}",
@@ -554,6 +555,9 @@ var UI = (function () {
     ".tablacap tr.p-udp{background:rgba(218,238,255,.45);}",
     ".tablacap tr.sel{background:var(--sim-acento);color:var(--sim-sobreacento);}",
     ".tablacap tr:focus{outline:none;}",
+    ".tablacap.ventana tr{height:22px;}",
+    ".tablacap.ventana td{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:280px;}",
+    ".tablacap tr.relleno td{padding:0;border:0;}",
     ".tablacap tr:focus-visible{outline:2px solid var(--sim-acento);outline-offset:-2px;}",
     ".tablacap tr.sel:focus-visible{outline-color:var(--sim-sobreacento);}",
     ".detallecap{border:1px solid var(--sim-borde);border-radius:8px;padding:8px 10px;font-size:12px;line-height:1.6;overflow:auto;}",
@@ -582,7 +586,7 @@ var UI = (function () {
     ".linpaso.choca .marca{color:var(--sim-mal);}",
     ".intentos{border-collapse:collapse;margin-top:6px;font-size:12px;}",
     ".intentos caption{text-align:left;color:var(--sim-tenue);padding-bottom:2px;}",
-    ".intentos th,.intentos td{border:1px solid var(--sim-borde);padding:2px 8px;text-align:center;}",
+    ".intentos th,.intentos td{border:1px solid var(--sim-borde);padding:2px 8px;text-align:center;font-variant-numeric:tabular-nums;}",
     ".intentos tr.choca td{color:var(--sim-mal);font-weight:700;}",
     ".ctl-anim{display:inline-flex;align-items:center;gap:6px;font-style:normal;flex-wrap:wrap;}",
     ".ctl-anim select,.ctl-anim button{font-size:12px;padding:2px 6px;}",
@@ -1097,6 +1101,8 @@ var UI = (function () {
     var svgNS = "http://www.w3.org/2000/svg";
     var svg = document.createElementNS(svgNS, "svg");
     svg.setAttribute("class", "lienzo");
+    // Nombres de equipos y puertos, IP y MAC: el traductor del navegador no los toca.
+    svg.setAttribute("translate", "no");
     svg.id = "sim-lienzo";
     svg.setAttribute("tabindex", "0");
     svg.setAttribute("role", "application");
@@ -2132,7 +2138,8 @@ var UI = (function () {
     S.aviso.hidden = false;
     anunciar(texto);
     clearTimeout(S.temporizadorAviso);
-    S.temporizadorAviso = setTimeout(function () { S.aviso.hidden = true; }, 2800);
+    var duracion = Math.min(9000, Math.max(2800, String(texto).length * 55));
+    S.temporizadorAviso = setTimeout(function () { S.aviso.hidden = true; }, duracion);
   }
 
   function actualizarCelular() {
@@ -2901,7 +2908,7 @@ var UI = (function () {
     var miembros = (d.interfaces || []).filter(function (f) { return f.enBridge; }).map(function (f) { return f.id; });
     var caja = el("div", "bridge");
     caja.setAttribute("data-foco", "bridge");
-    caja.appendChild(el("p", "", "<b>Bridge</b>"));
+    caja.appendChild(el("h3", "", "Bridge"));
     if (!d.bridge) {
       caja.appendChild(el("p", "tenue", "Sin bridge: cada puerto es ruteado y lleva su propia red. Marcá «en el bridge» en dos o más puertos " +
         "para que conmuten entre sí como un switch y compartan una sola IP, como en la configuración de fábrica de un MikroTik."));
@@ -3066,7 +3073,7 @@ var UI = (function () {
     });
     c.appendChild(el("p", "", "DNS (UDP 53): " + (d.servicios.dns ? "<b>activo</b>, con la zona " + escapar(d.servicios.dns.zona || "—") + "." : "no da DNS (se activa en la pestaña DNS).")));
     var propios = lista.filter(function (x) { return !catalogo.some(function (k) { return k.protocolo === x.protocolo && k.puerto === Number(x.puerto); }); });
-    c.appendChild(el("p", "", "<b>Otros servicios</b>"));
+    c.appendChild(el("h3", "", "Otros servicios"));
     if (!propios.length) { c.appendChild(el("p", "tenue", "Ninguno. Por ejemplo, una intranet en TCP 8080.")); }
     propios.forEach(function (x) {
       var fila = el("div", "filaif", "<span class='datos'>" + escapar(x.nombre || "Servicio") + " · " + escapar(x.protocolo.toUpperCase() + " " + x.puerto) + "</span>");
@@ -4256,7 +4263,7 @@ var UI = (function () {
     ctrl.appendChild(bIni);
     var bLim = boton("Limpiar");
     bLim.disabled = !cap.paquetes.length;
-    bLim.addEventListener("click", function () { cap.paquetes = []; cap.n = 0; cap.sel = null; cap.descartados = 0; renderInferior(); });
+    bLim.addEventListener("click", function () { cap.paquetes = []; cap.n = 0; cap.sel = null; cap.descartados = 0; cap.desplazamiento = 0; renderInferior(); });
     ctrl.appendChild(bLim);
     var inF = document.createElement("input");
     inF.type = "text"; inF.value = cap.filtro; inF.className = "filtrocap";
@@ -4265,7 +4272,7 @@ var UI = (function () {
     ctrl.appendChild(etiqueta("Filtro", inF)); ctrl.appendChild(inF);
     var filtro = armarFiltro(cap.filtro);
     inF.classList.toggle("invalido", !filtro);
-    inF.addEventListener("change", function () { cap.filtro = inF.value; cap.sel = null; renderInferior(); });
+    inF.addEventListener("change", function () { cap.filtro = inF.value; cap.sel = null; cap.desplazamiento = 0; renderInferior(); });
     var visibles = filtro ? cap.paquetes.filter(function (p) { return filtro(p.t); }) : [];
     ctrl.appendChild(el("span", "tenue", cap.paquetes.length + (cap.paquetes.length === 1 ? " paquete" : " paquetes") +
       (cap.filtro && filtro ? " · " + visibles.length + " con el filtro" : "") +
@@ -4286,25 +4293,47 @@ var UI = (function () {
       var tabla = el("table", "tablacap");
       tabla.setAttribute("role", "grid");
       tabla.setAttribute("aria-label", "Paquetes capturados");
+      tabla.setAttribute("aria-rowcount", String(visibles.length + 1));
+      tabla.setAttribute("translate", "no");
       tabla.innerHTML = "<thead><tr><th>N.º</th><th>Origen</th><th>Destino</th><th>Protocolo</th><th>Info</th>" +
         (cap.enlace ? "" : "<th>Tramo</th>") + "</tr></thead>";
       var tb = document.createElement("tbody");
-      visibles.forEach(function (p) {
+      var columnas = cap.enlace ? 5 : 6;
+      function fila(p, k) {
         var t = p.t;
         var tr = document.createElement("tr");
         tr.className = (p.n === cap.sel ? "sel " : "") + "p-" + transporteDe(t).toLowerCase();
         tr.tabIndex = 0;
+        tr.setAttribute("aria-rowindex", String(k + 2));
         tr.setAttribute("aria-selected", String(p.n === cap.sel));
         tr.setAttribute("data-foco", "cap-" + p.n);
         tr.innerHTML = "<td>" + p.n + "</td><td>" + escapar(t.ipOrigen) + "</td><td>" + escapar(t.ipDestino) + "</td><td>" +
           escapar(t.protocolo || "ICMP") + "</td><td>" + escapar(t.info || t.mensaje || "") + "</td>" +
           (cap.enlace ? "" : "<td>" + escapar(nombreDe(t.de.dispositivo) + " → " + nombreDe(t.a.dispositivo) + (t.medio === "internet" ? " (cruza internet)" : "")) + "</td>");
-        function elegir() { cap.sel = p.n; renderInferior(); resaltarTrama(t); }
+        function elegir() { cap.sel = p.n; cap.focoPendiente = "cap-" + p.n; renderInferior(); resaltarTrama(t); }
         tr.addEventListener("click", elegir);
         tr.addEventListener("keydown", function (ev) {
           if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); elegir(); }
         });
-        tb.appendChild(tr);
+        return tr;
+      }
+      if (visibles.length <= CAPTURA_SIN_VENTANA) {
+        visibles.forEach(function (p, k) { tb.appendChild(fila(p, k)); });
+      } else {
+        ventanaCaptura(cont, tabla, tb, visibles, fila, columnas);
+      }
+      // Con las flechas se pasa de un paquete a otro (también a los que todavía no se dibujaron).
+      tb.addEventListener("keydown", function (ev) {
+        var paso = { ArrowDown: 1, ArrowUp: -1, PageDown: 10, PageUp: -10 }[ev.key];
+        if (ev.key === "Home") { paso = -visibles.length; } else if (ev.key === "End") { paso = visibles.length; }
+        var actual = document.activeElement && document.activeElement.getAttribute("aria-rowindex");
+        if (!paso || !actual) { return; }
+        ev.preventDefault();
+        var k = Math.max(0, Math.min(visibles.length - 1, Number(actual) - 2 + paso));
+        var destino = visibles[k];
+        if (tabla._mostrar) { tabla._mostrar(k); }
+        var tr = tb.querySelector("[data-foco='cap-" + destino.n + "']");
+        if (tr) { tr.focus(); }
       });
       tabla.appendChild(tb);
       cont.appendChild(tabla);
@@ -5117,6 +5146,7 @@ var UI = (function () {
 
   function renderConsola() {
     var cons = el("pre", "consola");
+    cons.setAttribute("translate", "no");
     cons.setAttribute("aria-label", "Consola");
     S.consola = cons;
     setTimeout(refrescarConsola, 0);
@@ -5126,6 +5156,95 @@ var UI = (function () {
   // La captura guarda los últimos MAX_CAPTURA paquetes: en una clase larga la
   // tabla se redibuja entera y, sin tope, la pestaña se pone lenta.
   var MAX_CAPTURA = 500;
+
+  // Hasta esta cantidad de paquetes la tabla se dibuja entera; con más, sólo las filas a la vista.
+  var CAPTURA_SIN_VENTANA = 50;
+  var ALTO_FILA_CAPTURA = 22;
+
+  // Dibuja en la tabla sólo las filas que se ven (más un margen) y dos filas vacías que ocupan el lugar
+  // del resto, así la barra de desplazamiento sigue midiendo la captura entera. Recuerda dónde quedó.
+  function ventanaCaptura(cont, tabla, tb, visibles, fila, columnas) {
+    var cap = S.captura;
+    var margen = 15;
+    tabla.classList.add("ventana");
+    function relleno(filas) {
+      var tr = document.createElement("tr");
+      tr.className = "relleno";
+      tr.setAttribute("aria-hidden", "true");
+      var td = document.createElement("td");
+      td.colSpan = columnas;
+      td.style.height = (filas * ALTO_FILA_CAPTURA) + "px";
+      tr.appendChild(td);
+      return tr;
+    }
+    // El que se desplaza es el primer antepasado con barra (en la franja, el cuerpo de la pestaña).
+    function desplazable() {
+      for (var e = tabla.parentElement; e && e !== document.body; e = e.parentElement) {
+        var oy = getComputedStyle(e).overflowY;
+        if ((oy === "auto" || oy === "scroll") && e.scrollHeight > e.clientHeight + 1) { return e; }
+      }
+      return cont;
+    }
+    var pintado = "";
+    function pintar() {
+      var sc = desplazable();
+      var arriba = Math.max(0, sc.getBoundingClientRect().top - tb.getBoundingClientRect().top);
+      var alto = sc.clientHeight || 400;
+      var desde = Math.max(0, Math.floor(arriba / ALTO_FILA_CAPTURA) - margen);
+      var hasta = Math.min(visibles.length, Math.ceil((arriba + alto) / ALTO_FILA_CAPTURA) + margen);
+      if (pintado === desde + ":" + hasta) { return; }
+      pintado = desde + ":" + hasta;
+      var foco = document.activeElement && tb.contains(document.activeElement) ? document.activeElement.getAttribute("data-foco") : null;
+      tb.innerHTML = "";
+      if (desde > 0) { tb.appendChild(relleno(desde)); }
+      for (var k = desde; k < hasta; k++) { tb.appendChild(fila(visibles[k], k)); }
+      if (hasta < visibles.length) { tb.appendChild(relleno(visibles.length - hasta)); }
+      if (foco) { var f = tb.querySelector("[data-foco='" + foco + "']"); if (f) { f.focus({ preventScroll: true }); } }
+    }
+    // Lleva la fila k a la vista (la usan las flechas).
+    tabla._mostrar = function (k) {
+      var sc = desplazable();
+      var y = tb.getBoundingClientRect().top - sc.getBoundingClientRect().top + k * ALTO_FILA_CAPTURA;
+      if (y < 0) { sc.scrollTop += y; }
+      else if (y + ALTO_FILA_CAPTURA > sc.clientHeight) { sc.scrollTop += y + ALTO_FILA_CAPTURA - sc.clientHeight; }
+      pintar();
+    };
+    // Primero se dibuja un tramo; ya en la página se busca quién se desplaza, se vuelve adonde estaba y
+    // se redibuja con el alto real. El que se desplaza puede sobrevivir al redibujo: guarda una sola escucha.
+    // El primer tramo ya es el de donde estaba la vista, así el foco vuelve a su fila al redibujar.
+    var inicio0 = Math.max(0, Math.floor((cap.desplazamiento || 0) / ALTO_FILA_CAPTURA) - 2 * margen);
+    var fin0 = Math.min(visibles.length, inicio0 + 40 + 3 * margen);
+    if (inicio0 > 0) { tb.appendChild(relleno(inicio0)); }
+    for (var k0 = inicio0; k0 < fin0; k0++) { tb.appendChild(fila(visibles[k0], k0)); }
+    if (fin0 < visibles.length) { tb.appendChild(relleno(visibles.length - fin0)); }
+    requestAnimationFrame(function () {
+      if (!tabla.isConnected) { return; }
+      var sc = desplazable();
+      sc._pintarCaptura = pintar;
+      sc._tablaCaptura = tabla;
+      if (!sc._escuchaCaptura) {
+        sc._escuchaCaptura = true;
+        var pedido = false;
+        sc.addEventListener("scroll", function () {
+          // Otra pestaña usa el mismo cuerpo: sólo cuenta mientras la tabla siga en la página.
+          if (!sc._tablaCaptura || !sc._tablaCaptura.isConnected) { return; }
+          S.captura.desplazamiento = sc.scrollTop;
+          if (pedido) { return; }
+          pedido = true;
+          requestAnimationFrame(function () { pedido = false; if (sc._pintarCaptura) { sc._pintarCaptura(); } });
+        });
+      }
+      if (cap.desplazamiento) { sc.scrollTop = cap.desplazamiento; }
+      pintado = "";
+      pintar();
+      // Si al redibujar la fila elegida no estaba, el foco vuelve ahora.
+      if (cap.focoPendiente) {
+        var f = tb.querySelector("[data-foco='" + cap.focoPendiente + "']");
+        if (f && (!document.activeElement || document.activeElement === document.body)) { f.focus({ preventScroll: true }); }
+        cap.focoPendiente = null;
+      }
+    });
+  }
 
   function capturarTramas(lista) {
     var cap = S.captura;

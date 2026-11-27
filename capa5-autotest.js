@@ -1613,12 +1613,16 @@ var Autotest = (function () {
       while (lote.length < 520) { lote = lote.concat(tramas); }
       UI.capturarTramas(lote);
       verCaptura();
-      var filas = inf.querySelectorAll(".tablacap tbody tr");
-      if (filas.length !== 500) { prob.push("la tabla tiene " + filas.length + " paquetes y el tope es 500"); }
+      // Con muchos paquetes la tabla dibuja sólo las filas a la vista: el total lo dice aria-rowcount.
+      var tablaCap = inf.querySelector(".tablacap");
+      var filas = inf.querySelectorAll(".tablacap tbody tr:not(.relleno)");
+      var total = tablaCap ? Number(tablaCap.getAttribute("aria-rowcount")) - 1 : 0;
+      if (total !== 500) { prob.push("la tabla tiene " + total + " paquetes y el tope es 500"); }
+      if (filas.length > 150) { prob.push("dibuja " + filas.length + " filas de una vez, en lugar de sólo las que se ven"); }
       if (estado().indexOf("se muestran los últimos 500") < 0) { prob.push("no avisa que se muestran los últimos 500"); }
       var primero = filas.length ? Number(filas[0].cells[0].textContent) : 0;
-      var ultimo = filas.length ? Number(filas[filas.length - 1].cells[0].textContent) : 0;
-      if (filas.length && (ultimo !== lote.length || ultimo - primero !== 499)) { prob.push("la numeración no sigue (" + primero + " a " + ultimo + ")"); }
+      var segundo = filas.length > 1 ? Number(filas[1].cells[0].textContent) : 0;
+      if (filas.length && (primero !== lote.length - 499 || segundo !== primero + 1)) { prob.push("la numeración no sigue (empieza en " + primero + ")"); }
       // Elegir el más viejo y capturar más: se descarta y la elección se borra.
       if (filas.length) {
         filas[0].click();
@@ -1650,7 +1654,7 @@ var Autotest = (function () {
       if (!reducido) { prob.push("el movimiento reducido no apaga transiciones y animaciones"); }
 
       if (prob.length === 0) {
-        return fila(28, nombre, true, "Captura en 500 (del " + primero + " al " + ultimo + ") con aviso; el paquete descartado deja de estar elegido; textos de ejemplo con «…»; text-wrap y movimiento reducido.");
+        return fila(28, nombre, true, "Captura en 500 (del " + primero + " al " + (primero + 499) + "), dibujando " + filas.length + " filas a la vista, con aviso; el paquete descartado deja de estar elegido; textos de ejemplo con «…»; text-wrap y movimiento reducido.");
       }
       return fila(28, nombre, false, "Falla: " + prob.join("; ") + ".");
     } catch (e) {

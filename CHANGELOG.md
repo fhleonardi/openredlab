@@ -10,6 +10,14 @@ Los números siguen la forma MAYOR.MENOR.PARCHE:
 
 Los archivos de red llevan el número de su formato (`version`) y la versión del simulador que los exportó (`generador`). Un archivo de un formato anterior se actualiza solo al abrirlo.
 
+## 1.10.1 — 2026-11-27
+
+- **La captura no se traba con muchos paquetes.** Con más de 50 paquetes, la tabla dibuja sólo las filas que se ven y las demás a medida que se baja, así refrescarla durante una captura no pesa en las compus del aula. Con las flechas, Re Pág, Av Pág, Inicio y Fin se pasa de un paquete a otro, y al volver a la pestaña la tabla queda donde estaba.
+- **Los avisos se pueden leer.** El cartel que aparece arriba del lienzo duraba siempre 2,8 segundos. Ahora dura según el largo del texto, hasta 9 segundos.
+- **Títulos de sección.** «Bridge» y «Otros servicios» son títulos de verdad: el lector de pantalla los ofrece para saltar de uno a otro.
+- **El traductor del navegador no toca lo técnico.** El lienzo (nombres de equipos y puertos, IP, MAC), la consola y la tabla de la captura quedan sin traducir.
+- **Números alineados** en la tabla de esperas de las colisiones.
+
 ## 1.10.0 — 2026-11-27
 
 - **Bridge entre puertos del router, como en un MikroTik.** Un router puede agrupar puertos en un **bridge**. En la pestaña Interfaces, cada puerto tiene la casilla «en el bridge» y hay una sección con la IP y la máscara del bridge. Los puertos del bridge conmutan entre sí como un switch interno y comparten una sola IP. Los demás puertos siguen ruteados, cada uno con su red.
