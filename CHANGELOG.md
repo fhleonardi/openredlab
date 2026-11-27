@@ -10,6 +10,10 @@ Los números siguen la forma MAYOR.MENOR.PARCHE:
 
 Los archivos de red llevan el número de su formato (`version`) y la versión del simulador que los exportó (`generador`). Un archivo de un formato anterior se actualiza solo al abrirlo.
 
+## 1.10.2 — 2026-11-27
+
+- **La animación sigue a los equipos.** Al mover un equipo (arrastrándolo, con las flechas o con Deshacer y Rehacer), el recorrido del DORA, la prueba de colisión y el paquete que quedó en el lienzo se vuelven a dibujar sobre los cables en su lugar nuevo. Antes quedaban donde estaban los equipos al hacer la prueba.
+
 ## 1.10.1 — 2026-11-27
 
 - **La captura no se traba con muchos paquetes.** Con más de 50 paquetes, la tabla dibuja sólo las filas que se ven y las demás a medida que se baja, así refrescarla durante una captura no pesa en las compus del aula. Con las flechas, Re Pág, Av Pág, Inicio y Fin se pasa de un paquete a otro, y al volver a la pestaña la tabla queda donde estaba.

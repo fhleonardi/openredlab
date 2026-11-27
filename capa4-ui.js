@@ -1608,6 +1608,7 @@ var UI = (function () {
     });
     resolverSolapes(etiquetas);
     dibujarAsas();
+    reubicarAnim();
     aplicarVista();
     actualizarCelular();
   }
@@ -4440,7 +4441,8 @@ var UI = (function () {
   }
 
   // La animación de la prueba: una fase por evento del Motor. Mismo manejo que la del DORA.
-  var colAnim = { token: 0, activo: false, pausado: false, res: null, i: 0, t: 0, paso: null };
+  // `dibujada` guarda la fase y el avance del último cuadro, para rehacerlo si se mueven equipos.
+  var colAnim = { token: 0, activo: false, pausado: false, res: null, i: 0, t: 0, paso: null, dibujada: null };
   var COLOR_ESTACION = { a: "#3987e5", b: "#a855f7" };
 
   function avisarEstadoColision() {
@@ -4473,6 +4475,7 @@ var UI = (function () {
     colAnim.token++;
     colAnim.activo = false;
     colAnim.pausado = false;
+    colAnim.dibujada = null;
     marcarPasoColision(-1);
     avisarEstadoColision();
   }
@@ -4539,6 +4542,7 @@ var UI = (function () {
     var e = res && res.eventos[i];
     if (!e || !S.capaAnim) { return; }
     vaciarCapaAnim();
+    colAnim.dibujada = { i: i, avance: avance };
     if (e.tipo === "envio" || e.tipo === "duplex") {
       e.rutas.forEach(function (r) {
         // En full dúplex las dos señales se cruzan: van apenas separadas para que se vean las dos.
@@ -6144,6 +6148,17 @@ var UI = (function () {
     while (S.capaAnim.firstChild) { S.capaAnim.removeChild(S.capaAnim.firstChild); }
   }
 
+  // renderLienzo rehace cables y equipos; lo que quedó en la capa de animación (el DORA, la
+  // prueba de colisión o el paquete) se rehace también, si no queda colgado donde estaban.
+  function reubicarAnim() {
+    if (!S.capaAnim || !dhcpAnim || !colAnim || !animador) { return; }
+    try {
+      if (dhcpAnim.dibujado >= 0 && dhcpAnim.msgs[dhcpAnim.dibujado]) { dibujarMensajeDhcp(dhcpAnim.dibujado, true); }
+      if (colAnim.dibujada && !colAnim.activo) { dibujarFaseColision(colAnim.dibujada.i, colAnim.dibujada.avance); }
+      animador.reubicar();
+    } catch (e) { registrar("animacion", "Error al reubicar la animación: " + e.message); }
+  }
+
   function limpiarAnim() {
     detenerColision();
     detenerDhcp();
@@ -6312,7 +6327,7 @@ var UI = (function () {
 
   // Dibujo fijo de un mensaje: la inundación punteada, el camino útil en trazo firme y el
   // nombre del mensaje sobre quien lo emite. Deja en dhcpAnim.ondas lo que se va a animar.
-  function dibujarMensajeDhcp(k) {
+  function dibujarMensajeDhcp(k, silencioso) {
     vaciarCapaAnim();
     dhcpAnim.puntos = [];
     var m = dhcpAnim.msgs[k];
@@ -6341,6 +6356,7 @@ var UI = (function () {
     dhcpAnim.ondas = ondas;
     dhcpAnim.dibujado = k;
     marcarMensajeDhcp(k);
+    if (silencioso) { return; }
     registrar("dhcp", "DORA sobre el lienzo: " + etiquetaDhcp(m) + ", " + nombreDe(m.origen) + " \u2192 " +
       (m.destino === "broadcast" ? "toda la red" : nombreDe(m.destino)) + ".");
   }
@@ -6512,6 +6528,7 @@ var UI = (function () {
     this.tActual = 0;
     this.velocidad = 1;
     this.idxActual = 0;
+    this.ultimoAvance = 0;
   }
 
   // Las tramas del Motor traen de/a (y `atraviesa`); los pasos textuales no.
@@ -6534,7 +6551,7 @@ var UI = (function () {
       });
       if (puntos.length < 2) { return; }
       var dur = seg * (puntos.length - 1);
-      self.timeline.push({ idx: idx, color: ROTULO_TRAMA[clave][0], negativa: clave === "rechazo", puntos: puntos, tiempoInicio: t, tiempoFin: t + dur });
+      self.timeline.push({ idx: idx, color: ROTULO_TRAMA[clave][0], negativa: clave === "rechazo", ids: ids, puntos: puntos, tiempoInicio: t, tiempoFin: t + dur });
       t += dur;
     });
   };
@@ -6551,6 +6568,7 @@ var UI = (function () {
       this.marca.setAttribute("class", "paquete-anim");
       S.capaAnim.appendChild(this.marca);
     }
+    this.ultimoAvance = avance;
     var tramos = item.puntos.length - 1;
     var pos = Math.max(0, Math.min(avance, 1)) * tramos;
     var i = Math.min(Math.floor(pos), tramos - 1);
@@ -6644,6 +6662,21 @@ var UI = (function () {
     cruz.textContent = "\u2717";
     S.capaAnim.appendChild(cruz);
     this.cruz = cruz;
+  };
+
+  // Se movió algún equipo: los recorridos toman las posiciones nuevas. Si la animación
+  // ya terminó (o está en pausa), el paquete y la ✗ se vuelven a ubicar donde quedaron.
+  AnimadorPaquetes.prototype.reubicar = function () {
+    if (!this.timeline.length) { return; }
+    this.timeline.forEach(function (it) {
+      var puntos = [];
+      it.ids.forEach(function (id) { var d = buscarDisp(id); if (d) { puntos.push(puntoEn(d)); } });
+      // Si se borraron equipos y no queda tramo, se conservan los puntos de antes.
+      if (puntos.length >= 2) { it.puntos = puntos; }
+    });
+    if (this.activo || !this.marca || this.marca.parentNode !== S.capaAnim) { return; }
+    this.dibujarEn(this.idxActual, this.ultimoAvance);
+    if (this.cruz) { this.marcarFalla(); }
   };
 
   AnimadorPaquetes.prototype.quitarCruz = function () {
