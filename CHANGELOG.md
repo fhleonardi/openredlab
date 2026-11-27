@@ -12,7 +12,7 @@ Los archivos de red llevan el número de su formato (`version`) y la versión de
 
 ## 1.12.0 — 2026-11-27
 
-- **Guía de configuración al agregar un equipo.** El panel de la derecha muestra los pasos de ese tipo de equipo (cables, IP y máscara, puerta de enlace, DNS, rutas, NAT), explica para qué sirve el que falta, lleva a su campo y lo marca cuando está hecho. No propone direcciones. Se puede ocultar, y no aparece en laboratorios, desafíos ni en modo Docente.
+- **Guía de configuración al agregar un equipo.** El panel de la derecha muestra los pasos de ese tipo de equipo (cables, IP y máscara, puerta de enlace, DNS, rutas, NAT), explica para qué sirve el que falta, lleva a su campo y lo marca cuando está hecho. No propone direcciones. Un laboratorio sólo de fallas que se baja para el alumno queda marcado como ejercicio. Se puede ocultar, y no aparece en laboratorios, desafíos ni en modo Docente.
 - **Un equipo apagado se nombra.** Si nadie responde porque la puerta de enlace o el siguiente salto está apagado, o tiene el puerto deshabilitado, el diagnóstico (D10 o D22) dice cuál es, en lugar de «ningún router responde».
 
 ## 1.11.0 — 2026-11-27

@@ -2523,7 +2523,8 @@ var UI = (function () {
   // En un laboratorio, un desafío o el modo Docente la guía no aparece: encontrar qué falta es el ejercicio.
   function guiaPermitida() {
     var esc = S.topologia.escenario;
-    var ejercicio = !!(esc && ((esc.objetivos && esc.objetivos.length) || esc.sectores || esc.requerimientos));
+    var ejercicio = !!(esc && (esc.ejercicio || (esc.fallas || []).length || (esc.objetivos || []).length ||
+      (esc.requerimientos || []).length || (esc.sectores || []).length));
     return S.modo !== "docente" && S.modo !== "desafio" && !ejercicio;
   }
 
@@ -2587,7 +2588,8 @@ var UI = (function () {
     if (p.pestana) { S.pestañaProps = p.pestana; }
     if (p.pestana === "config" && p.interfaz) { S.interfazEditada[d.id] = p.interfaz; }
     renderPropiedades();
-    var destino = campoDelPaso(d, p);
+    // Sin campo al que ir, el foco se queda en el paso: el panel se acaba de redibujar.
+    var destino = campoDelPaso(d, p) || S.prop.querySelector(".simguia li[data-paso='" + p.id + "'] button");
     if (!destino) { return; }
     try {
       destino.focus();
@@ -2611,10 +2613,13 @@ var UI = (function () {
     if (p.campo === "habilitada") { return marcado("hab-" + p.interfaz); }
     if (p.campo === "nat") { return marcado("nat-" + p.interfaz); }
     if (p.campo === "radio") { return marcado("radio-" + p.interfaz); }
-    if (p.campo === "ruta") {
-      var rutas = d.rutas || [];
-      for (var i = 0; i < rutas.length; i++) { if (!rutas[i].siguienteSalto) { return marcado("salto-" + i); } }
-      return marcado("ruta-defecto");
+    if (p.campo === "bridge") { return S.prop.querySelector("[data-foco='bridge-" + p.interfaz + "']"); }
+    if (p.campo === "ruta" || p.campo === "ruta-nueva") {
+      var rutas = d.rutas || [], porDefecto = p.campo === "ruta";
+      for (var i = 0; i < rutas.length; i++) {
+        if (!rutas[i].siguienteSalto && (!porDefecto || Number(rutas[i].prefijo) === 0)) { return marcado("salto-" + i); }
+      }
+      return marcado(porDefecto ? "ruta-defecto" : "ruta-nueva");
     }
     return null;
   }
@@ -3436,6 +3441,7 @@ var UI = (function () {
     bDef.setAttribute("data-guia", "ruta-defecto");
     c.appendChild(bDef);
     var bUna = boton("Agregar ruta");
+    bUna.setAttribute("data-guia", "ruta-nueva");
     bUna.addEventListener("click", function () {
       empujarHistorial();
       d.rutas.push({ destino: "10.0.0.0", prefijo: 24, siguienteSalto: "" });

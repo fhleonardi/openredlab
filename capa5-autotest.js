@@ -1264,6 +1264,7 @@ var Autotest = (function () {
   function crit42() {
     var nombre = "La guía de configuración aparece al agregar un equipo, sigue lo que se carga, se oculta y no aparece en un ejercicio";
     var previo = modoActualDom();
+    var direccion = location.href;
     try {
       var prob = [];
       function panel() { return document.querySelector(".simprop"); }
@@ -1281,6 +1282,10 @@ var Autotest = (function () {
       if (!guia()) { return fila(42, nombre, false, "Falla: al agregar un equipo no aparece la guía."); }
       if (guia().textContent.indexOf("0 de 2 pasos") < 0) { prob.push("la nube nueva no muestra 0 de 2 pasos"); }
       if (/\d+\.\d+\.\d+\.\d+/.test(guia().textContent)) { prob.push("la guía sugiere una dirección"); }
+      var bCable = guia().querySelector("li[data-paso=cable] button");
+      if (bCable) { bCable.focus(); bCable.click(); }
+      var enfocado = document.activeElement;
+      if (!enfocado || !enfocado.closest || !enfocado.closest("li[data-paso=cable]")) { prob.push("un paso sin campo pierde el foco"); }
       var bIp = guia().querySelector("li[data-paso=ip] button");
       if (!bIp) { prob.push("no está el paso de la IP"); }
       else {
@@ -1304,6 +1309,21 @@ var Autotest = (function () {
       UI.setModo("docente");
       if (panel().querySelector(".simguia, .simguia-ver")) { prob.push("aparece en modo Docente"); }
       UI.setModo("topologia");
+      // Un laboratorio sólo de fallas (también el exportado para el alumno) no muestra la guía;
+      // una lista de sectores vacía no convierte a la red en un ejercicio.
+      [[{ fallas: [{ tipo: "equipo-apagado", dispositivo: "x" }] }, false], [{ objetivos: [], ejercicio: true }, false],
+        [{ requerimientos: [], sectores: [] }, true]].forEach(function (caso, i) {
+        var topo = vacia(); topo.escenario = caso[0];
+        UI.cargarTopologia(topo);
+        agregar("pc");
+        if (!!panel().querySelector("section.simguia") !== caso[1]) { prob.push("en el escenario " + (i + 1) + " la guía " + (caso[1] ? "no aparece" : "aparece")); }
+      });
+      // Sin internet, el paso de rutas lleva a «Agregar ruta», no a la ruta por defecto.
+      UI.cargarTopologia(vacia());
+      agregar("router");
+      var bRuta = guia() && guia().querySelector("li[data-paso=ruta] button");
+      if (bRuta) { bRuta.click(); }
+      if (!document.activeElement || document.activeElement.textContent !== "Agregar ruta") { prob.push("el paso de rutas no lleva a «Agregar ruta»"); }
       // Otra red: las guías eran de la anterior.
       UI.cargarTopologia(clonar(ejemploPorId("oficina-dns").topologia));
       var nodo = document.querySelector("svg .nodo");
@@ -1327,7 +1347,9 @@ var Autotest = (function () {
       return fila(42, nombre, false, "Falla: " + prob.join("; ") + ".");
     } catch (e) {
       return fila(42, nombre, false, "Excepción: " + e.message);
+      if (location.href !== direccion) { history.replaceState(null, "", direccion); }
     } finally {
+      try { history.replaceState(null, "", direccion); } catch (e0) { /* se sigue igual */ }
       try { UI.cargarTopologia(clonar(ejemploPorId("complejo").topologia)); } catch (e1) { /* se sigue igual */ }
       try { UI.setModo(previo); } catch (e2) { /* se sigue igual */ }
     }

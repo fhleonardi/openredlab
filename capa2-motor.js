@@ -1170,14 +1170,27 @@ var Motor = (function () {
   // cableado a ese segmento. Se mira como si estuviera encendido: apagado, no deja pasar tramas.
   function duenoApagado(estado, idSolicitante, ifSolicitante, ip) {
     var duenos = configuradosConIp(estado, ip);
+    // ¿Se llegaría si el equipo estuviera encendido y ese puerto habilitado?
+    function llegaria(dev, puerto, destino) {
+      var antes = { encendido: dev.encendido, habilitada: puerto.habilitada };
+      dev.encendido = true; puerto.habilitada = true;
+      var si = enMismoSegmento(estado, idSolicitante, ifSolicitante, dev.id, destino.id);
+      dev.encendido = antes.encendido; puerto.habilitada = antes.habilitada;
+      return si;
+    }
     for (var i = 0; i < duenos.length; i++) {
       var dev = duenos[i].dispositivo, iface = duenos[i].interfaz;
-      if (dev.id === idSolicitante || (dev.encendido && iface.habilitada)) { continue; }
-      var antes = { encendido: dev.encendido, habilitada: iface.habilitada };
-      dev.encendido = true; iface.habilitada = true;
-      var alcanzaria = enMismoSegmento(estado, idSolicitante, ifSolicitante, dev.id, iface.id);
-      dev.encendido = antes.encendido; iface.habilitada = antes.habilitada;
-      if (alcanzaria) { return { nombre: dev.nombre || dev.id, puerto: dev.encendido ? iface.id : null }; }
+      // Encender una PC no la convierte en puerta de enlace: para eso hace falta un router.
+      if (dev.id === idSolicitante || !esRouter(dev)) { continue; }
+      if (!dev.encendido || !iface.habilitada) {
+        if (llegaria(dev, iface, iface)) { return { nombre: dev.nombre || dev.id, puerto: dev.encendido ? iface.id : null }; }
+        continue;
+      }
+      if (!esInterfazBridge(iface)) { continue; }
+      var miembros = miembrosBridge(dev);
+      for (var m = 0; m < miembros.length; m++) {
+        if (!miembros[m].habilitada && llegaria(dev, miembros[m], iface)) { return { nombre: dev.nombre || dev.id, puerto: miembros[m].id }; }
+      }
     }
     return null;
   }
@@ -3714,6 +3727,13 @@ var Motor = (function () {
       pasos.push(p);
     }
     var puertos = d.interfaces || [];
+    // Una dirección 169.254.x.x es la que se pone solo quien no obtuvo respuesta por DHCP.
+    function autoconfigurada(ip) { return !!ip && Red.esIpValida(ip) && Red.clasificar(ip) === "apipa"; }
+    var SIN_DHCP = "Pidió la dirección por DHCP y ningún servidor respondió: la de autoconfiguración que tiene no sirve para salir de su cable.";
+    function enRed(f, ip) { return !!f.ip && Red.esIpValida(f.ip) && Red.mismaRed(f.ip, ip, f.prefijo); }
+    function pasoHabilitar(f) {
+      paso("if-" + f.id, "Habilitar " + f.id, false, "Deshabilitado, el puerto no envía ni recibe.", { pestana: "ifs", interfaz: f.id, campo: "habilitada" });
+    }
     function enlacesDelPuerto(f) {
       return (topologia.enlaces || []).filter(function (e) {
         return (e.a.dispositivo === d.id && e.a.interfaz === f.id) || (e.b.dispositivo === d.id && e.b.interfaz === f.id);
@@ -3748,6 +3768,7 @@ var Motor = (function () {
     }
 
     if (d.tipo === "ap") {
+      puertos.filter(function (f) { return !f.habilitada && (f.medio === "wireless" || conCable.indexOf(f) >= 0); }).forEach(pasoHabilitar);
       var radio = puertos.filter(function (f) { return f.medio === "wireless"; })[0];
       if (radio) {
         paso("radio", "Radio en modo ap", !radio.modoRadio || radio.modoRadio === "ap", "En modo ap sostiene la celda a la que se asocian los clientes.",
@@ -3765,10 +3786,12 @@ var Motor = (function () {
       pasoCable("Conectar la nube", "Por ese cable le llegan los paquetes del router de tu red." + tocar, 1);
       if (salida) {
         var motivoNube = "La nube necesita una IP en la misma red que el puerto del router que la conecta, con la misma máscara.";
-        var bien = !!salida.ip;
-        if (salida.ip) {
+        var bien = !!salida.ip && !autoconfigurada(salida.ip);
+        if (autoconfigurada(salida.ip)) { motivoNube = SIN_DHCP; }
+        if (bien) {
           vecinosDeDiseno(topologia, d.id, salida.id).forEach(function (v) {
-            var f = v.interfaz, quien = f.id + " de " + (v.dispositivo.nombre || v.dispositivo.id);
+            var f = v.interfaz, vecino = v.dispositivo.nombre || v.dispositivo.id, quien = f.id + " de " + vecino;
+            if (v.dispositivo.bridge && f.enBridge) { f = v.dispositivo.bridge; quien = "el bridge de " + vecino; }
             if (!bien || !f.ip) { return; }
             if (f.ip === salida.ip) { bien = false; motivoNube = "Tiene la misma IP que " + quien + ": cada puerto necesita la suya."; }
             else if (Number(f.prefijo) !== Number(salida.prefijo)) { bien = false; motivoNube = "Su máscara no es la misma que la de " + quien + "."; }
@@ -3785,37 +3808,47 @@ var Motor = (function () {
       var ruteados = conCable.filter(function (f) { return !(d.bridge && f.enBridge); });
       var delBridge = conCable.filter(function (f) { return d.bridge && f.enBridge; });
       ruteados.forEach(function (f) {
-        if (!f.habilitada) {
-          paso("if-" + f.id, "Habilitar " + f.id, false, "Deshabilitado, el puerto no envía ni recibe.", { pestana: "ifs", interfaz: f.id, campo: "habilitada" });
-          return;
-        }
-        paso("if-" + f.id, "IP y máscara en " + f.id, !!f.ip, "Es la dirección del router en esa red: la que sus equipos usan de puerta de enlace.",
+        if (!f.habilitada) { pasoHabilitar(f); return; }
+        paso("if-" + f.id, "IP y máscara en " + f.id, !!f.ip && !autoconfigurada(f.ip), autoconfigurada(f.ip) ? SIN_DHCP
+          : "Es la dirección del router en esa red: la que sus equipos usan de puerta de enlace.",
           { pestana: "config", interfaz: f.id, campo: "ip" });
       });
+      delBridge.filter(function (f) { return !f.habilitada; }).forEach(pasoHabilitar);
       if (delBridge.length) {
-        paso("if-bridge", "IP y máscara del bridge", !!d.bridge.ip, "Los puertos del bridge comparten una sola red y una sola IP.",
+        paso("if-bridge", "IP y máscara del bridge", !!d.bridge.ip && !autoconfigurada(d.bridge.ip),
+          autoconfigurada(d.bridge.ip) ? SIN_DHCP : "Los puertos del bridge comparten una sola red y una sola IP.",
           { pestana: "config", interfaz: "bridge", campo: "ip" });
       }
       if (!conCable.length) {
         paso("if", "IP y máscara en cada puerto conectado", false, "Primero conectá un cable: cada puerto conectado necesita su dirección.");
       }
-      var aInternet = ruteados.filter(function (f) {
+      var aInternet = conCable.filter(function (f) {
         return vecinosDeDiseno(topologia, d.id, f.id).some(function (v) { return v.dispositivo.tipo === "internet"; });
       });
       var rutas = d.rutas || [];
       var incompleta = rutas.some(function (r) { return !r.siguienteSalto; });
       if (aInternet.length) {
-        paso("ruta", "Ruta por defecto hacia internet", rutas.some(function (r) { return Number(r.prefijo) === 0 && r.siguienteSalto; }),
+        // La puerta de enlace del router, si está en una de sus redes, hace de ruta por defecto.
+        var redes = puertos.filter(function (f) { return f.habilitada && !(d.bridge && f.enBridge); });
+        if (d.bridge) { redes = redes.concat([d.bridge]); }
+        var porGateway = !!d.gateway && Red.esIpValida(d.gateway) && redes.some(function (f) { return enRed(f, d.gateway); });
+        paso("ruta", "Ruta por defecto hacia internet", porGateway || rutas.some(function (r) { return Number(r.prefijo) === 0 && r.siguienteSalto; }),
           "Lo que no es de sus redes tiene que salir hacia la nube: sin esa ruta, el router lo descarta. Lleva el siguiente salto.",
           { pestana: "rutas", campo: "ruta" });
         aInternet.forEach(function (f) {
+          if (d.bridge && f.enBridge) {
+            paso("nat-" + f.id, "Sacar " + f.id + " del bridge", d.bridge.nat === true,
+              "La nube está en un puerto del bridge. El puerto hacia internet va aparte, con su propia IP y su NAT.",
+              { pestana: "ifs", interfaz: f.id, campo: "bridge" });
+            return;
+          }
           paso("nat-" + f.id, "NAT en " + f.id, f.nat, "Cambia las IP privadas por la del puerto. Sin NAT, la respuesta de internet no vuelve.",
             { pestana: "ifs", interfaz: f.id, campo: "nat" });
         });
       } else {
         paso("ruta", "Rutas a redes que no tiene conectadas", rutas.length > 0 && !incompleta,
           incompleta ? "A una ruta le falta el siguiente salto." : "Sólo hacen falta si detrás de otro router hay redes que este no conoce.",
-          { opcional: !incompleta, pestana: "rutas", campo: "ruta" });
+          { opcional: !incompleta, pestana: "rutas", campo: "ruta-nueva" });
       }
       return pasos;
     }
@@ -3826,10 +3859,12 @@ var Motor = (function () {
       ? "Elegí el cable inalámbrico y conectalo a un punto de acceso."
       : "Sin conexión física no sale ningún paquete." + tocar), 1);
     if (!principal) { return pasos; }
-    paso("ip", "IP y máscara en " + principal.id + ", o DHCP", !!principal.ip, "La IP identifica al equipo y la máscara dice cuál es su red.",
+    paso("ip", "IP y máscara en " + principal.id + ", o DHCP", !!principal.ip && !autoconfigurada(principal.ip),
+      autoconfigurada(principal.ip) ? SIN_DHCP : "La IP identifica al equipo y la máscara dice cuál es su red.",
       { pestana: "config", interfaz: principal.id, campo: "ip" });
     var gw = d.gateway;
-    var gwAfuera = !!(gw && principal.ip && Red.esIpValida(gw) && !Red.mismaRed(principal.ip, gw, principal.prefijo));
+    var conIp = puertos.filter(function (f) { return f.habilitada && !!f.ip; });
+    var gwAfuera = !!(gw && Red.esIpValida(gw) && conIp.length && !conIp.some(function (f) { return enRed(f, gw); }));
     paso("gateway", "Puerta de enlace", gw && !gwAfuera, gwAfuera
       ? "No está en la red de la IP del equipo, así que no puede alcanzarla."
       : "A ella van los paquetes para otras redes. Hace falta para salir de la propia.",
@@ -4895,6 +4930,40 @@ var Motor = (function () {
       "encendido- cable+ ip+");
     comparar("guía: equipo inexistente", guiaDeEquipo(red(), "nadie"), []);
 
+    function pasoDe(topo, id, paso) { return guiaDeEquipo(topo, id).filter(function (p) { return p.id === paso; })[0] || null; }
+    var apipa = pasoDe(red(function (t, pc) { pc.interfaces[0].ip = "169.254.3.4"; pc.interfaces[0].prefijo = 16; pc.interfaces[0].modo = "dhcp"; }), "pc1", "ip");
+    comparar("guía: una dirección de autoconfiguración no cuenta", [apipa.hecho, /ningún servidor/.test(apipa.motivo)], [false, true]);
+    comparar("guía: la puerta de enlace del router vale como ruta por defecto",
+      pasoDe(red(function (t, pc, r1) { r1.rutas = []; r1.gateway = "200.45.7.1"; }), "r1", "ruta").hecho, true);
+    comparar("guía: una puerta de enlace fuera de sus redes no vale como ruta",
+      pasoDe(red(function (t, pc, r1) { r1.rutas = []; r1.gateway = "10.0.0.1"; }), "r1", "ruta").hecho, false);
+    comparar("guía: la puerta de enlace en la red de otra interfaz del equipo vale", pasoDe(red(function (t, pc) {
+      pc.interfaces.push({ id: "wlan0", nombre: "wlan0", medio: "wireless", habilitada: true, modo: "estatico", ip: "10.0.0.10", prefijo: 24, mac: "02:00:00:00:0a:0a" });
+      pc.gateway = "10.0.0.1";
+    }), "pc1", "gateway").hecho, true);
+    // La nube cableada a un puerto del bridge: la dirección es la del bridge.
+    function conBridge(cambios) {
+      return red(function (t, pc, r1, nube) {
+        r1.bridge = { ip: "200.45.7.2", prefijo: 30 };
+        r1.interfaces[1].enBridge = true; r1.interfaces[1].ip = null; delete r1.interfaces[1].nat;
+        if (cambios) { cambios(t, pc, r1, nube); }
+      });
+    }
+    comparar("guía: nube contra el bridge, bien", pasoDe(conBridge(), "nube", "ip").hecho, true);
+    var repetida = pasoDe(conBridge(function (t, pc, r1, nube) { nube.interfaces[0].ip = "200.45.7.2"; }), "nube", "ip");
+    comparar("guía: nube con la IP del bridge", [repetida.hecho, /misma IP que el bridge de/.test(repetida.motivo)], [false, true]);
+    comparar("guía: internet por un puerto del bridge pide ruta y sacarlo del bridge",
+      [resumen(conBridge(function (t, pc, r1) { r1.rutas = []; }), "r1"), (pasoDe(conBridge(), "r1", "nat-g0/1") || {}).titulo],
+      ["cable+ if-g0/0+ if-bridge+ ruta- nat-g0/1-", "Sacar g0/1 del bridge"]);
+    comparar("guía: un puerto del bridge deshabilitado se pide habilitar",
+      (pasoDe(conBridge(function (t, pc, r1) { r1.interfaces[1].habilitada = false; }), "r1", "if-g0/1") || {}).titulo, "Habilitar g0/1");
+    var ap = fabTopo([{ id: "ap1", tipo: "ap", nombre: "AP-1", x: 0, y: 0, encendido: true, interfaces: [
+      { id: "wlan0", nombre: "wlan0", medio: "wireless", habilitada: false, modo: "estatico", modoRadio: "ap", ip: null, prefijo: 24, mac: "02:00:00:00:0c:01" },
+      { id: "eth0", nombre: "eth0", medio: "ethernet", habilitada: true, modo: "estatico", ip: null, prefijo: 24, mac: "02:00:00:00:0c:02" }] }], []);
+    comparar("guía: la radio deshabilitada de un punto de acceso se pide habilitar", resumen(ap, "ap1").indexOf("if-wlan0-") >= 0, true);
+    comparar("guía: las rutas opcionales llevan a Agregar ruta",
+      pasoDe(red(function (t, pc, r1) { t.enlaces.pop(); r1.rutas = []; }), "r1", "ruta").campo, "ruta-nueva");
+
     function fallo(topo) {
       var r = ping(crearEstado(topo), "pc1", "8.8.8.8");
       var d = r.diagnostico;
@@ -4905,6 +4974,19 @@ var Motor = (function () {
     comparar("apagado: el router, puerta de enlace (D10)", fallo(red(function (t, pc, r1) { r1.encendido = false; })), ["D10", true, true]);
     comparar("apagado: sin dueño de la IP, el D22 de siempre",
       /está apagado/.test(ping(crearEstado(red(function (t, pc, r1, nube) { nube.interfaces[0].ip = null; })), "pc1", "8.8.8.8").diagnostico.explicacion), false);
+    var saltoPc = ping(crearEstado(red(function (t, pc, r1) {
+      r1.rutas[0].siguienteSalto = "200.45.7.1"; t.enlaces.pop();
+      var otro = fabPc("pc9", "200.45.7.1", 30, null, { encendido: false }); t.dispositivos.push(otro);
+      t.enlaces.push(fabEnlace("l9", "r1", "g0/1", "pc9", "eth0"));
+    })), "pc1", "8.8.8.8").diagnostico;
+    comparar("apagado: una PC no puede ser el siguiente salto, no se manda a encenderla",
+      [saltoPc.codigo, /Encendé/.test(saltoPc.sugerencia)], ["D22", false]);
+    var miembro = ping(crearEstado(red(function (t, pc, r1) {
+      r1.bridge = { ip: "192.168.10.1", prefijo: 24 };
+      r1.interfaces[0].enBridge = true; r1.interfaces[0].ip = null; r1.interfaces[0].habilitada = false;
+    })), "pc1", "8.8.8.8").diagnostico;
+    comparar("apagado: un puerto del bridge deshabilitado se nombra (D10)",
+      [miembro.codigo, /su puerto g0\/0 está deshabilitado/.test(miembro.explicacion)], ["D10", true]);
     comparar("apagado: un dueño sin cable no se culpa", /está apagado/.test(ping(crearEstado(red(function (t, pc, r1, nube) {
       nube.encendido = false; t.enlaces.pop();
       var otro = fabPc("pc9", "192.168.99.9", 24, null); t.dispositivos.push(otro);
