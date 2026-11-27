@@ -10,6 +10,11 @@ Los números siguen la forma MAYOR.MENOR.PARCHE:
 
 Los archivos de red llevan el número de su formato (`version`) y la versión del simulador que los exportó (`generador`). Un archivo de un formato anterior se actualiza solo al abrirlo.
 
+## 1.10.3 — 2026-11-27
+
+- **La animación sigue a los equipos.** Al mover un equipo (arrastrándolo, con las flechas o con Deshacer y Rehacer), el recorrido del DORA, la prueba de colisión, el paquete que quedó en el lienzo y el cable resaltado de una trama se vuelven a dibujar en el lugar nuevo. Antes quedaban donde estaban los equipos al hacer la prueba. Si se borra un equipo por donde pasó el paquete, la animación se descarta.
+- **La captura vuelve al principio** al cambiar el filtro o tocar Limpiar. Antes quedaba desplazada donde estaba.
+
 ## 1.10.2 — 2026-11-27
 
 - **Cablear tocando un puerto.** Tocar un puerto libre arranca un cable desde ahí, sin pasar antes por «Conectar con un cable». Volver a tocar el mismo puerto cancela el cable, y tocar el cuerpo de un equipo (con el mouse o con Enter) sale del modo cableado. Arrastrar un equipo agarrándolo de un puerto lo sigue moviendo, sin arrancar un cable.
