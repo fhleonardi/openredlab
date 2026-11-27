@@ -15177,7 +15177,8 @@ var UI = (function () {
       "stroke-width": 3, "paint-order": "stroke", "class": "rotulo-col" }, texto);
   }
 
-  function dibujarFaseColision(i, avance) {
+  // `sinMarcar`: sólo se rehace el dibujo (al mover equipos); la lista de pasos no se toca ni se desplaza.
+  function dibujarFaseColision(i, avance, sinMarcar) {
     var res = colAnim.res;
     var e = res && res.eventos[i];
     if (!e || !S.capaAnim) { return; }
@@ -15210,7 +15211,7 @@ var UI = (function () {
       var destino = buscarDisp(e.destino);
       if (destino && avance >= 1) { rotuloColision(destino.x, destino.y - 52, "\u2713 la recibe", "#1a7f37"); }
     }
-    marcarPasoColision(i);
+    if (!sinMarcar) { marcarPasoColision(i); }
   }
 
   // Cuánto dura cada fase, en pasos de la velocidad elegida.
@@ -15435,6 +15436,7 @@ var UI = (function () {
     var svgNS = "http://www.w3.org/2000/svg";
     var g = document.createElementNS(svgNS, "g");
     g.setAttribute("class", "resalte-trama");
+    g._trama = t;
     (t.enlaces || []).forEach(function (id) {
       var e = buscarEnlace(id);
       var tr = e && tramoEnlace(e, e.a.dispositivo);
@@ -15918,7 +15920,8 @@ var UI = (function () {
           requestAnimationFrame(function () { pedido = false; if (sc._pintarCaptura) { sc._pintarCaptura(); } });
         });
       }
-      if (cap.desplazamiento) { sc.scrollTop = cap.desplazamiento; }
+      // También en 0: tras Limpiar o un filtro nuevo, la tabla vuelve al principio.
+      sc.scrollTop = cap.desplazamiento || 0;
       pintado = "";
       pintar();
       // Si al redibujar la fila elegida no estaba, el foco vuelve ahora.
@@ -16785,6 +16788,8 @@ var UI = (function () {
   }
 
   function vaciarCapaAnim() {
+    // Lo que había en la capa ya no está: el ping de respaldo no se vuelve a dibujar.
+    pingRespaldo = null;
     while (S.capaAnim.firstChild) { S.capaAnim.removeChild(S.capaAnim.firstChild); }
   }
 
@@ -16793,9 +16798,14 @@ var UI = (function () {
   function reubicarAnim() {
     if (!S.capaAnim || !dhcpAnim || !colAnim || !animador) { return; }
     try {
+      // El cable resaltado desde la lista de tramas o la captura también va al lugar nuevo.
+      var resalte = S.capaAnim.querySelector(".resalte-trama");
+      var trama = resalte && resalte._trama;
       if (dhcpAnim.dibujado >= 0 && dhcpAnim.msgs[dhcpAnim.dibujado]) { dibujarMensajeDhcp(dhcpAnim.dibujado, true); }
-      if (colAnim.dibujada && !colAnim.activo) { dibujarFaseColision(colAnim.dibujada.i, colAnim.dibujada.avance); }
+      if (colAnim.dibujada && !colAnim.activo) { dibujarFaseColision(colAnim.dibujada.i, colAnim.dibujada.avance, true); }
       animador.reubicar();
+      if (pingRespaldo && pingRespaldo.terminado) { dibujarFinPing(pingRespaldo.res); }
+      if (trama) { resaltarTrama(trama); }
     } catch (e) { registrar("animacion", "Error al reubicar la animación: " + e.message); }
   }
 
@@ -16813,58 +16823,76 @@ var UI = (function () {
     catch (e) { registrar("animacion", "Error en animación: " + e.message); }
   }
 
+  // Ping de respaldo, para cuando el animador no tiene tramas. El estado vive acá para que, si se
+  // mueven los equipos, el punto y la ✗ finales vuelvan a su lugar (reubicarAnim).
+  var pingRespaldo = null;
+
+  // Los puntos de los saltos con las posiciones de ahora; null si se borró alguno de esos equipos.
+  function puntosPing(resultado) {
+    var puntos = [];
+    for (var i = 0; i < resultado.saltos.length; i++) {
+      var d = buscarDisp(resultado.saltos[i].dispositivo);
+      if (!d) { return null; }
+      puntos.push(puntoEn(d));
+    }
+    return puntos;
+  }
+
+  function quitarNodosPing() {
+    if (!pingRespaldo) { return; }
+    pingRespaldo.nodos.forEach(function (n) { if (n.parentNode) { n.parentNode.removeChild(n); } });
+    pingRespaldo.nodos = [];
+  }
+
+  function nodoPing(etiquetaSvg, atributos, texto) {
+    var n = nodoAnim(etiquetaSvg, atributos, texto);
+    pingRespaldo.nodos.push(n);
+    return n;
+  }
+
+  // Cuadro final: el punto sobre el último equipo alcanzado y, si falló, la ✗.
+  function dibujarFinPing(resultado) {
+    quitarNodosPing();
+    var puntos = puntosPing(resultado);
+    if (!puntos) { pingRespaldo = null; return; }
+    var fin = puntos[puntos.length - 1];
+    if (puntos.length < 2 && !resultado.exito) {
+      nodoPing("circle", { cx: fin.x, cy: fin.y - 30, r: 8, fill: "#b42318" });
+      return;
+    }
+    nodoPing("circle", { r: 7, fill: resultado.exito ? "#1a7f37" : "#b42318", stroke: "#fff", "stroke-width": 2, cx: fin.x, cy: fin.y - 30 });
+    if (!resultado.exito) { nodoPing("text", { x: fin.x + 10, y: fin.y - 24, "font-size": 18, fill: "#b42318" }, "\u2717"); }
+  }
+
   function animarPing(resultado) {
     var miToken = ++S.animToken;
     limpiarAnim();
     if (!resultado || !resultado.saltos || !resultado.saltos.length) { return; }
-    var svgNS = "http://www.w3.org/2000/svg";
-    var puntos = resultado.saltos.map(function (s) {
-      var d = buscarDisp(s.dispositivo);
-      return puntoEn(d);
-    });
-    if (puntos.length < 2 && !resultado.exito) {
-      var solo = document.createElementNS(svgNS, "circle");
-      solo.setAttribute("cx", puntos[0].x); solo.setAttribute("cy", puntos[0].y - 30);
-      solo.setAttribute("r", 8); solo.setAttribute("fill", "#b42318");
-      S.capaAnim.appendChild(solo);
+    var puntos0 = puntosPing(resultado);
+    if (!puntos0) { return; }
+    var estado = pingRespaldo = { res: resultado, terminado: false, nodos: [] };
+    if (puntos0.length < 2 || movimientoReducido()) {
+      estado.terminado = true;
+      dibujarFinPing(resultado);
       return;
     }
-    var marca = document.createElementNS(svgNS, "circle");
-    marca.setAttribute("r", 7); marca.setAttribute("fill", resultado.exito ? "#1a7f37" : "#b42318");
-    marca.setAttribute("stroke", "#fff"); marca.setAttribute("stroke-width", 2);
-    S.capaAnim.appendChild(marca);
-    if (movimientoReducido()) {
-      var fin = puntos[puntos.length - 1];
-      marca.setAttribute("cx", fin.x); marca.setAttribute("cy", fin.y - 30);
-      if (!resultado.exito) {
-        var cruzFija = document.createElementNS(svgNS, "text");
-        cruzFija.setAttribute("x", fin.x + 10); cruzFija.setAttribute("y", fin.y - 24);
-        cruzFija.setAttribute("font-size", "18"); cruzFija.setAttribute("fill", "#b42318");
-        cruzFija.textContent = "✗";
-        S.capaAnim.appendChild(cruzFija);
-      }
-      return;
-    }
+    var marca = nodoPing("circle", { r: 7, fill: resultado.exito ? "#1a7f37" : "#b42318", stroke: "#fff", "stroke-width": 2,
+      cx: puntos0[0].x, cy: puntos0[0].y - 30 });
     var tramo = 0;
     var t0 = null;
     var dur = msVelocidad();
     function cuadro(t) {
-      if (miToken !== S.animToken) { return; }
+      if (miToken !== S.animToken || pingRespaldo !== estado) { return; }
       if (t0 === null) { t0 = t; }
+      // Las posiciones se leen en cada cuadro: si se mueve un equipo, el punto sigue el camino nuevo.
+      var puntos = puntosPing(resultado);
+      if (!puntos) { quitarNodosPing(); pingRespaldo = null; return; }
       var avance = (t - t0) / dur;
       if (avance >= 1) {
         tramo += 1; t0 = t;
         if (tramo >= puntos.length - 1) {
-          marca.setAttribute("cx", puntos[puntos.length - 1].x);
-          marca.setAttribute("cy", puntos[puntos.length - 1].y - 30);
-          if (!resultado.exito) {
-            var cruz = document.createElementNS(svgNS, "text");
-            cruz.setAttribute("x", puntos[puntos.length - 1].x + 10);
-            cruz.setAttribute("y", puntos[puntos.length - 1].y - 24);
-            cruz.setAttribute("font-size", "18"); cruz.setAttribute("fill", "#b42318");
-            cruz.textContent = "✗";
-            S.capaAnim.appendChild(cruz);
-          }
+          estado.terminado = true;
+          dibujarFinPing(resultado);
           return;
         }
         avance = 0;
@@ -16995,8 +17023,9 @@ var UI = (function () {
     }
     dhcpAnim.ondas = ondas;
     dhcpAnim.dibujado = k;
-    marcarMensajeDhcp(k);
+    // Al mover equipos sólo se rehace el dibujo: el panel marca su fila según el resultado que muestra.
     if (silencioso) { return; }
+    marcarMensajeDhcp(k);
     registrar("dhcp", "DORA sobre el lienzo: " + etiquetaDhcp(m) + ", " + nombreDe(m.origen) + " \u2192 " +
       (m.destino === "broadcast" ? "toda la red" : nombreDe(m.destino)) + ".");
   }
@@ -17305,15 +17334,19 @@ var UI = (function () {
   };
 
   // Se movió algún equipo: los recorridos toman las posiciones nuevas. Si la animación
-  // ya terminó (o está en pausa), el paquete y la ✗ se vuelven a ubicar donde quedaron.
+  // ya terminó, el paquete y la ✗ se vuelven a ubicar donde quedaron. Si se borró un equipo
+  // del recorrido, la animación se descarta: el paquete y la ✗ ya no tienen dónde ir.
   AnimadorPaquetes.prototype.reubicar = function () {
     if (!this.timeline.length) { return; }
-    this.timeline.forEach(function (it) {
+    var nuevos = [];
+    var vigente = this.timeline.every(function (it) {
       var puntos = [];
-      it.ids.forEach(function (id) { var d = buscarDisp(id); if (d) { puntos.push(puntoEn(d)); } });
-      // Si se borraron equipos y no queda tramo, se conservan los puntos de antes.
-      if (puntos.length >= 2) { it.puntos = puntos; }
+      var completo = it.ids.every(function (id) { var d = buscarDisp(id); if (d) { puntos.push(puntoEn(d)); } return !!d; });
+      nuevos.push(puntos);
+      return completo;
     });
+    if (!vigente) { this.detener(); return; }
+    this.timeline.forEach(function (it, k) { it.puntos = nuevos[k]; });
     if (this.activo || !this.marca || this.marca.parentNode !== S.capaAnim) { return; }
     this.dibujarEn(this.idxActual, this.ultimoAvance);
     if (this.cruz) { this.marcarFalla(); }
