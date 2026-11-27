@@ -1237,12 +1237,13 @@ var Motor = (function () {
 
   function modoEnlaceDe(estado, enlace, idDispositivo, idInterfaz) {
     var dev = buscarDispositivo(estado, idDispositivo);
-    var otro = (enlace.a.dispositivo === idDispositivo && enlace.a.interfaz === idInterfaz)
-      ? enlace.b
-      : enlace.a;
+    // Desde el bridge, el enlace sale por uno de sus miembros: el lado propio es el del router.
+    var mioEsA = enlace.a.dispositivo === idDispositivo && (enlace.a.interfaz === idInterfaz || idInterfaz === ID_BRIDGE);
+    var propio = mioEsA ? enlace.a : enlace.b;
+    var otro = mioEsA ? enlace.b : enlace.a;
     var devOtro = buscarDispositivo(estado, otro.dispositivo);
     return {
-      mio: modoRadioDe(dev, buscarInterfaz(dev, idInterfaz)),
+      mio: modoRadioDe(dev, buscarInterfaz(dev, propio.interfaz)),
       ajeno: modoRadioDe(devOtro, buscarInterfaz(devOtro, otro.interfaz)),
       otroDispositivo: otro.dispositivo
     };
@@ -1284,6 +1285,45 @@ var Motor = (function () {
 
   function esRouter(dispositivo) {
     return !!dispositivo && (dispositivo.tipo === "router" || dispositivo.tipo === "internet");
+  }
+
+  /* Bridge de un router (como en RouterOS): los puertos marcados enBridge conmutan entre sí como un
+   * switch interno, y la interfaz virtual "bridge" lleva la IP del grupo. crearEstado la agrega a la
+   * copia del router; en el archivo, el router declara "bridge": { ip, prefijo }. */
+  var ID_BRIDGE = "bridge";
+
+  function tieneBridge(dispositivo) {
+    return !!dispositivo && dispositivo.tipo === "router" && !!dispositivo.bridge && typeof dispositivo.bridge === "object";
+  }
+
+  function esInterfazBridge(iface) {
+    return !!iface && iface.medio === "bridge";
+  }
+
+  function miembrosBridge(dispositivo) {
+    if (!tieneBridge(dispositivo)) { return []; }
+    return dispositivo.interfaces.filter(function (f) { return !!f.enBridge && !esInterfazBridge(f); });
+  }
+
+  // Si el puerto es parte del bridge de un router encendido, los puertos del grupo por los que hoy
+  // pasa una trama dentro del router (los miembros habilitados y la interfaz bridge).
+  function grupoBridgeDe(dispositivo, idInterfaz) {
+    if (!tieneBridge(dispositivo) || !dispositivo.encendido) { return []; }
+    var f = buscarInterfaz(dispositivo, idInterfaz);
+    if (!f || !f.habilitada || !(f.enBridge || esInterfazBridge(f))) { return []; }
+    return dispositivo.interfaces.filter(function (x) { return x.habilitada && (x.enBridge || esInterfazBridge(x)); });
+  }
+
+  // Los enlaces por los que sale una interfaz: los de su puerto o, si es el bridge, los de todos sus
+  // miembros habilitados.
+  function enlacesDePuerto(estado, dispositivo, iface) {
+    if (!dispositivo || !iface) { return []; }
+    if (!esInterfazBridge(iface)) { return enlacesDe(estado, dispositivo.id, iface.id); }
+    var todos = [];
+    miembrosBridge(dispositivo).forEach(function (m) {
+      if (m.habilitada) { todos = todos.concat(enlacesDe(estado, dispositivo.id, m.id)); }
+    });
+    return todos;
   }
 
   // La nube "internet" representa todas las direcciones públicas: es dueña
@@ -1494,6 +1534,15 @@ var Motor = (function () {
       var partes = actual.split(":");
       var devId = partes[0];
       var ifId = partes.slice(1).join(":");
+      // El bridge de un router conmuta entre sus puertos, como un switch interno.
+      var grupo = grupoBridgeDe(buscarDispositivo(estado, devId), ifId);
+      for (var gi = 0; gi < grupo.length; gi++) {
+        var claveGrupo = clavePuerto(devId, grupo[gi].id);
+        if (!visitados[claveGrupo]) {
+          visitados[claveGrupo] = { desde: actual, enlace: null };
+          cola.push(claveGrupo);
+        }
+      }
       var enlaces = enlacesDe(estado, devId, ifId);
       for (var li = 0; li < enlaces.length; li++) {
         var enlace = enlaces[li];
@@ -1626,7 +1675,7 @@ var Motor = (function () {
       }
       // El dueño responde si alguno de los enlaces de su puerto deja pasar la
       // trama (en un puerto ap alcanza con que uno de sus clientes lo alcance).
-      var enlacesDuenio = enlacesDe(estado, dev.id, iface.id);
+      var enlacesDuenio = enlacesDePuerto(estado, dev, iface);
       var alcanza = false;
       for (var li = 0; li < enlacesDuenio.length; li++) {
         if (tramaPasa(estado, enlacesDuenio[li])) {
@@ -1698,7 +1747,18 @@ var Motor = (function () {
   // aprende la MAC de origen en el puerto de entrada, sea de cable o del aire.
   function aprenderEnConmutadores(estado, idOrigen, ifOrigen, macOrigen, registrar) {
     var tocados = [];
-    var claves = segmentoL2(estado, idOrigen, ifOrigen);
+    var visitados = recorrerSegmento(estado, idOrigen, ifOrigen);
+    var claves = Object.keys(visitados);
+    // Un bridge aprende la MAC en el puerto miembro por el que entra la trama desde afuera.
+    claves.forEach(function (clave) {
+      var partes = clave.split(":");
+      var dev = buscarDispositivo(estado, partes[0]);
+      var iface = buscarInterfaz(dev, partes.slice(1).join(":"));
+      var desde = visitados[clave].desde;
+      if (dev && dev.id !== idOrigen && iface && iface.enBridge && tieneBridge(dev) && visitados[clave].enlace && desde) {
+        aprenderMac(estado, dev.id, macOrigen, iface.id, registrar);
+      }
+    });
     for (var i = 0; i < claves.length; i++) {
       var partes = claves[i].split(":");
       var dev = buscarDispositivo(estado, partes[0]);
@@ -1757,6 +1817,11 @@ var Motor = (function () {
         unir(todos);
       } else {
         dev.interfaces.forEach(function (f) { unir(idsDe(dev, f)); });
+        if (tieneBridge(dev)) {
+          var delBridge = [];
+          miembrosBridge(dev).forEach(function (f) { delBridge = delBridge.concat(idsDe(dev, f)); });
+          unir(delBridge);
+        }
       }
     });
     return { colision: colision, broadcast: grupos() };
@@ -1917,7 +1982,9 @@ var Motor = (function () {
     var enAire = camino.enlaces.some(function (id) {
       return (estado.topologia.enlaces || []).some(function (e) { return e.id === id && e.tipo === "wireless"; });
     });
-    function nombres(devs) { return devs.map(function (d) { return nombreDe(estado, d.id); }).join(" y "); }
+    function nombres(devs) {
+      return devs.map(function (d) { return (tieneBridge(d) ? "el bridge de " : "") + nombreDe(estado, d.id); }).join(" y ");
+    }
 
     if (mismo && enAire) {
       agregar("Comprobar si comparten el medio",
@@ -2086,6 +2153,14 @@ var Motor = (function () {
       if (esConmutador(dev) && !esHub(dev)) {
         estado.mac[dev.id] = [];
       }
+      if (tieneBridge(dev) && !buscarInterfaz(dev, ID_BRIDGE)) {
+        dev.interfaces.push({
+          id: ID_BRIDGE, nombre: ID_BRIDGE, medio: "bridge", habilitada: dev.bridge.habilitada !== false, modo: "estatico",
+          ip: dev.bridge.ip || null, prefijo: dev.bridge.prefijo, nat: !!dev.bridge.nat,
+          mac: dev.bridge.mac || macDeterministica(dev.id, dev.interfaces.length)
+        });
+        estado.mac[dev.id] = [];
+      }
     }
     for (var k = 0; k < (copia.enlaces || []).length; k++) {
       var enlace = copia.enlaces[k];
@@ -2102,6 +2177,16 @@ var Motor = (function () {
     }
     reconstruirConcesiones(estado);
     return estado;
+  }
+
+  // La topología del estado, sin lo que agrega crearEstado (la interfaz virtual del bridge): es la que
+  // vuelve al diseño, por ejemplo después de que un equipo recibe su IP por DHCP.
+  function topologiaDe(estado) {
+    var copia = clonar(estado.topologia);
+    (copia.dispositivos || []).forEach(function (d) {
+      if (tieneBridge(d)) { d.interfaces = d.interfaces.filter(function (f) { return !esInterfazBridge(f); }); }
+    });
+    return copia;
   }
 
   /* ---------------- Rutas ---------------- */
@@ -2272,8 +2357,9 @@ var Motor = (function () {
       }
       clave = paso.desde;
     }
-    // Un puerto ap puede tener varios enlaces: vale el que usó la trama.
-    var propios = enlacesDe(estado, idA, ifA);
+    // Un puerto ap puede tener varios enlaces: vale el que usó la trama. Desde el bridge, los de sus miembros.
+    var devA = buscarDispositivo(estado, idA);
+    var propios = enlacesDePuerto(estado, devA, buscarInterfaz(devA, ifA));
     var enlace = propios[0] || null;
     for (var i = 0; i < propios.length; i++) {
       if (propios[i].id === primerEnlace) {
@@ -2466,7 +2552,7 @@ var Motor = (function () {
     // Paso 2: enlaces, medios, modos de radio y alcance wireless. Un puerto
     // en modo ap puede sostener varios enlaces (uno por cliente): alcanza con
     // que uno deje pasar la trama.
-    var enlacesOrigen = enlacesDe(estado, origen.id, srcIface.id);
+    var enlacesOrigen = enlacesDePuerto(estado, origen, srcIface);
     if (enlacesOrigen.length === 0) {
       return fallar("D02", { origen: nom(origen.id), interfaz: srcIface.id },
         "Revisar la conexión física",
@@ -2562,7 +2648,9 @@ var Motor = (function () {
       };
     }
     agregarPaso("Revisar la conexión física",
-      "El puerto " + srcIface.id + " tiene " +
+      esInterfazBridge(srcIface)
+        ? "El bridge de " + nom(origen.id) + " tiene un puerto con un enlace activo hacia " + nom(otraPunta(enlaceUsable, origen.id)) + "."
+        : "El puerto " + srcIface.id + " tiene " +
       (srcIface.medio === "wireless"
         ? "un enlace inalámbrico activo (modo " + modoRadioDe(origen, srcIface) + ")"
         : "un cable " + palabraMedio(enlaceUsable.tipo) + " activo") +
@@ -3027,7 +3115,7 @@ var Motor = (function () {
             if (du.dispositivo.id === actualId && du.interfaz.id === actualIface.id) {
               continue;
             }
-            var enlacesDu = enlacesDe(estado, du.dispositivo.id, du.interfaz.id);
+            var enlacesDu = enlacesDePuerto(estado, du.dispositivo, du.interfaz);
             for (var oij = 0; oij < enlacesDu.length; oij++) {
               var eDu = enlacesDu[oij];
               if (!eDu || eDu.estado !== "up" || !mediosCompatibles(estado, eDu).ok ||
@@ -3122,7 +3210,12 @@ var Motor = (function () {
         }
         var hubsCruzados = tramoL2(estado, actualId, actualIface.id, destPar.dispositivo.id, destPar.interfaz.id).atraviesa
           .filter(function (id) { return esHub(buscarDispositivo(estado, id)); });
-        var textoSwitch = nom(actualId) + " averigua la MAC de " + destinoIp + " (ARP) y " + ((conmutadores.length > 0 || hayAp)
+        var bridgesCruzados = tramoL2(estado, actualId, actualIface.id, destPar.dispositivo.id, destPar.interfaz.id).atraviesa
+          .filter(function (id) { return tieneBridge(buscarDispositivo(estado, id)); });
+        var textoSwitch = nom(actualId) + " averigua la MAC de " + destinoIp + " (ARP) y " + (bridgesCruzados.length
+          ? "el bridge de " + bridgesCruzados.map(nom).join(" y el de ") + " reenvía la trama por el puerto donde está " + nombreDestinoFinal +
+            ", como un switch: no la enruta ni le baja el TTL, porque los dos equipos están en la misma red."
+          : (conmutadores.length > 0 || hayAp)
           ? (hubsCruzados.length
             ? "el hub " + hubsCruzados.map(nom).join(" y el hub ") + " repite la trama por todos sus puertos: la reciben todos los equipos " +
               "conectados y sólo " + nombreDestinoFinal + " la acepta, porque la MAC de destino es la suya."
@@ -3131,7 +3224,7 @@ var Motor = (function () {
             : "el switch reenvía la trama por el puerto donde está " + nombreDestinoFinal + ": un switch se guía por direcciones MAC, no por IP.")
           : "el paquete llega directo a " + nombreDestinoFinal + " por el cable.");
         agregarPaso("Entregar el paquete al destino", textoSwitch + textoTtl, true, 2);
-        var enlacesFinal = enlacesDe(estado, actualId, actualIface.id);
+        var enlacesFinal = enlacesDePuerto(estado, buscarDispositivo(estado, actualId), actualIface);
         if (enlacesFinal.length > 0) {
           msTotal += (enlacesFinal[0].retardoMs || 0) + 1;
         } else {
@@ -3315,7 +3408,7 @@ var Motor = (function () {
           nom(actualId) + " pregunta en su red quién tiene " + gw + ", y " + nom(respGw[0].dispositivo.id) +
           " responde con su dirección MAC.", true, 2);
         anotarTrama(actualId, actualIface, respGw[0].dispositivo.id, respGw[0].interfaz, ttl);
-        var enlacesUsados = enlacesDe(estado, actualId, actualIface.id);
+        var enlacesUsados = enlacesDePuerto(estado, buscarDispositivo(estado, actualId), actualIface);
         if (enlacesUsados.length > 0) {
           msTotal += (enlacesUsados[0].retardoMs || 0) + 1;
         } else {
@@ -3411,7 +3504,7 @@ var Motor = (function () {
       }
       // La salida también puede ser un puerto ap con varios enlaces: alcanza
       // con que uno deje pasar la trama.
-      var enlacesEgreso = enlacesDe(estado, router.id, egreso.id);
+      var enlacesEgreso = enlacesDePuerto(estado, router, egreso);
       var egresoUsable = null;
       var problemaEgreso = null;
       for (var loi = 0; loi < enlacesEgreso.length; loi++) {
@@ -3481,7 +3574,9 @@ var Motor = (function () {
         var pe = problemaEgreso || {
           codigo: "D02",
           ctx: { origen: nom(router.id), interfaz: egreso.id },
-          detalle: "El puerto " + egreso.id + " de " + nom(router.id) + " no tiene un cable activo."
+          detalle: esInterfazBridge(egreso)
+            ? "Ningún puerto del bridge de " + nom(router.id) + " tiene un cable activo."
+            : "El puerto " + egreso.id + " de " + nom(router.id) + " no tiene un cable activo."
         };
         agregarPaso("Reenviar el paquete", pe.detalle, false, 1);
         return {
@@ -4593,6 +4688,10 @@ var Motor = (function () {
         continue;
       }
       var ifServidor = buscarInterfaz(dev, partes.slice(1).join(":"));
+      // Por un puerto del bridge atiende el bridge, que es el que tiene la IP.
+      if (ifServidor && ifServidor.enBridge && tieneBridge(dev)) {
+        ifServidor = buscarInterfaz(dev, ID_BRIDGE);
+      }
       if (!ifServidor || !ifServidor.habilitada) {
         continue;
       }
@@ -6545,6 +6644,67 @@ var Motor = (function () {
       comparar("transmitir a la vez: fuera de alcance, D17", [lejos.diagnostico.codigo, lejos.equipo], ["D17", "c1"]);
     })();
 
+    // Bridge entre puertos del router (como en RouterOS).
+    (function () {
+      function oficina(antes) {
+        var r = fabRouter("r1", [{ id: "ether1", ip: "200.1.1.2", prefijo: 30 }, { id: "ether2" }, { id: "ether3" }, { id: "ether4" },
+          { id: "ether6", ip: "10.0.6.1", prefijo: 24 }, { id: "wlan1", medio: "wireless", modoRadio: "ap" }], [],
+          { dhcp: { habilitado: true, desde: "192.168.88.10", hasta: "192.168.88.20", prefijo: 24, gateway: "192.168.88.1" } });
+        ["ether2", "ether3", "ether4", "wlan1"].forEach(function (id) { buscarInterfaz(r, id).enBridge = true; });
+        r.bridge = { ip: "192.168.88.1", prefijo: 24 };
+        var movil = fabPc("p5", null, 24, null, { x: 320, y: 230 });
+        movil.interfaces[0].habilitada = false;
+        movil.interfaces[1].habilitada = true;
+        movil.interfaces[1].modoRadio = "cliente";
+        movil.interfaces[1].ip = "192.168.88.15";
+        movil.gateway = "192.168.88.1";
+        var topo = fabTopo(
+          [r, fabPc("p1", "192.168.88.11", 24, "192.168.88.1"), fabPc("p2", "192.168.88.12", 24, "192.168.88.1"),
+            fabPc("p3", "10.0.6.10", 24, "10.0.6.1"), fabPc("p4", null, 24, null, { modo: "dhcp" }), movil],
+          [fabEnlace("l1", "p1", "eth0", "r1", "ether2"), fabEnlace("l2", "p2", "eth0", "r1", "ether3"),
+            fabEnlace("l3", "p3", "eth0", "r1", "ether6"), fabEnlace("l4", "p4", "eth0", "r1", "ether4"),
+            fabEnlace("l5", "p5", "wlan0", "r1", "wlan1", { tipo: "wireless" })]);
+        if (antes) { antes(topo); }
+        return crearEstado(topo);
+      }
+      var est = oficina();
+      var mismo = ping(est, "p1", "192.168.88.12");
+      comparar("bridge: dos puertos del bridge en la misma red, entrega directa",
+        [mismo.exito, mismo.pasos.some(function (p) { return /Buscar ruta/.test(p.titulo); }),
+          /bridge de r1 reenvía la trama/.test(mismo.pasos.filter(function (p) { return /Entregar/.test(p.titulo); })[0].detalle)],
+        [true, false, true]);
+      var ruteado = ping(est, "p1", "10.0.6.10");
+      comparar("bridge: hacia un puerto ruteado pasa por el router",
+        [ruteado.exito, ruteado.saltos.map(function (x) { return x.dispositivo + ":" + x.interfaz; })], [true, ["p1:eth0", "r1:ether6", "p3:eth0"]]);
+      var vuelta = ping(est, "p3", "192.168.88.12");
+      comparar("bridge: desde un puerto ruteado sale por la interfaz bridge",
+        [vuelta.exito, vuelta.saltos[1].interfaz], [true, "bridge"]);
+      comparar("bridge: el router responde por su IP del bridge y origina desde ella",
+        [ping(est, "p2", "192.168.88.1").exito, ping(est, "r1", "192.168.88.11").exito], [true, true]);
+      comparar("bridge: el Wi-Fi del bridge está en la misma LAN que el cable", ping(est, "p5", "192.168.88.11").exito, true);
+      var dhcp = dhcpSolicitar(est, "p4", "eth0");
+      comparar("bridge: DHCP por un puerto del bridge", [dhcp.exito, dhcp.ip || (dhcp.concesion && dhcp.concesion.ip)], [true, "192.168.88.10"]);
+      comparar("bridge: aprende la MAC en el puerto de entrada",
+        tablaMac(est, "r1").map(function (x) { return x.puerto; }).indexOf("ether2") >= 0, true);
+      var dom = dominios(est);
+      comparar("bridge: un dominio de broadcast para los miembros y uno de colisión por puerto",
+        [dom.broadcast.filter(function (d) { return d.enlaces.indexOf("l1") >= 0; })[0].enlaces.sort(),
+          dom.colision.filter(function (d) { return d.enlaces.indexOf("l1") >= 0; })[0].enlaces], [["l1", "l2", "l4", "l5"], ["l1"]]);
+      comparar("bridge: con el puerto deshabilitado no pasa",
+        ping(oficina(function (t) { t.dispositivos[0].interfaces[2].habilitada = false; }), "p1", "192.168.88.12").exito, false);
+      comparar("bridge: con el router apagado no conmuta",
+        ping(oficina(function (t) { t.dispositivos[0].encendido = false; }), "p1", "192.168.88.12").exito, false);
+      comparar("bridge: sin el campo bridge, los puertos no conmutan",
+        ping(oficina(function (t) { delete t.dispositivos[0].bridge; }), "p1", "192.168.88.12").exito, false);
+      var sinCables = ping(oficina(function (t) { t.enlaces = t.enlaces.filter(function (e) { return e.id === "l3"; }); }), "p3", "192.168.88.12");
+      comparar("bridge: sin ningún miembro conectado, D02 nombra el bridge",
+        [sinCables.diagnostico && sinCables.diagnostico.codigo, /Ningún puerto del bridge/.test(sinCables.pasos[sinCables.pasos.length - 1].detalle)], ["D02", true]);
+      comparar("bridge: la topología que vuelve al diseño no trae la interfaz virtual",
+        topologiaDe(est).dispositivos[0].interfaces.map(function (f) { return f.id; }).indexOf("bridge"), -1);
+      comparar("bridge: transmitir a la vez nombra al bridge",
+        /está el bridge de r1/.test(transmitirALaVez(est, "p1", "p2", {}).pasos[0].detalle), true);
+    })();
+
     // 36. Un destino mal escrito no es un diagnóstico de red.
     (function () {
       var topo = fabTopo([fabPc("pc-admin", "10.45.7.66", 27, "10.45.7.65")], []);
@@ -6574,6 +6734,8 @@ var Motor = (function () {
     esHub: esHub,
     esConmutador: esConmutador,
     transmitirALaVez: transmitirALaVez,
+    tieneBridge: tieneBridge,
+    topologiaDe: topologiaDe,
     puedeTransmitir: puedeTransmitir,
     TIPOS_REGISTRO: TIPOS_REGISTRO,
     JERARQUIA_DNS: JERARQUIA,
@@ -6624,7 +6786,7 @@ var Escenarios = (function () {
 
   // Versión de la app (semver). Cada PR que toca una capa la sube y suma su
   // entrada en CHANGELOG.md; el ensamblador controla que coincidan.
-  var VERSION_APP = "1.9.0";
+  var VERSION_APP = "1.10.0";
 
   // Versión del formato de archivo que escribe esta capa. Sube sólo si un
   // campo existente cambia o desaparece, y cada subida trae su migración.
@@ -7063,6 +7225,53 @@ var Escenarios = (function () {
 
   /* ---------------- Validación e importación ---------------- */
 
+  // Bridge de un router (como en RouterOS): "bridge": { ip, prefijo } en el router y "enBridge": true en
+  // cada puerto miembro. La IP va en el bridge; sus puertos no llevan IP. La IP puede faltar, como en
+  // cualquier puerto (por ejemplo, en un desafío sin direccionar).
+  function validarBridge(d, etiqueta, anotar) {
+    var nombre = "\"" + d.id + "\"";
+    var miembros = d.interfaces.filter(function (f) { return f && f.enBridge === true; });
+    d.interfaces.forEach(function (f) {
+      if (f && f.enBridge !== undefined && f.enBridge !== null && typeof f.enBridge !== "boolean") {
+        anotar(etiqueta + ".interfaces." + f.id + ".enBridge", "El puerto " + f.id + " del equipo " + nombre + " no indica bien si está en el bridge (va true o false).");
+      }
+    });
+    var hayBridge = d.bridge !== undefined && d.bridge !== null;
+    if ((hayBridge || miembros.length) && d.tipo !== "router") {
+      anotar(etiqueta + ".bridge", "Sólo los routers tienen bridge, y " + nombre + " es " + d.tipo + ".");
+      return;
+    }
+    if (!hayBridge) {
+      if (miembros.length) {
+        anotar(etiqueta + ".bridge", "El router " + nombre + " tiene puertos marcados en el bridge (" + miembros.map(function (f) { return f.id; }).join(", ") +
+          "), pero no tiene bridge: falta configurarlo con su IP y su máscara.");
+      }
+      return;
+    }
+    if (typeof d.bridge !== "object" || Array.isArray(d.bridge)) {
+      anotar(etiqueta + ".bridge", "El bridge del router " + nombre + " no tiene el formato correcto.");
+      return;
+    }
+    if (d.bridge.ip !== undefined && d.bridge.ip !== null && String(d.bridge.ip).trim() !== "" && !Red.esIpValida(String(d.bridge.ip))) {
+      anotar(etiqueta + ".bridge.ip", "El bridge del router " + nombre + " tiene una IP que no es válida (" + JSON.stringify(d.bridge.ip) + ").");
+    }
+    if (!esEnteroPrefijo(d.bridge.prefijo)) {
+      anotar(etiqueta + ".bridge.prefijo", "El bridge del router " + nombre + " tiene un prefijo inválido: tiene que ser un número entre 0 y 32.");
+    }
+    if (!miembros.length) {
+      anotar(etiqueta + ".bridge", "El bridge del router " + nombre + " no tiene puertos: marcá al menos uno «en el bridge».");
+    }
+    if (buscarInterfaz(d, "bridge")) {
+      anotar(etiqueta + ".interfaces.bridge", "El router " + nombre + " tiene un puerto llamado bridge, que es el nombre reservado de su bridge.");
+    }
+    miembros.forEach(function (f) {
+      if (f.ip !== undefined && f.ip !== null && String(f.ip).trim() !== "") {
+        anotar(etiqueta + ".interfaces." + f.id + ".ip", "El puerto " + f.id + " del router " + nombre + " está en el bridge y tiene la IP " + f.ip +
+          ": la IP va en el bridge, no en sus puertos.");
+      }
+    });
+  }
+
   function validarTopologia(obj) {
     var errores = [];
 
@@ -7235,6 +7444,8 @@ var Escenarios = (function () {
         }
       }
 
+      validarBridge(d, etiqueta, anotar);
+
       // Puerta de enlace y DNS, cuando están presentes.
       if (d.gateway !== undefined && d.gateway !== null && String(d.gateway).trim() !== "") {
         if (!Red.esIpValida(String(d.gateway))) {
@@ -7310,7 +7521,7 @@ var Escenarios = (function () {
                 anotar(campoRegla + ".puerto", "La regla " + (g + 1) + " de \"" + d.id + "\" tiene un puerto inválido: va de 1 a 65535.");
               }
             }
-            if (regla && regla.entrada && !buscarInterfaz(d, regla.entrada)) {
+            if (regla && regla.entrada && !buscarInterfaz(d, regla.entrada) && !(regla.entrada === "bridge" && d.bridge)) {
               anotar(campoRegla + ".entrada", "La regla " + (g + 1) + " de \"" + d.id + "\" dice que el paquete entra por " + regla.entrada + ", pero ese puerto no existe.");
             }
           }
@@ -8723,6 +8934,7 @@ var Escenarios = (function () {
       d.rutas = [];
       d.dhcp = null;
       if (Array.isArray(d.redirecciones)) { d.redirecciones = []; }
+      if (d.bridge && typeof d.bridge === "object") { d.bridge.ip = null; d.bridge.prefijo = 24; }
     });
     return topologia;
   }
@@ -9110,6 +9322,61 @@ var Escenarios = (function () {
     };
   }
 
+  // Como un MikroTik recién sacado de la caja: ether1 hacia internet con NAT y el resto de la LAN en un
+  // bridge con una sola IP y DHCP. ether6 queda afuera, ruteado, con los servidores.
+  function topologiaMikrotik() {
+    var ifs = ["ether1", "ether2", "ether3", "ether4", "ether5", "ether6", "ether7", "ether8"].map(function (id) {
+      return interfaz(id, "ethernet", null, 24, true);
+    });
+    ifs.push(interfaz("sfp1", "fibra", null, 24, true));
+    var wlan = interfaz("wlan1", "wireless", null, 24, true);
+    wlan.modoRadio = "ap";
+    ifs.push(wlan);
+    ifs[0].ip = "200.45.8.2";
+    ifs[0].prefijo = 30;
+    ifs[0].nat = true;
+    [1, 2, 3, 4, 9].forEach(function (k) { ifs[k].enBridge = true; });
+    ifs[5].ip = "10.0.6.1";
+    var router = {
+      id: "r1", tipo: "router", modelo: "8-puertos", nombre: "MikroTik", x: 400, y: 150, encendido: true, interfaces: ifs,
+      bridge: { ip: "192.168.88.1", prefijo: 24 },
+      gateway: null, dns: null, rutas: [{ destino: "0.0.0.0", prefijo: 0, siguienteSalto: "200.45.8.1" }],
+      dhcp: { habilitado: true, desde: "192.168.88.10", hasta: "192.168.88.254", prefijo: 24, gateway: "192.168.88.1" }
+    };
+    var nube = {
+      id: "nube", tipo: "internet", nombre: "Internet", x: 400, y: 20, encendido: true,
+      interfaces: [interfaz("eth0", "ethernet", "200.45.8.1", 30, true)],
+      gateway: null, dns: null, rutas: [], dhcp: null
+    };
+    var pc1 = armarPc("pc1", "PC-1", 170, 440, "192.168.88.11", 24, "192.168.88.1");
+    var pc2 = armarPc("pc2", "PC-2", 360, 460, "192.168.88.12", 24, "192.168.88.1");
+    var pc3 = armarPc("pc3", "PC-3", 550, 440, null, 24, null);
+    pc3.interfaces[0].modo = "dhcp";
+    pc3.interfaces[0].habilitada = true;
+    pc3.dns = null;
+    var notebook = armarPcWifi("notebook", "Notebook", 190, 230, "192.168.88.13", 24, "192.168.88.1");
+    var srv = {
+      id: "srv", tipo: "servidor", nombre: "Servidor", x: 720, y: 330, encendido: true,
+      interfaces: [interfaz("eth0", "ethernet", "10.0.6.10", 24, true)],
+      gateway: "10.0.6.1", dns: null, rutas: [], dhcp: null,
+      servicios: { escuchando: [{ protocolo: "tcp", puerto: 80, nombre: "HTTP" }] }
+    };
+    return {
+      version: 1,
+      nombre: "MikroTik de fábrica",
+      dispositivos: [router, nube, pc1, pc2, pc3, notebook, srv],
+      enlaces: [
+        armarEnlace("l-wan", "r1", "ether1", "nube", "eth0", "ethernet"),
+        armarEnlace("l-pc1", "r1", "ether2", "pc1", "eth0", "ethernet"),
+        armarEnlace("l-pc2", "r1", "ether3", "pc2", "eth0", "ethernet"),
+        armarEnlace("l-pc3", "r1", "ether4", "pc3", "eth0", "ethernet"),
+        armarEnlace("l-wifi", "r1", "wlan1", "notebook", "wlan0", "wireless"),
+        armarEnlace("l-srv", "r1", "ether6", "srv", "eth0", "ethernet")
+      ],
+      escenario: null
+    };
+  }
+
   /* ---------------- Topologías físicas y de alcance ----------------
    * Ejemplos para la unidad 7: estrella, bus (medio compartido con un hub),
    * malla entre routers, y dos LAN unidas por una WAN. */
@@ -9393,6 +9660,12 @@ var Escenarios = (function () {
       nombre: "Router de 8 puertos",
       descripcion: "Tres subredes colgadas de un mismo router, cada puerto con su propia red (como un MikroTik con los puertos fuera del bridge).",
       topologia: topologiaRouter8()
+    },
+    {
+      id: "mikrotik",
+      nombre: "MikroTik de fábrica",
+      descripcion: "ether1 hacia internet con NAT y la LAN en un bridge (ether2 a ether5 y el Wi-Fi) con una sola IP y DHCP; ether6 queda afuera, ruteado, con un servidor.",
+      topologia: topologiaMikrotik()
     },
     {
       id: "oficina-dns",
@@ -9821,6 +10094,37 @@ var Escenarios = (function () {
       var inf = verificarDiseno(topo);
       comparar("diseño libre con bloque ajeno", dice(sectorDe(inf, "R1 wlan0"), "se sale del bloque"), true);
       comparar("diseño libre con hosts pedidos", dice(sectorDe(inf, "R1 g0/0 · SW-Admin"), "el sector necesita 40"), true);
+    })();
+
+    // Bridge entre puertos del router.
+    (function () {
+      var mk = clonar(ejemploPorId("mikrotik").topologia);
+      comparar("bridge: el ejemplo MikroTik valida", validarTopologia(mk).ok, true);
+      var est = Motor.crearEstado(mk);
+      comparar("bridge: el ejemplo MikroTik conmuta en el bridge y enruta hacia ether6 e internet",
+        [Motor.ping(est, "pc1", "192.168.88.12").exito, Motor.ping(est, "notebook", "192.168.88.11").exito,
+          Motor.ping(est, "pc1", "10.0.6.10").exito, Motor.ping(est, "pc1", "8.8.8.8").exito], [true, true, true, true]);
+      function errores(cambio) {
+        var t = clonar(ejemploPorId("mikrotik").topologia);
+        cambio(t.dispositivos[0], t);
+        return validarTopologia(t).errores.map(function (e) { return e.campo; });
+      }
+      comparar("bridge: un puerto del bridge con IP es un error",
+        errores(function (r) { r.interfaces[1].ip = "192.168.88.2"; }), ["dispositivos.r1.interfaces.ether2.ip"]);
+      comparar("bridge: puertos en el bridge sin bridge es un error", errores(function (r) { delete r.bridge; }), ["dispositivos.r1.bridge"]);
+      comparar("bridge: un bridge sin puertos es un error",
+        errores(function (r) { r.interfaces.forEach(function (f) { delete f.enBridge; }); }), ["dispositivos.r1.bridge"]);
+      comparar("bridge: IP y prefijo inválidos",
+        errores(function (r) { r.bridge = { ip: "300.1.1.1", prefijo: 40 }; }), ["dispositivos.r1.bridge.ip", "dispositivos.r1.bridge.prefijo"]);
+      comparar("bridge: sólo en routers",
+        errores(function (r, t) { t.dispositivos[2].bridge = { ip: "1.1.1.1", prefijo: 24 }; }), ["dispositivos.pc1.bridge"]);
+      var cambio = clonar(ejemploPorId("mikrotik").topologia);
+      cambiarModelo(cambio, "r1", null);
+      comparar("bridge: al cambiar de modelo los puertos siguen en el bridge",
+        [cambio.dispositivos[0].interfaces.filter(function (f) { return f.enBridge; }).map(function (f) { return f.id; }), validarTopologia(cambio).ok],
+        [["g0/1", "g0/2", "g0/3", "g0/4", "wlan0"], true]);
+      var desafio = vaciarDireccionamiento(clonar(ejemploPorId("mikrotik").topologia));
+      comparar("bridge: un desafío borra la IP del bridge y sigue validando", [desafio.dispositivos[0].bridge.ip, validarTopologia(desafio).ok], [null, true]);
     })();
 
     // Router de 8 puertos: valida, enruta entre puertos y rechaza modelos raros.
@@ -10397,6 +10701,9 @@ var UI = (function () {
       var todas = (disp.interfaces || []).filter(function (f) {
         return f.ip && Red.esIpValida(String(f.ip));
       }).map(function (f) { return f.id + " " + f.ip + "/" + f.prefijo; });
+      if (disp.bridge && disp.bridge.ip && Red.esIpValida(String(disp.bridge.ip))) {
+        todas.push("bridge " + disp.bridge.ip + "/" + disp.bridge.prefijo);
+      }
       return todas.length ? todas : ["sin IP"];
     }
     var prim = primeraIp(disp);
@@ -10679,7 +10986,11 @@ var UI = (function () {
     ".simprop table.registros th,.simprop table.registros td{text-align:left;padding:2px 4px;border-bottom:1px dotted var(--sim-borde);overflow-wrap:anywhere;}",
     ".simprop table.registros td:nth-child(2){white-space:nowrap;}",
     ".filaif{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:12px;padding:6px 0;border-bottom:1px dotted var(--sim-borde);}",
-    ".filaif .datos{flex:1;min-width:0;}",
+    ".filaif .datos{flex:1;min-width:10em;}",
+    ".simprop .bridge{padding-bottom:8px;margin-bottom:4px;border-bottom:1px solid var(--sim-borde);}",
+    ".simprop .bridge p{font-size:12px;margin:4px 0;}",
+    ".simprop .bridge p b{font-size:14px;}",
+    ".simprop .bridge .tenue{color:var(--sim-tenue);}",
     ".filaif label{margin:0;}",
     ".filaif select{width:auto;}",
     ".siminf{height:clamp(290px,38vh,480px);flex:0 1 clamp(290px,38vh,480px);background:var(--sim-panel);border-top:1px solid var(--sim-borde);padding:6px 12px 8px;box-sizing:border-box;overflow:hidden;display:flex;flex-direction:column;}",
@@ -10859,6 +11170,7 @@ var UI = (function () {
     "svg .nodo,svg .enlace,svg .asa{cursor:pointer;}",
     "svg .asa:focus-visible{outline:3px solid var(--sim-acento);outline-offset:2px;}",
     "svg .puerto{cursor:pointer;stroke:#333;stroke-width:1;}",
+    "svg .puerto.enbridge{stroke:#16a34a;stroke-width:2.5;}",
     "svg text{font-family:system-ui,Arial,sans-serif;}",
     "svg .etiqueta text.mono{font-family:ui-monospace,Consolas,monospace;}",
     "svg .fondoetq{fill:var(--sim-fondo);fill-opacity:.9;}",
@@ -11706,12 +12018,15 @@ var UI = (function () {
         c.setAttribute("class", "puerto");
         c.setAttribute("tabindex", "0");
         c.setAttribute("role", "button");
-        c.setAttribute("aria-label", d.id + ":" + iface.id + (iface.habilitada ? "" : ", deshabilitada"));
+        var enBridge = enElBridge(d, iface);
+        if (enBridge) { c.setAttribute("class", "puerto enbridge"); }
+        c.setAttribute("aria-label", d.id + ":" + iface.id + (iface.habilitada ? "" : ", deshabilitada") + (enBridge ? ", en el bridge" : ""));
         var ocupado = !!enlaceEnPuerto(d.id, iface.id);
         var comparte = puertoAdmiteMultiplesEnlaces(d, iface);
         c.setAttribute("fill", !iface.habilitada ? "#999" : (ocupado ? "#0b5fa5" : "#fff"));
         var tit = document.createElementNS(svgNS, "title");
-        tit.textContent = iface.id + " (" + iface.medio + ")" + (!iface.habilitada ? " deshabilitada" : (ocupado ? (comparte ? " AP activo" : " ocupada") : " libre"));
+        tit.textContent = iface.id + " (" + iface.medio + ")" + (!iface.habilitada ? " deshabilitada" : (ocupado ? (comparte ? " AP activo" : " ocupada") : " libre")) +
+          (enBridge ? ", en el bridge" : "");
         c.appendChild(tit);
         if (S.herramientaCable || S.cableOrigen) {
           var comp = !S.cableOrigen || (iface.medio === S.cableTipo && (!ocupado || comparte) && iface.id !== undefined);
@@ -11942,7 +12257,8 @@ var UI = (function () {
   function mostrarTipPuerto(ev, d, iface) {
     var enl = enlaceEnPuerto(d.id, iface.id);
     S.tooltip.innerHTML = "<b>" + escapar((d.nombre || d.id) + " · " + iface.id) + "</b><br>puerto " +
-      escapar(palabraCable(iface.medio)) + "<br>" + (enl ? escapar("conectado a " + nombreDe(enl.a.dispositivo === d.id && enl.a.interfaz === iface.id ? enl.b.dispositivo : enl.a.dispositivo)) : "libre");
+      escapar(palabraCable(iface.medio)) + (enElBridge(d, iface) ? ", en el bridge" : "") + "<br>" +
+      (enl ? escapar("conectado a " + nombreDe(enl.a.dispositivo === d.id && enl.a.interfaz === iface.id ? enl.b.dispositivo : enl.a.dispositivo)) : "libre");
     S.tooltip.style.display = "block";
     posicionarTip(ev);
   }
@@ -12921,48 +13237,66 @@ var UI = (function () {
     var selIf = document.createElement("select");
     (d.interfaces || []).forEach(function (f) {
       var op = document.createElement("option");
-      op.value = f.id; op.textContent = f.id + " (" + f.medio + ")";
+      op.value = f.id; op.textContent = f.id + " (" + f.medio + (enElBridge(d, f) ? ", en el bridge" : "") + ")";
       selIf.appendChild(op);
     });
-    var interfazInicial = S.interfazEditada[d.id] || (principal ? principal.id : (d.interfaces[0] && d.interfaces[0].id));
+    var conBridge = d.tipo === "router" && !!d.bridge;
+    if (conBridge) {
+      var opB = document.createElement("option");
+      opB.value = "bridge"; opB.textContent = "bridge (sus puertos conmutan entre sí)";
+      selIf.appendChild(opB);
+    }
+    var interfazInicial = S.interfazEditada[d.id] || (conBridge && d.bridge.ip ? "bridge" : null) ||
+      (principal ? principal.id : (d.interfaces[0] && d.interfaces[0].id));
+    if (interfazInicial === "bridge" && !conBridge) { interfazInicial = principal ? principal.id : (d.interfaces[0] && d.interfaces[0].id); }
     if (interfazInicial) { selIf.value = interfazInicial; }
     c.appendChild(etiqueta("Interfaz que se edita", selIf)); c.appendChild(selIf);
-    var editada = buscarIface(d, selIf.value) || d.interfaces[0];
+    var esBridge = conBridge && selIf.value === "bridge";
+    var editada = esBridge ? d.bridge : (buscarIface(d, selIf.value) || d.interfaces[0]);
     selIf.addEventListener("change", function () {
       S.interfazEditada[d.id] = selIf.value;
       renderPropiedades();
     });
     if (!editada) { return; }
-
-    var selModo = document.createElement("select");
-    selModo.innerHTML = "<option value='estatico'>estática</option><option value='dhcp'>DHCP</option>";
-    selModo.value = editada.modo || "estatico";
-    selModo.addEventListener("change", function () {
-      // Pedir por DHCP ya guarda el historial y vuelve a dibujar todo.
-      if (selModo.value === "dhcp") { solicitarDhcp(d.id, editada.id); return; }
-      empujarHistorial(); editada.modo = selModo.value;
-      reconstruirEstado(); renderTodo();
-    });
-    c.appendChild(etiqueta("Modo", selModo)); c.appendChild(selModo);
-
-    campoTexto(c, "Dirección IP", editada.ip || "", function (v) {
-      editada.ip = v.trim() === "" ? null : v.trim();
-      reconstruirEstado(); renderLienzo(); refrescarCalculo();
-    }, function (v) { return v.trim() === "" || Red.esIpValida(v.trim()); }, true);
-
-    var selM = document.createElement("select");
-    for (var p = 8; p <= 30; p++) {
-      var op = document.createElement("option");
-      op.value = String(p);
-      op.textContent = "/" + p + " — " + Red.prefijoAMascara(p);
-      selM.appendChild(op);
+    var miembro = !esBridge && enElBridge(d, editada);
+    if (miembro) {
+      c.appendChild(el("p", "tenue", escapar(editada.id) + " está en el bridge: no lleva IP propia. La IP del bridge se edita eligiendo «bridge» " +
+        "en esta lista o en la pestaña Interfaces."));
     }
-    selM.value = String(editada.prefijo);
-    selM.addEventListener("change", function () {
-      empujarHistorial(); editada.prefijo = parseInt(selM.value, 10);
-      reconstruirEstado(); renderTodo();
-    });
-    c.appendChild(etiqueta("Máscara (prefijo y decimal)", selM)); c.appendChild(selM);
+
+    if (!esBridge && !miembro) {
+      var selModo = document.createElement("select");
+      selModo.innerHTML = "<option value='estatico'>estática</option><option value='dhcp'>DHCP</option>";
+      selModo.value = editada.modo || "estatico";
+      selModo.addEventListener("change", function () {
+        // Pedir por DHCP ya guarda el historial y vuelve a dibujar todo.
+        if (selModo.value === "dhcp") { solicitarDhcp(d.id, editada.id); return; }
+        empujarHistorial(); editada.modo = selModo.value;
+        reconstruirEstado(); renderTodo();
+      });
+      c.appendChild(etiqueta("Modo", selModo)); c.appendChild(selModo);
+    }
+
+    if (!miembro) {
+      campoTexto(c, esBridge ? "Dirección IP del bridge" : "Dirección IP", editada.ip || "", function (v) {
+        editada.ip = v.trim() === "" ? null : v.trim();
+        reconstruirEstado(); renderLienzo(); refrescarCalculo();
+      }, function (v) { return v.trim() === "" || Red.esIpValida(v.trim()); }, true);
+
+      var selM = document.createElement("select");
+      for (var p = 8; p <= 30; p++) {
+        var op = document.createElement("option");
+        op.value = String(p);
+        op.textContent = "/" + p + " — " + Red.prefijoAMascara(p);
+        selM.appendChild(op);
+      }
+      selM.value = String(editada.prefijo);
+      selM.addEventListener("change", function () {
+        empujarHistorial(); editada.prefijo = parseInt(selM.value, 10);
+        reconstruirEstado(); renderTodo();
+      });
+      c.appendChild(etiqueta("Máscara (prefijo y decimal)", selM)); c.appendChild(selM);
+    }
     void habiles;
 
     if (d.tipo !== "switch-l2") {
@@ -13070,7 +13404,76 @@ var UI = (function () {
     fila.appendChild(bQuitar);
   }
 
+  function enElBridge(d, f) {
+    return !!d && d.tipo === "router" && !!d.bridge && !!f && !!f.enBridge;
+  }
+
+  // Bridge del router (como en RouterOS): los puertos marcados conmutan entre sí como un switch interno
+  // y comparten una sola IP, la del bridge.
+  function seccionBridge(c, d) {
+    var miembros = (d.interfaces || []).filter(function (f) { return f.enBridge; }).map(function (f) { return f.id; });
+    var caja = el("div", "bridge");
+    caja.setAttribute("data-foco", "bridge");
+    caja.appendChild(el("p", "", "<b>Bridge</b>"));
+    if (!d.bridge) {
+      caja.appendChild(el("p", "tenue", "Sin bridge: cada puerto es ruteado y lleva su propia red. Marcá «en el bridge» en dos o más puertos " +
+        "para que conmuten entre sí como un switch y compartan una sola IP, como en la configuración de fábrica de un MikroTik."));
+      c.appendChild(caja);
+      return;
+    }
+    caja.appendChild(el("p", "tenue", "Puertos en el bridge: " + escapar(miembros.join(", ") || "ninguno") + ". Entre ellos la trama pasa como en un " +
+      "switch, sin enrutar; hacia los demás puertos, el router enruta desde la IP del bridge."));
+    campoTexto(caja, "IP del bridge", d.bridge.ip || "", function (v) {
+      empujarHistorialSuave(); d.bridge.ip = v.trim() === "" ? null : v.trim();
+      reconstruirEstado(); renderLienzo(); refrescarCalculo();
+    }, function (v) { return v.trim() === "" || Red.esIpValida(v.trim()); }, true);
+    var selM = document.createElement("select");
+    for (var p = 8; p <= 30; p++) {
+      var op = document.createElement("option");
+      op.value = String(p);
+      op.textContent = "/" + p + " — " + Red.prefijoAMascara(p);
+      selM.appendChild(op);
+    }
+    selM.value = String(d.bridge.prefijo);
+    selM.addEventListener("change", function () {
+      empujarHistorial(); d.bridge.prefijo = parseInt(selM.value, 10);
+      reconstruirEstado(); renderTodo();
+    });
+    caja.appendChild(etiqueta("Máscara del bridge", selM)); caja.appendChild(selM);
+    c.appendChild(caja);
+  }
+
+  // Meter o sacar un puerto del bridge. Al entrar pierde su IP, que pasa a ser la del bridge si no tenía una.
+  function alternarBridge(d, f, adentro) {
+    empujarHistorial();
+    var texto;
+    if (adentro) {
+      f.enBridge = true;
+      var nuevo = !d.bridge;
+      if (nuevo) { d.bridge = { ip: null, prefijo: f.ip ? f.prefijo : 24 }; }
+      if (f.ip) {
+        if (!d.bridge.ip) { d.bridge.ip = f.ip; d.bridge.prefijo = f.prefijo; }
+        texto = f.id + " entró al bridge de " + (d.nombre || d.id) + ". Su IP " + f.ip + "/" + f.prefijo +
+          (d.bridge.ip === f.ip ? " pasó a ser la del bridge." : " se borró: en el bridge, la IP va en el bridge.");
+        f.ip = null;
+      } else {
+        texto = f.id + " entró al bridge de " + (d.nombre || d.id) + "." + (nuevo ? " Cargá la IP del bridge." : "");
+      }
+    } else {
+      delete f.enBridge;
+      texto = f.id + " salió del bridge de " + (d.nombre || d.id) + ": ahora es un puerto ruteado y necesita su propia IP.";
+      if (!(d.interfaces || []).some(function (x) { return x.enBridge; })) {
+        delete d.bridge;
+        texto += " El bridge quedó sin puertos y se quitó.";
+      }
+    }
+    reconstruirEstado(); renderTodo();
+    registrar("bridge", texto);
+    avisar(texto);
+  }
+
   function panelInterfaces(c, d) {
+    if (d.tipo === "router") { seccionBridge(c, d); }
     (d.interfaces || []).forEach(function (f) {
       var fila = el("div", "filaif");
       var enl = enlaceEnPuerto(d.id, f.id);
@@ -13122,6 +13525,15 @@ var UI = (function () {
         labN.setAttribute("title", "NAT al salir por este puerto: el router cambia la IP privada de origen por la IP de este puerto, " +
           "y a la respuesta la traduce de vuelta. Se activa en el puerto que va a internet; sin NAT, la respuesta de internet no vuelve (D28).");
         fila.appendChild(labN);
+        var labB = el("label", "enlinea");
+        var cbB = document.createElement("input");
+        cbB.type = "checkbox"; cbB.checked = !!f.enBridge;
+        cbB.setAttribute("data-foco", "bridge-" + f.id);
+        cbB.addEventListener("change", function () { alternarBridge(d, f, cbB.checked); });
+        labB.appendChild(cbB);
+        labB.appendChild(document.createTextNode("en el bridge"));
+        labB.setAttribute("title", "Los puertos del bridge conmutan entre sí como un switch y comparten la IP del bridge.");
+        fila.appendChild(labB);
       }
       controlesPuerto(fila, d, f, enl);
       c.appendChild(fila);
@@ -13569,10 +13981,10 @@ var UI = (function () {
       c.appendChild(el("p", "", "<b>Tabla ARP:</b><br>" + (arp.length ? escapar(arp.map(function (x) { return x.ip + " → " + x.mac; }).join(", ")) : "vacía")));
       if (d.tipo === "switch-l2" && d.modelo === "hub") {
         c.appendChild(el("p", "", "<b>Tabla MAC:</b> un hub no tiene. Repite cada trama por todos sus puertos, sin mirar la MAC."));
-      } else if (d.tipo === "switch-l2") {
+      } else if (d.tipo === "switch-l2" || (d.tipo === "router" && d.bridge)) {
         var mac = [];
         try { mac = Motor.tablaMac(S.estado, d.id) || []; } catch (e) { mac = []; }
-        c.appendChild(el("p", "", "<b>Tabla MAC:</b><br>" + (mac.length ? escapar(mac.map(function (x) { return x.mac + " → " + x.puerto; }).join(", ")) : "vacía")));
+        c.appendChild(el("p", "", "<b>Tabla MAC" + (d.tipo === "router" ? " del bridge" : "") + ":</b><br>" + (mac.length ? escapar(mac.map(function (x) { return x.mac + " → " + x.puerto; }).join(", ")) : "vacía")));
       }
       // Un laboratorio (una red con objetivos) no avisa sus fallas plantadas,
       // en ningún modo: encontrarlas es el ejercicio. El modo Docente tampoco.
@@ -15943,7 +16355,7 @@ var UI = (function () {
     catch (e) { registrar("D16", "DHCP falló: " + e.message); avisar("DHCP falló: " + e.message); return null; }
     empujarHistorial();
     var topologiaAnterior = S.topologia;
-    S.topologia = clonar(S.estado.topologia);
+    S.topologia = Motor.topologiaDe(S.estado);
     restaurarFallasVivas(S.topologia, topologiaAnterior);
     reconstruirEstado();
     S.dhcpSel = { equipo: idDisp, interfaz: idIf };
@@ -17055,6 +17467,13 @@ var Autotest = (function () {
       esperado: "Con el hub las señales chocan: se ve la colisión, la señal de atasco y la espera al azar, y las dos tramas llegan en un reintento. " +
         "Con el switch cada equipo está en su propio dominio de colisión: no hay choque."
     },
+    37: {
+      conError: false,
+      situacion: "En «MikroTik de fábrica», ether2 a ether5 y el Wi-Fi están en un bridge con la IP 192.168.88.1/24. PC-1 (ether2) le hace ping " +
+        "a PC-2 (ether3) y después al servidor, que está en ether6, un puerto ruteado con la red 10.0.6.0/24.",
+      esperado: "Entre PC-1 y PC-2 el bridge reenvía la trama como un switch: misma red, entrega directa, sin enrutar y sin bajar el TTL. " +
+        "Hacia el servidor el paquete sí pasa por el router: entra por el bridge, sale por ether6 y el TTL baja."
+    },
     31: {
       conError: true,
       situacion: "En «Servidor publicado con redirección de puertos», SRV-Web tiene IP privada (192.168.50.10). PC-Casa se conecta por HTTP a la IP pública " +
@@ -18101,7 +18520,25 @@ var Autotest = (function () {
     }
   }
 
-  var CRITERIOS_DIDACTICOS = [crit02, crit17, crit03, crit04, crit05, crit06, crit20, crit18, crit19, crit21, crit22, crit23, crit29, crit31, crit35, crit07, crit08, crit12];
+  function crit37() {
+    var nombre = "Bridge: dos puertos del bridge están en la misma red; hacia un puerto ruteado el paquete pasa por el router";
+    try {
+      var est = Motor.crearEstado(clonar(ejemploPorId("mikrotik").topologia));
+      var mismo = Motor.ping(est, "pc1", "192.168.88.12");
+      var ruteado = Motor.ping(est, "pc1", "10.0.6.10");
+      var enruto = function (r) { return r.pasos.some(function (p) { return /Buscar ruta/.test(p.titulo); }); };
+      var porRouter = ruteado.saltos.some(function (x) { return x.dispositivo === "r1"; });
+      var pasa = mismo.exito && !enruto(mismo) && mismo.saltos.length === 2 && ruteado.exito && enruto(ruteado) && porRouter;
+      return fila(37, nombre, pasa, pasa
+        ? "PC-1 → PC-2: entrega directa por el bridge, sin enrutar. PC-1 → servidor: pasa por el router (bridge → ether6)."
+        : "Falla: PC-1 → PC-2 " + (mismo.exito ? (enruto(mismo) ? "se enrutó" : "llegó con " + mismo.saltos.length + " saltos") : "no llegó") +
+          "; PC-1 → servidor " + (ruteado.exito ? (porRouter ? "llegó" : "no pasó por el router") : "no llegó") + ".");
+    } catch (e) {
+      return fila(37, nombre, false, "Excepción: " + e.message);
+    }
+  }
+
+  var CRITERIOS_DIDACTICOS = [crit02, crit17, crit03, crit04, crit05, crit06, crit20, crit18, crit19, crit21, crit22, crit23, crit29, crit31, crit35, crit37, crit07, crit08, crit12];
   // La pestaña Laboratorio: sólo en modo Docente, con sus cuatro secciones
   // y sin scroll de página. correr() restaura la red del usuario.
   function crit24() {
@@ -18838,7 +19275,49 @@ var Autotest = (function () {
     }
   }
 
-  var CRITERIOS_TECNICOS = [crit01, crit09, crit10, crit11, crit13, crit14, crit15, crit16, crit24, crit25, crit26, crit27, crit28, crit30, crit32, crit33, crit34, crit36];
+  // La sección Bridge de la pestaña Interfaces y la marca de sus puertos en el lienzo.
+  function crit38() {
+    var nombre = "El router muestra su bridge en Interfaces y en el lienzo, y meter un puerto en el bridge le quita la IP";
+    var previo = modoActualDom();
+    try {
+      var prob = [];
+      UI.setModo("topologia");
+      UI.cargarTopologia(clonar(ejemploPorId("mikrotik").topologia));
+      if (document.querySelectorAll("rect.puerto.enbridge").length !== 5) { prob.push("el lienzo no marca los 5 puertos del bridge"); }
+      UI.seleccionar("r1");
+      var pestana = null;
+      document.querySelectorAll(".simprop button").forEach(function (b) { if (b.textContent === "Interfaces") { pestana = b; } });
+      if (!pestana) { prob.push("no está la pestaña Interfaces"); }
+      else {
+        pestana.click();
+        var seccion = document.querySelector("[data-foco=bridge]");
+        var ip = null;
+        if (seccion) { seccion.querySelectorAll("label").forEach(function (l) { if (l.textContent === "IP del bridge") { ip = document.getElementById(l.htmlFor); } }); }
+        if (!seccion || !ip || ip.value !== "192.168.88.1") { prob.push("falta la sección Bridge con su IP"); }
+        var cb = document.querySelector("[data-foco='bridge-ether6']");
+        if (!cb || cb.checked) { prob.push("falta la casilla «en el bridge» de ether6"); }
+        else {
+          cb.click();
+          var r1 = null;
+          UI.topologiaActual().dispositivos.forEach(function (d) { if (d.id === "r1") { r1 = d; } });
+          var e6 = null;
+          r1.interfaces.forEach(function (f) { if (f.id === "ether6") { e6 = f; } });
+          if (!e6.enBridge || e6.ip) { prob.push("al meter ether6 en el bridge no se le quitó la IP"); }
+          if (!Escenarios.validarTopologia(UI.topologiaActual()).ok) { prob.push("la red quedó inválida"); }
+        }
+      }
+      if (prob.length === 0) { return fila(38, nombre, true, "La sección Bridge muestra 192.168.88.1, el lienzo marca sus 5 puertos y ether6 entró al bridge sin IP propia."); }
+      return fila(38, nombre, false, "Falla: " + prob.join("; ") + ".");
+    } catch (e) {
+      return fila(38, nombre, false, "Excepción: " + e.message);
+    } finally {
+      try { UI.seleccionar(null); } catch (e0) { /* se sigue igual */ }
+      try { UI.cargarTopologia(clonar(ejemploPorId("complejo").topologia)); } catch (e1) { /* se sigue igual */ }
+      try { UI.setModo(previo); } catch (e2) { /* se sigue igual */ }
+    }
+  }
+
+  var CRITERIOS_TECNICOS = [crit01, crit09, crit10, crit11, crit13, crit14, crit15, crit16, crit24, crit25, crit26, crit27, crit28, crit30, crit32, crit33, crit34, crit36, crit38];
 
   function correr(opciones) {
     var tecnico = !!(opciones && opciones.tecnico);

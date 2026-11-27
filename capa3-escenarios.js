@@ -29,7 +29,7 @@ var Escenarios = (function () {
 
   // Versión de la app (semver). Cada PR que toca una capa la sube y suma su
   // entrada en CHANGELOG.md; el ensamblador controla que coincidan.
-  var VERSION_APP = "1.9.0";
+  var VERSION_APP = "1.10.0";
 
   // Versión del formato de archivo que escribe esta capa. Sube sólo si un
   // campo existente cambia o desaparece, y cada subida trae su migración.
@@ -468,6 +468,53 @@ var Escenarios = (function () {
 
   /* ---------------- Validación e importación ---------------- */
 
+  // Bridge de un router (como en RouterOS): "bridge": { ip, prefijo } en el router y "enBridge": true en
+  // cada puerto miembro. La IP va en el bridge; sus puertos no llevan IP. La IP puede faltar, como en
+  // cualquier puerto (por ejemplo, en un desafío sin direccionar).
+  function validarBridge(d, etiqueta, anotar) {
+    var nombre = "\"" + d.id + "\"";
+    var miembros = d.interfaces.filter(function (f) { return f && f.enBridge === true; });
+    d.interfaces.forEach(function (f) {
+      if (f && f.enBridge !== undefined && f.enBridge !== null && typeof f.enBridge !== "boolean") {
+        anotar(etiqueta + ".interfaces." + f.id + ".enBridge", "El puerto " + f.id + " del equipo " + nombre + " no indica bien si está en el bridge (va true o false).");
+      }
+    });
+    var hayBridge = d.bridge !== undefined && d.bridge !== null;
+    if ((hayBridge || miembros.length) && d.tipo !== "router") {
+      anotar(etiqueta + ".bridge", "Sólo los routers tienen bridge, y " + nombre + " es " + d.tipo + ".");
+      return;
+    }
+    if (!hayBridge) {
+      if (miembros.length) {
+        anotar(etiqueta + ".bridge", "El router " + nombre + " tiene puertos marcados en el bridge (" + miembros.map(function (f) { return f.id; }).join(", ") +
+          "), pero no tiene bridge: falta configurarlo con su IP y su máscara.");
+      }
+      return;
+    }
+    if (typeof d.bridge !== "object" || Array.isArray(d.bridge)) {
+      anotar(etiqueta + ".bridge", "El bridge del router " + nombre + " no tiene el formato correcto.");
+      return;
+    }
+    if (d.bridge.ip !== undefined && d.bridge.ip !== null && String(d.bridge.ip).trim() !== "" && !Red.esIpValida(String(d.bridge.ip))) {
+      anotar(etiqueta + ".bridge.ip", "El bridge del router " + nombre + " tiene una IP que no es válida (" + JSON.stringify(d.bridge.ip) + ").");
+    }
+    if (!esEnteroPrefijo(d.bridge.prefijo)) {
+      anotar(etiqueta + ".bridge.prefijo", "El bridge del router " + nombre + " tiene un prefijo inválido: tiene que ser un número entre 0 y 32.");
+    }
+    if (!miembros.length) {
+      anotar(etiqueta + ".bridge", "El bridge del router " + nombre + " no tiene puertos: marcá al menos uno «en el bridge».");
+    }
+    if (buscarInterfaz(d, "bridge")) {
+      anotar(etiqueta + ".interfaces.bridge", "El router " + nombre + " tiene un puerto llamado bridge, que es el nombre reservado de su bridge.");
+    }
+    miembros.forEach(function (f) {
+      if (f.ip !== undefined && f.ip !== null && String(f.ip).trim() !== "") {
+        anotar(etiqueta + ".interfaces." + f.id + ".ip", "El puerto " + f.id + " del router " + nombre + " está en el bridge y tiene la IP " + f.ip +
+          ": la IP va en el bridge, no en sus puertos.");
+      }
+    });
+  }
+
   function validarTopologia(obj) {
     var errores = [];
 
@@ -640,6 +687,8 @@ var Escenarios = (function () {
         }
       }
 
+      validarBridge(d, etiqueta, anotar);
+
       // Puerta de enlace y DNS, cuando están presentes.
       if (d.gateway !== undefined && d.gateway !== null && String(d.gateway).trim() !== "") {
         if (!Red.esIpValida(String(d.gateway))) {
@@ -715,7 +764,7 @@ var Escenarios = (function () {
                 anotar(campoRegla + ".puerto", "La regla " + (g + 1) + " de \"" + d.id + "\" tiene un puerto inválido: va de 1 a 65535.");
               }
             }
-            if (regla && regla.entrada && !buscarInterfaz(d, regla.entrada)) {
+            if (regla && regla.entrada && !buscarInterfaz(d, regla.entrada) && !(regla.entrada === "bridge" && d.bridge)) {
               anotar(campoRegla + ".entrada", "La regla " + (g + 1) + " de \"" + d.id + "\" dice que el paquete entra por " + regla.entrada + ", pero ese puerto no existe.");
             }
           }
@@ -2128,6 +2177,7 @@ var Escenarios = (function () {
       d.rutas = [];
       d.dhcp = null;
       if (Array.isArray(d.redirecciones)) { d.redirecciones = []; }
+      if (d.bridge && typeof d.bridge === "object") { d.bridge.ip = null; d.bridge.prefijo = 24; }
     });
     return topologia;
   }
@@ -2515,6 +2565,61 @@ var Escenarios = (function () {
     };
   }
 
+  // Como un MikroTik recién sacado de la caja: ether1 hacia internet con NAT y el resto de la LAN en un
+  // bridge con una sola IP y DHCP. ether6 queda afuera, ruteado, con los servidores.
+  function topologiaMikrotik() {
+    var ifs = ["ether1", "ether2", "ether3", "ether4", "ether5", "ether6", "ether7", "ether8"].map(function (id) {
+      return interfaz(id, "ethernet", null, 24, true);
+    });
+    ifs.push(interfaz("sfp1", "fibra", null, 24, true));
+    var wlan = interfaz("wlan1", "wireless", null, 24, true);
+    wlan.modoRadio = "ap";
+    ifs.push(wlan);
+    ifs[0].ip = "200.45.8.2";
+    ifs[0].prefijo = 30;
+    ifs[0].nat = true;
+    [1, 2, 3, 4, 9].forEach(function (k) { ifs[k].enBridge = true; });
+    ifs[5].ip = "10.0.6.1";
+    var router = {
+      id: "r1", tipo: "router", modelo: "8-puertos", nombre: "MikroTik", x: 400, y: 150, encendido: true, interfaces: ifs,
+      bridge: { ip: "192.168.88.1", prefijo: 24 },
+      gateway: null, dns: null, rutas: [{ destino: "0.0.0.0", prefijo: 0, siguienteSalto: "200.45.8.1" }],
+      dhcp: { habilitado: true, desde: "192.168.88.10", hasta: "192.168.88.254", prefijo: 24, gateway: "192.168.88.1" }
+    };
+    var nube = {
+      id: "nube", tipo: "internet", nombre: "Internet", x: 400, y: 20, encendido: true,
+      interfaces: [interfaz("eth0", "ethernet", "200.45.8.1", 30, true)],
+      gateway: null, dns: null, rutas: [], dhcp: null
+    };
+    var pc1 = armarPc("pc1", "PC-1", 170, 440, "192.168.88.11", 24, "192.168.88.1");
+    var pc2 = armarPc("pc2", "PC-2", 360, 460, "192.168.88.12", 24, "192.168.88.1");
+    var pc3 = armarPc("pc3", "PC-3", 550, 440, null, 24, null);
+    pc3.interfaces[0].modo = "dhcp";
+    pc3.interfaces[0].habilitada = true;
+    pc3.dns = null;
+    var notebook = armarPcWifi("notebook", "Notebook", 190, 230, "192.168.88.13", 24, "192.168.88.1");
+    var srv = {
+      id: "srv", tipo: "servidor", nombre: "Servidor", x: 720, y: 330, encendido: true,
+      interfaces: [interfaz("eth0", "ethernet", "10.0.6.10", 24, true)],
+      gateway: "10.0.6.1", dns: null, rutas: [], dhcp: null,
+      servicios: { escuchando: [{ protocolo: "tcp", puerto: 80, nombre: "HTTP" }] }
+    };
+    return {
+      version: 1,
+      nombre: "MikroTik de fábrica",
+      dispositivos: [router, nube, pc1, pc2, pc3, notebook, srv],
+      enlaces: [
+        armarEnlace("l-wan", "r1", "ether1", "nube", "eth0", "ethernet"),
+        armarEnlace("l-pc1", "r1", "ether2", "pc1", "eth0", "ethernet"),
+        armarEnlace("l-pc2", "r1", "ether3", "pc2", "eth0", "ethernet"),
+        armarEnlace("l-pc3", "r1", "ether4", "pc3", "eth0", "ethernet"),
+        armarEnlace("l-wifi", "r1", "wlan1", "notebook", "wlan0", "wireless"),
+        armarEnlace("l-srv", "r1", "ether6", "srv", "eth0", "ethernet")
+      ],
+      escenario: null
+    };
+  }
+
   /* ---------------- Topologías físicas y de alcance ----------------
    * Ejemplos para la unidad 7: estrella, bus (medio compartido con un hub),
    * malla entre routers, y dos LAN unidas por una WAN. */
@@ -2798,6 +2903,12 @@ var Escenarios = (function () {
       nombre: "Router de 8 puertos",
       descripcion: "Tres subredes colgadas de un mismo router, cada puerto con su propia red (como un MikroTik con los puertos fuera del bridge).",
       topologia: topologiaRouter8()
+    },
+    {
+      id: "mikrotik",
+      nombre: "MikroTik de fábrica",
+      descripcion: "ether1 hacia internet con NAT y la LAN en un bridge (ether2 a ether5 y el Wi-Fi) con una sola IP y DHCP; ether6 queda afuera, ruteado, con un servidor.",
+      topologia: topologiaMikrotik()
     },
     {
       id: "oficina-dns",
@@ -3226,6 +3337,37 @@ var Escenarios = (function () {
       var inf = verificarDiseno(topo);
       comparar("diseño libre con bloque ajeno", dice(sectorDe(inf, "R1 wlan0"), "se sale del bloque"), true);
       comparar("diseño libre con hosts pedidos", dice(sectorDe(inf, "R1 g0/0 · SW-Admin"), "el sector necesita 40"), true);
+    })();
+
+    // Bridge entre puertos del router.
+    (function () {
+      var mk = clonar(ejemploPorId("mikrotik").topologia);
+      comparar("bridge: el ejemplo MikroTik valida", validarTopologia(mk).ok, true);
+      var est = Motor.crearEstado(mk);
+      comparar("bridge: el ejemplo MikroTik conmuta en el bridge y enruta hacia ether6 e internet",
+        [Motor.ping(est, "pc1", "192.168.88.12").exito, Motor.ping(est, "notebook", "192.168.88.11").exito,
+          Motor.ping(est, "pc1", "10.0.6.10").exito, Motor.ping(est, "pc1", "8.8.8.8").exito], [true, true, true, true]);
+      function errores(cambio) {
+        var t = clonar(ejemploPorId("mikrotik").topologia);
+        cambio(t.dispositivos[0], t);
+        return validarTopologia(t).errores.map(function (e) { return e.campo; });
+      }
+      comparar("bridge: un puerto del bridge con IP es un error",
+        errores(function (r) { r.interfaces[1].ip = "192.168.88.2"; }), ["dispositivos.r1.interfaces.ether2.ip"]);
+      comparar("bridge: puertos en el bridge sin bridge es un error", errores(function (r) { delete r.bridge; }), ["dispositivos.r1.bridge"]);
+      comparar("bridge: un bridge sin puertos es un error",
+        errores(function (r) { r.interfaces.forEach(function (f) { delete f.enBridge; }); }), ["dispositivos.r1.bridge"]);
+      comparar("bridge: IP y prefijo inválidos",
+        errores(function (r) { r.bridge = { ip: "300.1.1.1", prefijo: 40 }; }), ["dispositivos.r1.bridge.ip", "dispositivos.r1.bridge.prefijo"]);
+      comparar("bridge: sólo en routers",
+        errores(function (r, t) { t.dispositivos[2].bridge = { ip: "1.1.1.1", prefijo: 24 }; }), ["dispositivos.pc1.bridge"]);
+      var cambio = clonar(ejemploPorId("mikrotik").topologia);
+      cambiarModelo(cambio, "r1", null);
+      comparar("bridge: al cambiar de modelo los puertos siguen en el bridge",
+        [cambio.dispositivos[0].interfaces.filter(function (f) { return f.enBridge; }).map(function (f) { return f.id; }), validarTopologia(cambio).ok],
+        [["g0/1", "g0/2", "g0/3", "g0/4", "wlan0"], true]);
+      var desafio = vaciarDireccionamiento(clonar(ejemploPorId("mikrotik").topologia));
+      comparar("bridge: un desafío borra la IP del bridge y sigue validando", [desafio.dispositivos[0].bridge.ip, validarTopologia(desafio).ok], [null, true]);
     })();
 
     // Router de 8 puertos: valida, enruta entre puertos y rechaza modelos raros.

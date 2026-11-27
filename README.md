@@ -25,6 +25,7 @@ No hace falta instalar nada: es un único archivo HTML, sin dependencias y sin c
 - **Conectarse a servicios con TCP y UDP:** un servidor atiende HTTP, HTTPS, SSH, FTP, SMTP o un puerto propio; *Conectar* muestra el socket (IP:puerto ↔ IP:puerto), el handshake de tres pasos, el pedido y la respuesta, y el cierre, o los datagramas de UDP. Si nadie escucha en el puerto, el diagnóstico lo dice (D31): la red llega, el servicio no.
 - **Capturar el tráfico como Wireshark:** la pestaña *Captura* registra lo que pasa por un cable (o por todos) mientras hacés pings, consultas DNS y conexiones: número, origen, destino, protocolo e info, el detalle por capas de cada paquete y un filtro (`icmp`, `dns`, `tcp.port==80`, `ip.addr==…`).
 - **Medir la calidad del enlace (QoS):** cada cable tiene latencia, jitter y pérdida; el ping manda 1, 4, 10 o 50 paquetes y, como el ping real, informa los perdidos y el tiempo mínimo, medio y máximo. Si no vuelve ninguno, el diagnóstico lo explica (D32).
+- **Armar un bridge en el router, como un MikroTik:** en la pestaña Interfaces, marcás qué puertos van «en el bridge»: conmutan entre sí como un switch y comparten una sola IP, y el resto sigue ruteado. El ejemplo *MikroTik de fábrica* viene armado así.
 - **Ver las colisiones (CSMA/CD):** con *Transmitir a la vez*, dos equipos mandan una trama en el mismo instante. En un hub se ven la colisión, la señal de atasco, la espera al azar y el reintento; con un switch no hay choque. En Wi-Fi se explica CSMA/CA.
 - **Ver los dominios de colisión y de broadcast:** el selector *Dominios* del lienzo pinta cada dominio con un color y los cuenta. El hub repite cada trama por todos sus puertos; el switch separa un dominio de colisión por puerto; el router corta el broadcast.
 - **Resolver nombres reales de internet (a pedido):** con el interruptor «Resolver nombres reales» prendido, los nombres que la simulación no conoce (example.com, por ejemplo) se consultan a Cloudflare por DNS sobre HTTPS. Es lo único que la página manda por la red: viene apagado, sólo sale el nombre que escribís, y una política de seguridad la limita a ese único servidor.
@@ -43,7 +44,7 @@ No hace falta instalar nada: es un único archivo HTML, sin dependencias y sin c
 
 ## Escenarios
 
-En el selector **Ejemplos…** vienen redes listas: una básica, dos subredes, un complejo turístico completo, el mismo complejo con fallas, un desafío VLSM, un router de 8 puertos, una oficina con DNS propio y cuatro topologías: estrella, bus (con un hub), malla entre routers y dos LAN unidas por una WAN, y dos proveedores de internet unidos por peering, con un proveedor de tránsito.
+En el selector **Ejemplos…** vienen redes listas: una básica, dos subredes, un complejo turístico completo, el mismo complejo con fallas, un desafío VLSM, un router de 8 puertos, un MikroTik de fábrica (con bridge), una oficina con DNS propio y cuatro topologías: estrella, bus (con un hub), malla entre routers y dos LAN unidas por una WAN, y dos proveedores de internet unidos por peering, con un proveedor de tránsito.
 
 En [`escenarios/`](escenarios/) hay archivos para abrir con **Importar** o arrastrándolos al lienzo:
 

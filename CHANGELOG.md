@@ -10,6 +10,13 @@ Los números siguen la forma MAYOR.MENOR.PARCHE:
 
 Los archivos de red llevan el número de su formato (`version`) y la versión del simulador que los exportó (`generador`). Un archivo de un formato anterior se actualiza solo al abrirlo.
 
+## 1.10.0 — 2026-11-27
+
+- **Bridge entre puertos del router, como en un MikroTik.** Un router puede agrupar puertos en un **bridge**. En la pestaña Interfaces, cada puerto tiene la casilla «en el bridge» y hay una sección con la IP y la máscara del bridge. Los puertos del bridge conmutan entre sí como un switch interno y comparten una sola IP. Los demás puertos siguen ruteados, cada uno con su red.
+- **Cómo lo usa la simulación.** Dos equipos en puertos distintos del bridge están en la misma red: la trama pasa sin enrutar y sin bajar el TTL, y el recorrido dice que el bridge la reenvía como un switch. Hacia un puerto ruteado, el paquete pasa por el router y sale de la IP del bridge. El bridge reparte direcciones por DHCP, aprende las MAC (se ven en la pestaña Estado) y es un solo dominio de broadcast. En el lienzo, sus puertos tienen borde verde.
+- **Ejemplo nuevo: «MikroTik de fábrica».** ether1 va a internet con NAT, el bridge agrupa ether2 a ether5 y el Wi-Fi con 192.168.88.1/24 y DHCP, y ether6 queda afuera, ruteado, con un servidor.
+- **Validación.** Un puerto del bridge con IP propia, un bridge sin puertos o puertos marcados sin bridge se avisan al importar. Al meter un puerto con IP en el bridge, la IP pasa al bridge si el bridge no tenía una.
+
 ## 1.9.0 — 2026-11-27
 
 - **Transmitir a la vez: las colisiones se ven.** En la franja de Simulación, junto a Ping, Consultar DNS y Conectar, hay una herramienta nueva. Elegís dos equipos y los dos mandan una trama en el mismo instante. Con un **hub** en el medio chocan: se ve la colisión, la señal de atasco (jam), la espera al azar de cada uno (espera exponencial binaria de CSMA/CD) y el reintento, hasta que las dos tramas llegan. Una tabla muestra, colisión por colisión, entre qué valores eligió cada equipo y qué eligió. Con un **switch** no hay choque, y el recorrido explica por qué. En una celda Wi-Fi se explica CSMA/CA, y si un router separa a los dos equipos, que no comparten el medio.
