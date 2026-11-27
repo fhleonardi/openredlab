@@ -1623,6 +1623,15 @@ var Autotest = (function () {
       var primero = filas.length ? Number(filas[0].cells[0].textContent) : 0;
       var segundo = filas.length > 1 ? Number(filas[1].cells[0].textContent) : 0;
       if (filas.length && (primero !== lote.length - 499 || segundo !== primero + 1)) { prob.push("la numeración no sigue (empieza en " + primero + ")"); }
+      // Fin lleva al último paquete, que se dibuja aunque esté lejos de la vista.
+      var ultimo = 0;
+      if (filas.length) {
+        filas[0].focus();
+        filas[0].dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true }));
+        var enFoco = document.activeElement;
+        ultimo = enFoco && enFoco.cells ? Number(enFoco.cells[0].textContent) : 0;
+        if (ultimo !== lote.length) { prob.push("con Fin el último paquete es el " + ultimo + " y tendría que ser el " + lote.length); }
+      }
       // Elegir el más viejo y capturar más: se descarta y la elección se borra.
       if (filas.length) {
         filas[0].click();
@@ -1654,7 +1663,7 @@ var Autotest = (function () {
       if (!reducido) { prob.push("el movimiento reducido no apaga transiciones y animaciones"); }
 
       if (prob.length === 0) {
-        return fila(28, nombre, true, "Captura en 500 (del " + primero + " al " + (primero + 499) + "), dibujando " + filas.length + " filas a la vista, con aviso; el paquete descartado deja de estar elegido; textos de ejemplo con «…»; text-wrap y movimiento reducido.");
+        return fila(28, nombre, true, "Captura en 500 (del " + primero + " al " + ultimo + "), dibujando " + filas.length + " filas a la vista, con aviso; el paquete descartado deja de estar elegido; textos de ejemplo con «…»; text-wrap y movimiento reducido.");
       }
       return fila(28, nombre, false, "Falla: " + prob.join("; ") + ".");
     } catch (e) {
