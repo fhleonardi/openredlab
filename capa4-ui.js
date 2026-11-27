@@ -52,6 +52,8 @@ var UI = (function () {
     colocando: null,
     vista: { x: 0, y: MARGEN_VISTA, k: 1 },
     deshacer: [],
+    // Número de la red que está en el lienzo: cambia al abrir otra, y viaja con cada paso del historial.
+    redActual: 0, redesAbiertas: 0,
     rehacer: [],
     presentacion: false,
     tema: null, // hasta que se aplica uno, el del sistema
@@ -682,7 +684,7 @@ var UI = (function () {
     ".simhoja h3{font-size:12px;color:var(--sim-tenue);margin:4px 0 8px;}",
     ".simaviso{position:absolute;left:50%;top:10px;transform:translateX(-50%);background:var(--sim-acento);color:var(--sim-sobreacento);border-radius:10px;padding:6px 12px;font-size:13px;z-index:6;pointer-events:none;max-width:90%;text-align:center;}",
     ".pista{position:absolute;left:10px;bottom:10px;background:var(--sim-panel);border:1px solid var(--sim-borde);border-radius:8px;padding:6px 10px;font-size:13px;color:var(--sim-tenue);}",
-    ".diagnostico .irconfig{margin-top:8px;border-color:var(--sim-mal);color:var(--sim-mal);}",
+    ".diagnostico .irconfig{margin-top:8px;margin-right:8px;border-color:var(--sim-mal);color:var(--sim-mal);}",
     "@media (max-width:900px){.simpaleta{width:140px;flex-basis:140px;}.palgrid{grid-template-columns:1fr;}.simprop{width:240px;flex-basis:240px;}.simbarra{gap:5px;padding:5px 6px;}.simbarra button{padding:4px 7px;}}",
     "@media " + MQ_CELULAR + "{" +
       ".simraiz{min-height:0;}" +
@@ -2520,27 +2522,36 @@ var UI = (function () {
   /* ---------------- Historial, atajos, modos ---------------- */
 
   function empujarHistorial() {
-    S.deshacer.push(JSON.stringify(S.topologia));
+    S.deshacer.push(pasoActual());
     if (S.deshacer.length > 60) { S.deshacer.shift(); }
     S.rehacer = [];
   }
 
   function deshacer() {
     if (!S.deshacer.length) { return; }
-    S.rehacer.push(JSON.stringify(S.topologia));
+    S.rehacer.push(pasoActual());
     restaurarDelHistorial(S.deshacer.pop());
   }
 
   function rehacer() {
     if (!S.rehacer.length) { return; }
-    S.deshacer.push(JSON.stringify(S.topologia));
+    S.deshacer.push(pasoActual());
     restaurarDelHistorial(S.rehacer.pop());
   }
 
-  function restaurarDelHistorial(texto) {
-    var nombre = S.topologia.nombre;
-    S.topologia = JSON.parse(texto);
-    if (S.topologia.nombre !== nombre) { anotarEnlaceEjemplo(); }
+  function pasoActual() {
+    return { red: S.redActual, texto: JSON.stringify(S.topologia) };
+  }
+
+  // Si el paso es de otra red, se olvida lo que era de la que estaba y la dirección deja de nombrar
+  // el ejemplo.
+  function restaurarDelHistorial(paso) {
+    if (paso.red !== S.redActual) {
+      olvidarRed();
+      anotarEnlaceEjemplo();
+      S.redActual = paso.red;
+    }
+    S.topologia = JSON.parse(paso.texto);
     reconstruirEstado(); recontarNombres(); renderTodo();
   }
 
@@ -3600,15 +3611,7 @@ var UI = (function () {
     chk.type = "checkbox"; chk.checked = S.dnsRealActivo;
     chk.setAttribute("data-foco", "dnsreal");
     chk.addEventListener("change", function () {
-      S.dnsRealActivo = chk.checked;
-      if (!S.dnsRealActivo) {
-        S.dnsRealGeneracion += 1; S.dnsRealOcupado = false; S.dnsReal = {};
-        reconstruirEstado();
-      }
-      registrar("DNS", S.dnsRealActivo
-        ? "DNS real activado: los nombres que la simulación no conozca se consultan a Cloudflare."
-        : "DNS real desactivado: no se hace ninguna consulta por la red.");
-      renderInferior();
+      activarDnsReal(chk.checked);
     });
     var lab = el("label", "enlinea");
     lab.appendChild(chk);
@@ -3624,6 +3627,18 @@ var UI = (function () {
       caja.appendChild(nota);
     }
     return caja;
+  }
+
+  function activarDnsReal(activo) {
+    S.dnsRealActivo = activo;
+    if (!activo) {
+      S.dnsRealGeneracion += 1; S.dnsRealOcupado = false; S.dnsReal = {};
+      reconstruirEstado();
+    }
+    registrar("DNS", activo
+      ? "DNS real activado: los nombres que la simulación no conozca se consultan a Cloudflare."
+      : "DNS real desactivado: no se hace ninguna consulta por la red.");
+    renderInferior();
   }
 
   function dibujarInferior() {
@@ -3773,13 +3788,12 @@ var UI = (function () {
   var DOH_MAX_BYTES = 16384;
   var DOH_MAX_POR_MINUTO = 10;
   var DOH_TTL_MAX = 300;
-  var SUFIJOS_RESERVADOS = ["local", "lan", "internal", "home", "localdomain", "localhost", "test", "example", "invalid", "arpa"];
 
   // Un nombre público y válido; nunca una IP ni un nombre de una red privada.
   function nombreConsultable(nombre) {
     var n = String(nombre || "").trim().toLowerCase().replace(/\.$/, "");
     if (!Motor.nombreDnsValido(n) || Red.esIpValida(n)) { return null; }
-    if (SUFIJOS_RESERVADOS.indexOf(n.split(".").pop()) >= 0) { return null; }
+    if (Motor.SUFIJOS_RESERVADOS.indexOf(n.split(".").pop()) >= 0) { return null; }
     return n;
   }
 
@@ -3924,6 +3938,39 @@ var UI = (function () {
       }
       alTerminar(res);
     });
+  }
+
+  // Ejecuta una prueba que puede nombrar un equipo y recuerda cómo repetirla, para el botón del DNS real.
+  function probar(calcular, textoError, mostrar) {
+    function repetir() {
+      if (!S.estado) { reconstruirEstado(); }
+      conDnsReal(calcular, textoError, function (res) {
+        mostrar(res);
+        if (S.ultimo) { S.ultimo.repetir = repetir; }
+      });
+    }
+    repetir();
+  }
+
+  // Con el interruptor apagado, un nombre que la simulación no conoce se puede preguntar afuera desde el
+  // mismo diagnóstico. Sólo sale a la red si se aprieta.
+  function botonDnsReal() {
+    var pendiente = pendienteDnsReal(S.ultimo && S.ultimo.res);
+    if (S.dnsRealActivo || !pendiente || !nombreConsultable(pendiente.nombre)) { return null; }
+    // La prueba de otra red, o de un equipo que ya no está, no se puede repetir.
+    if (S.ultimo.otraRed || !buscarDisp(S.ultimo.origen)) { return null; }
+    var b = boton("Consultar en el DNS real (Cloudflare)", "irconfig consultareal");
+    b.title = "Prende «Resolver nombres reales (requiere internet)», pregunta " + pendiente.nombre + " y repite la prueba";
+    b.addEventListener("click", function () {
+      var repetir = S.ultimo && S.ultimo.repetir;
+      if (!S.ultimo || !buscarDisp(S.ultimo.origen)) { avisar("El equipo de origen ya no está en la red."); return; }
+      activarDnsReal(true);
+      // El botón desaparece al redibujar: el foco pasa al interruptor que acaba de prender.
+      var sw = S.inf.querySelector("[data-foco=dnsreal]");
+      if (sw) { try { sw.focus(); } catch (e) { /* se sigue igual */ } }
+      if (repetir) { repetir(); }
+    });
+    return b;
   }
 
   function panelSimulacion(c) {
@@ -4084,7 +4131,7 @@ var UI = (function () {
       S.origenElegido = selO.value;
       if (!S.estado) { reconstruirEstado(); }
       var origen = selO.value, nombre = selD.value.trim(), tipoDns = selTipoDns.value;
-      conDnsReal(function () { return Motor.consultarDns(S.estado, origen, nombre, tipoDns); },
+      probar(function () { return Motor.consultarDns(S.estado, origen, nombre, tipoDns); },
         "La consulta DNS falló por un error interno: ",
         function (res) { mostrarConsulta(res, origen, nombre, tipoDns); });
     }
@@ -4117,7 +4164,7 @@ var UI = (function () {
       if (selServ.value === "otro") { prot = selProt.value; puerto = Number(inPuerto.value); }
       else { prot = selServ.value.split(":")[0]; puerto = Number(selServ.value.split(":")[1]); }
       var origen = selO.value, destino = selD.value.trim();
-      conDnsReal(function () { return Motor.conectar(S.estado, origen, destino, prot, puerto); },
+      probar(function () { return Motor.conectar(S.estado, origen, destino, prot, puerto); },
         "La conexión falló por un error interno: ",
         function (res) { mostrarConexion(res, origen, destino, prot, puerto); });
     }
@@ -4149,7 +4196,7 @@ var UI = (function () {
       if (!S.estado) { reconstruirEstado(); }
       S.semillaPing = (S.semillaPing || 0) + 1;
       var origen = selO.value, destino = selD.value.trim(), cantidad = Number(selCant.value), semilla = S.semillaPing;
-      conDnsReal(function () { return Motor.pingRepetido(S.estado, origen, destino, { cantidad: cantidad, semilla: semilla }); },
+      probar(function () { return Motor.pingRepetido(S.estado, origen, destino, { cantidad: cantidad, semilla: semilla }); },
         "El ping falló por un error interno: ",
         function (qos) { mostrarPing(qos, origen, destino); });
     }
@@ -4818,6 +4865,8 @@ var UI = (function () {
       (dg.codigo && dg.codigo !== "ENTRADA" ? "<span class='cod' title='Código del diagnóstico'>" + escapar(dg.codigo) + "</span>" : "") +
       "<div>" + escapar(dg.explicacion) + "</div>" +
       "<div class='rev'><b>Sugerencia:</b> " + escapar(dg.sugerencia) + "</div>");
+    var bReal = botonDnsReal();
+    if (bReal) { caja.appendChild(bReal); }
     var origen = S.ultimo && S.ultimo.origen;
     if (origen && buscarDisp(origen) && dg.codigo !== "ENTRADA") {
       var bIr = boton("Ir a configurar " + nombreDe(origen), "irconfig");
@@ -7081,21 +7130,28 @@ var UI = (function () {
     anotarEnlaceEjemplo(idEjemplo);
     // Abrir otra red se puede deshacer: la que había queda en el historial.
     var historial = S.deshacer;
-    if ((S.topologia.dispositivos || []).length) { historial = historial.concat([JSON.stringify(S.topologia)]).slice(-60); }
+    if ((S.topologia.dispositivos || []).length) { historial = historial.concat([pasoActual()]).slice(-60); }
     cargarTopologia(topologia);
     S.deshacer = historial;
     ajustarVista();
   }
 
-  function cargarTopologia(topologia) {
-    // Otra red: se corta la animación en curso y no queda una prueba que repetir sobre ella.
+  // Cambia la red del lienzo: se corta la animación en curso, no queda una prueba que repetir sobre
+  // ella y se descartan las fallas en vivo, el DNS real y la selección.
+  function olvidarRed() {
     if (S.capaAnim) { S.animToken++; limpiarAnim(); }
     if (S.ultimo && S.ultimo.colision) { S.ultimo = null; }
-    S.topologia = clonar(topologia);
+    if (S.ultimo) { S.ultimo.otraRed = true; }
     S.fallasVivas = { enlaces: {}, equipos: {} };
     S.herramientaFalla = null;
     S.dnsRealActivo = false; S.dnsReal = {}; S.dnsRealOcupado = false; S.dnsRealGeneracion += 1;
     S.seleccionado = null; S.enlaceSel = null;
+  }
+
+  function cargarTopologia(topologia) {
+    olvidarRed();
+    S.redesAbiertas += 1; S.redActual = S.redesAbiertas;
+    S.topologia = clonar(topologia);
     S.deshacer = []; S.rehacer = [];
     reconstruirEstado();
     recontarNombres();
