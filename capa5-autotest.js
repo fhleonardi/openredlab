@@ -1872,9 +1872,17 @@ var Autotest = (function () {
       return fila(34, nombre, false, "Excepción: " + e.message);
     } finally {
       window[agujaRed().a] = original;
+      volverAPing();
       try { UI.cargarTopologia(clonar(ejemploPorId("complejo").topologia)); } catch (e1) { /* se sigue igual */ }
       try { UI.setModo(previo); } catch (e2) { /* se sigue igual */ }
     }
+  }
+
+  // Deja la simulación en «Ping», como la encuentran los demás criterios.
+  function volverAPing() {
+    try {
+      document.querySelectorAll(".siminf .modosim button").forEach(function (b) { if (b.textContent === "Ping") { b.click(); } });
+    } catch (e) { /* se sigue igual */ }
   }
 
   // La herramienta «Transmitir a la vez» en la interfaz.
@@ -1918,6 +1926,16 @@ var Autotest = (function () {
           res.querySelector("[data-evento]").click();
           if (!document.querySelector("circle.paquete-col")) { prob.push("un clic en un paso no dibuja la animación"); }
         }
+        // Con A y B iguales la prueba no se hace, y el recorrido dice por qué.
+        campo("Equipo B").value = campo("Equipo A").value;
+        inf().querySelector(".simctrl button.primario").click();
+        var recorrido = inf().querySelector(".recorrido");
+        var aviso = recorrido ? recorrido.textContent : "";
+        if (aviso.indexOf("Elegí dos equipos distintos") < 0 || aviso.indexOf("dirección de destino") >= 0) { prob.push("con A igual a B no explica el motivo"); }
+        // Cargar otra red corta la animación y descarta el resultado.
+        transmitir("bus-hub");
+        UI.cargarTopologia(clonar(ejemploPorId("estrella").topologia));
+        if (document.querySelector("circle.paquete-col") || inf().querySelector(".simres [data-evento]")) { prob.push("al cargar otra red queda la prueba anterior"); }
       }
       if (!transmitir("estrella")) { prob.push("no se pudo probar con el switch"); }
       else if (inf().querySelector(".simres").textContent.indexOf("Sin colisión") < 0) { prob.push("con el switch no dice «Sin colisión»"); }
@@ -1926,6 +1944,7 @@ var Autotest = (function () {
     } catch (e) {
       return fila(36, nombre, false, "Excepción: " + e.message);
     } finally {
+      volverAPing();
       try { UI.cargarTopologia(clonar(ejemploPorId("complejo").topologia)); } catch (e1) { /* se sigue igual */ }
       try { UI.setModo(previo); } catch (e2) { /* se sigue igual */ }
     }

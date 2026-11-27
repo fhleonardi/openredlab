@@ -14,6 +14,7 @@ Los archivos de red llevan el número de su formato (`version`) y la versión de
 
 - **Transmitir a la vez: las colisiones se ven.** En la franja de Simulación, junto a Ping, Consultar DNS y Conectar, hay una herramienta nueva. Elegís dos equipos y los dos mandan una trama en el mismo instante. Con un **hub** en el medio chocan: se ve la colisión, la señal de atasco (jam), la espera al azar de cada uno (espera exponencial binaria de CSMA/CD) y el reintento, hasta que las dos tramas llegan. Una tabla muestra, colisión por colisión, entre qué valores eligió cada equipo y qué eligió. Con un **switch** no hay choque, y el recorrido explica por qué. En una celda Wi-Fi se explica CSMA/CA, y si un router separa a los dos equipos, que no comparten el medio.
 - **Animación sobre el lienzo.** Las dos señales viajan al hub, chocan, el jam sale por todos los puertos, cada equipo espera su turno y el hub repite cada trama. Tiene Pausar, Repetir y velocidad, y un clic en un paso del recorrido salta a ese momento. Cada prueba sortea esperas distintas.
+- **Dos equipos Wi-Fi del mismo punto de acceso ahora se comunican.** Un ping o una conexión entre dos clientes del mismo punto de acceso fallaba, como si no se vieran. Ahora la trama entra por la radio del punto de acceso y vuelve a salir hacia el otro.
 - **Modo presentación después de una consulta DNS o una conexión.** Al pasar a presentación (F) después de Consultar DNS o de Conectar, la franja quedaba vacía por un error interno. Ahora muestra el resumen de la última operación.
 
 ## 1.8.0 — 2026-10-13

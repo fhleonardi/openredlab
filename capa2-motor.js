@@ -958,9 +958,11 @@ var Motor = (function () {
               cola.push(clavePuertoSw);
             }
           }
-        } else {
-          cola.push(claveOtra);
         }
+        // El puerto de entrada se recorre siempre: si es la radio de un punto
+        // de acceso, sostiene un enlace por cliente y la trama puede volver a
+        // salir por ella.
+        cola.push(claveOtra);
       }
     }
     return visitados;
@@ -1215,6 +1217,58 @@ var Motor = (function () {
     });
   }
 
+  // Por qué por ningún puerto del equipo pasa una trama: se revisa el puerto que tiene el enlace,
+  // en el mismo orden que el ping. Devuelve el diagnóstico y el equipo que hay que revisar.
+  function motivoSinConexion(estado, dev) {
+    var nombre = nombreDe(estado, dev.id);
+    var puertos = (dev.interfaces || []).slice().sort(function (x, y) { return (y.habilitada ? 1 : 0) - (x.habilitada ? 1 : 0); });
+    var conEnlace = puertos.filter(function (f) { return enlacesDe(estado, dev.id, f.id).length > 0; })[0];
+    if (!conEnlace) {
+      return { diagnostico: diagnosticoDe("D02", { origen: nombre, interfaz: (puertos[0] || {}).id }), equipo: dev.id };
+    }
+    function propio(codigo, ctx) { return { diagnostico: diagnosticoDe(codigo, ctx), equipo: dev.id }; }
+    if (!conEnlace.habilitada) { return propio("D01", { origen: nombre, interfaz: conEnlace.id }); }
+    var enlace = enlacesDe(estado, dev.id, conEnlace.id)[0];
+    var compat = mediosCompatibles(estado, enlace);
+    if (!compat.ok) {
+      return propio("D03", {
+        cable: mayuscula(cableEntre(estado, enlace)), tipoCable: " es " + palabraMedio(enlace.tipo),
+        medioA: palabraMedio(compat.medioA), medioB: palabraMedio(compat.medioB)
+      });
+    }
+    var idOtro = otraPunta(enlace, dev.id), nombreOtro = nombreDe(estado, idOtro);
+    if (enlace.tipo === "wireless" && !modosEnlaceOk(estado, enlace)) {
+      var modos = modoEnlaceDe(estado, enlace, dev.id, conEnlace.id);
+      return propio("D18", { enlace: enlace.id, modoA: modos.mio, modoB: modos.ajeno, nombreA: nombre, nombreB: nombreOtro });
+    }
+    var radio = chequeoWireless(estado, enlace);
+    if (radio.aplica && !radio.enAlcance) {
+      return propio("D17", { distancia: radio.distancia, umbral: estado.umbralWireless, nombreA: nombre, nombreB: nombreOtro });
+    }
+    // El cable puede estar bien y ser la otra punta la que no atiende: se la nombra.
+    var vecino = buscarDispositivo(estado, idOtro);
+    var extremo = enlace.a.dispositivo === dev.id && enlace.a.interfaz === conEnlace.id ? enlace.b : enlace.a;
+    var puertoVecino = buscarInterfaz(vecino, extremo.interfaz);
+    function delVecino(problema, sugerencia) {
+      return {
+        diagnostico: {
+          codigo: "D02", titulo: CATALOGO.D02.titulo,
+          explicacion: nombre + " está conectado a " + nombreOtro + ", pero " + problema + ": por ese enlace no pasa nada.",
+          sugerencia: sugerencia
+        },
+        equipo: idOtro
+      };
+    }
+    if (enlace.estado === "up" && vecino && !vecino.encendido) {
+      return delVecino(nombreOtro + " está apagado", "Encendé " + nombreOtro + ".");
+    }
+    if (enlace.estado === "up" && puertoVecino && !puertoVecino.habilitada) {
+      return delVecino("el puerto " + puertoVecino.id + " de " + nombreOtro + " está deshabilitado",
+        "Habilitá el puerto " + puertoVecino.id + " de " + nombreOtro + ".");
+    }
+    return propio("D02", { origen: nombre, interfaz: conEnlace.id });
+  }
+
   // El camino de capa 2 entre dos equipos, probando sus puertos; el cableado antes que el aire.
   function caminoEntreEquipos(estado, a, b) {
     var mejor = null;
@@ -1228,6 +1282,12 @@ var Motor = (function () {
       });
     });
     return mejor;
+  }
+
+  // Encendido y con al menos un puerto por el que hoy pasa una trama.
+  function puedeTransmitir(estado, id) {
+    var dev = buscarDispositivo(estado, id);
+    return !!dev && !!dev.encendido && puertosConEnlace(estado, dev).length > 0;
   }
 
   function diagnosticoDeEntrada(titulo, explicacion, sugerencia) {
@@ -1273,21 +1333,8 @@ var Motor = (function () {
     if (apagado) { return fallar(diagnosticoDe("D01", { origen: nombreDe(estado, apagado.id), interfaz: "?" }), apagado.id); }
     var sinCable = !puertosConEnlace(estado, a).length ? a : (!puertosConEnlace(estado, b).length ? b : null);
     if (sinCable) {
-      // El cable puede estar bien y ser el de la otra punta el apagado: se lo nombra.
-      var vecinoApagado = (estado.topologia.enlaces || []).filter(function (e) {
-        return e.estado === "up" && (e.a.dispositivo === sinCable.id || e.b.dispositivo === sinCable.id);
-      }).map(function (e) { return buscarDispositivo(estado, otraPunta(e, sinCable.id)); })
-        .filter(function (d) { return d && !d.encendido; })[0];
-      if (vecinoApagado) {
-        var quien = nombreDe(estado, vecinoApagado.id);
-        return fallar({
-          codigo: "D02", titulo: CATALOGO.D02.titulo,
-          explicacion: nombreDe(estado, sinCable.id) + " está conectado a " + quien + ", pero " + quien + " está apagado: por ese cable no pasa nada.",
-          sugerencia: "Encendé " + quien + "."
-        }, vecinoApagado.id);
-      }
-      var puerto = (sinCable.interfaces[0] || {}).id;
-      return fallar(diagnosticoDe("D02", { origen: nombreDe(estado, sinCable.id), interfaz: puerto }), sinCable.id);
+      var motivo = motivoSinConexion(estado, sinCable);
+      return fallar(motivo.diagnostico, motivo.equipo);
     }
 
     var camino = caminoEntreEquipos(estado, a, b);
@@ -1336,18 +1383,23 @@ var Motor = (function () {
       }
       var separadores = intermedios.filter(function (d) { return !esHub(d); });
       var conSwitch = separadores.length ? nombres(separadores) : "un conmutador";
+      var varios = separadores.length > 1;
       var hayHub = hubs.length > 0;
       agregar("Comprobar si comparten el medio",
-        "No: entre " + nombreA + " y " + nombreB + " está " + conSwitch + ". Cada puerto de un switch o punto de acceso es el límite " +
+        "No: entre " + nombreA + " y " + nombreB + (varios ? " están " : " está ") + conSwitch + ". Cada puerto de un switch o punto de acceso es el límite " +
         "de un dominio de colisión: " + nombreA + " está en uno y " + nombreB + " en otro." +
         (hayHub ? " Del lado de " + nombres(hubs) + " el medio sigue compartido, pero sólo entre los equipos de ese lado." : ""), 1);
       agregar("Transmitir a la vez",
         "Los dos envían en el mismo instante y las señales no se mezclan: no hay colisión entre ellos." +
-        (hayHub ? " En el lado del hub, el puerto del switch escucha el medio antes de transmitir; una colisión de ese lado no cruza al otro."
-          : " En full dúplex se envía y se recibe a la vez: CSMA/CD queda desactivado."), 2, simultaneo);
-      agregar(conSwitch + " almacena y reenvía",
-        "Recibe cada trama completa, mira la MAC de destino y la reenvía por el puerto que corresponde. Si dos tramas van al mismo " +
-        "puerto, esperan en fila.", 2);
+        (hayHub ? " En el lado del hub, el puerto del switch escucha el medio antes de transmitir; una colisión de ese lado no cruza al otro." : "") +
+        (enAire ? " El tramo inalámbrico es half dúplex: ahí las estaciones comparten el aire y evitan las colisiones con CSMA/CA " +
+          "(escuchan, esperan y confirman con un ACK)." : "") +
+        (!hayHub ? (enAire ? " En los tramos cableados se trabaja en full dúplex y CSMA/CD queda desactivado."
+          : " En full dúplex se envía y se recibe a la vez: CSMA/CD queda desactivado.") : ""), 2, simultaneo);
+      agregar(conSwitch + (varios ? " almacenan y reenvían" : " almacena y reenvía"),
+        (varios ? "Cada uno recibe la trama completa, mira la MAC de destino y la reenvía"
+          : "Recibe cada trama completa, mira la MAC de destino y la reenvía") +
+        " por el puerto que corresponde. Si dos tramas van al mismo puerto, esperan en fila.", 2);
       return terminar("sin-colision", { ruta: ruta });
     }
 
@@ -5820,7 +5872,7 @@ var Motor = (function () {
 
     // Transmitir a la vez (CSMA/CD).
     (function () {
-      function hubCon(modeloB) {
+      function hubCon() {
         var h = fabSwitch("hub1"); h.modelo = "hub";
         return h;
       }
@@ -5883,6 +5935,54 @@ var Motor = (function () {
         [hubApagado.diagnostico.codigo, hubApagado.equipo, /hub1 está apagado/.test(hubApagado.diagnostico.explicacion)], ["D02", "hub1", true]);
       comparar("transmitir a la vez: el mismo equipo o un hub no valen",
         [transmitirALaVez(red(), "pc1", "pc1", {}).diagnostico.codigo, transmitirALaVez(red(), "pc1", "hub1", {}).diagnostico.codigo], ["ENTRADA", "ENTRADA"]);
+
+      // Sin conexión: el mismo motivo que daría el ping, no "no hay cable".
+      function motivo(antes) {
+        var r = transmitirALaVez(red({ antes: antes }), "pc1", "pc2", {});
+        return [r.diagnostico.codigo, r.equipo, r.diagnostico.explicacion];
+      }
+      var deshabilitada = motivo(function (t) { t.dispositivos[0].interfaces[0].habilitada = false; });
+      comparar("transmitir a la vez: puerto propio deshabilitado, D01",
+        [deshabilitada[0], deshabilitada[1], /eth0 está deshabilitado/.test(deshabilitada[2])], ["D01", "pc1", true]);
+      var puertoHub = motivo(function (t) { t.dispositivos[3].interfaces[0].habilitada = false; });
+      comparar("transmitir a la vez: puerto de la otra punta deshabilitado, lo nombra",
+        [puertoHub[0], puertoHub[1], /el puerto fa0\/1 de hub1 está deshabilitado/.test(puertoHub[2])], ["D02", "hub1", true]);
+      var fibra = motivo(function (t) { t.enlaces[0].tipo = "fibra"; });
+      comparar("transmitir a la vez: cable equivocado, D03", [fibra[0], fibra[1]], ["D03", "pc1"]);
+
+      // Dos switches en el camino: la explicación va en plural.
+      var dosSwitches = crearEstado(fabTopo(
+        [fabPc("pc1", "192.168.1.1", 24, null), fabPc("pc2", "192.168.1.2", 24, null), fabSwitch("sw1"), fabSwitch("sw2")],
+        [fabEnlace("l1", "pc1", "eth0", "sw1", "fa0/1"), fabEnlace("l2", "sw1", "fa0/2", "sw2", "fa0/1"), fabEnlace("l3", "pc2", "eth0", "sw2", "fa0/2")]));
+      var rDos = transmitirALaVez(dosSwitches, "pc1", "pc2", {});
+      comparar("transmitir a la vez: dos switches, en plural",
+        [/están sw1 y sw2/.test(rDos.pasos[0].detalle), rDos.pasos[2].titulo], [true, "sw1 y sw2 almacenan y reenvían"]);
+
+      // Wi-Fi: dos clientes del mismo punto de acceso, y un camino mixto.
+      function cliente(id, ip, x) {
+        var pc = fabPc(id, null, 24, null, { x: x, y: 200 });
+        pc.interfaces[0].habilitada = false;
+        pc.interfaces[1].habilitada = true;
+        pc.interfaces[1].modoRadio = "cliente";
+        pc.interfaces[1].ip = ip;
+        return pc;
+      }
+      function celda(antes) {
+        var topo = fabTopo(
+          [cliente("c1", "192.168.1.1", 180), cliente("c2", "192.168.1.2", 220), fabAp("ap1", null), fabPc("pc3", "192.168.1.3", 24, null), fabSwitch("sw1")],
+          [fabEnlace("l1", "c1", "wlan0", "ap1", "wlan0", { tipo: "wireless" }), fabEnlace("l2", "c2", "wlan0", "ap1", "wlan0", { tipo: "wireless" }),
+            fabEnlace("l3", "ap1", "eth0", "sw1", "fa0/1"), fabEnlace("l4", "pc3", "eth0", "sw1", "fa0/2")]);
+        if (antes) { antes(topo); }
+        return crearEstado(topo);
+      }
+      comparar("Wi-Fi: dos clientes del mismo punto de acceso se hacen ping", ping(celda(), "c1", "192.168.1.2").exito, true);
+      comparar("Wi-Fi: la difusión de un cliente llega al otro", segmentoL2(celda(), "c1", "wlan0").indexOf("c2:wlan0") >= 0, true);
+      comparar("transmitir a la vez: dos clientes del mismo punto de acceso, CSMA/CA", transmitirALaVez(celda(), "c1", "c2", {}).resultado, "csma-ca");
+      var mixto = transmitirALaVez(celda(), "c1", "pc3", {});
+      comparar("transmitir a la vez: camino con Wi-Fi y cable explica el tramo half dúplex",
+        [mixto.resultado, /half dúplex/.test(mixto.pasos[1].detalle), /En los tramos cableados/.test(mixto.pasos[1].detalle)], ["sin-colision", true, true]);
+      var lejos = transmitirALaVez(celda(function (t) { t.dispositivos[0].x = 5000; }), "c1", "c2", {});
+      comparar("transmitir a la vez: fuera de alcance, D17", [lejos.diagnostico.codigo, lejos.equipo], ["D17", "c1"]);
     })();
 
     // 36. Un destino mal escrito no es un diagnóstico de red.
@@ -5914,6 +6014,7 @@ var Motor = (function () {
     esHub: esHub,
     esConmutador: esConmutador,
     transmitirALaVez: transmitirALaVez,
+    puedeTransmitir: puedeTransmitir,
     TIPOS_REGISTRO: TIPOS_REGISTRO,
     JERARQUIA_DNS: JERARQUIA,
     consultarDns: consultarDns,

@@ -343,6 +343,7 @@ var UI = (function () {
   }
 
   function reconstruirEstado() {
+    descartarColisionObsoleta();
     podarFallasVivas();
     try {
       S.estado = Motor.crearEstado(topologiaSimulada());
@@ -4210,22 +4211,29 @@ var UI = (function () {
     return dominio.dispositivos.some(function (id) { var d = buscarDisp(id); return d && Motor.esHub(d); });
   }
 
+  // Los que hoy pueden transmitir (encendidos y con un enlace que pasa); si no hay ninguno, todos.
+  function preferirActivos(lista) {
+    var activos = S.estado ? lista.filter(function (d) { return Motor.puedeTransmitir(S.estado, d.id); }) : [];
+    return activos.length ? activos : lista;
+  }
+
   function equipoInicialColision(emisores) {
     function vale(id) { return emisores.some(function (d) { return d.id === id; }); }
     if (S.origenElegido && vale(S.origenElegido)) { return S.origenElegido; }
     if (S.seleccionado && vale(S.seleccionado)) { return S.seleccionado; }
+    var activos = preferirActivos(emisores);
     var enHub = null;
     dominiosDeColision().filter(cuelgaDeHub).forEach(function (dom) {
-      dom.dispositivos.forEach(function (id) { if (!enHub && vale(id)) { enHub = id; } });
+      dom.dispositivos.forEach(function (id) { if (!enHub && activos.some(function (d) { return d.id === id; })) { enHub = id; } });
     });
-    return enHub || (emisores[0] ? emisores[0].id : "");
+    return enHub || (activos[0] ? activos[0].id : "");
   }
 
   // Un equipo que comparta el dominio de colisión de A (primero, el de un hub): ahí la prueba muestra algo.
   function companeroDeColision(idA, emisores) {
     var doms = dominiosDeColision().filter(function (d) { return d.dispositivos.indexOf(idA) >= 0; });
     doms.sort(function (x, y) { return (cuelgaDeHub(y) ? 1 : 0) - (cuelgaDeHub(x) ? 1 : 0); });
-    var candidatos = emisores.filter(function (d) { return d.id !== idA; });
+    var candidatos = preferirActivos(emisores.filter(function (d) { return d.id !== idA; }));
     for (var i = 0; i < doms.length; i++) {
       for (var j = 0; j < candidatos.length; j++) {
         if (doms[i].dispositivos.indexOf(candidatos[j].id) >= 0) { return candidatos[j].id; }
@@ -4238,7 +4246,10 @@ var UI = (function () {
     if (res.resultado === "colision") {
       return "Las dos tramas llegaron después de " + res.colisiones + (res.colisiones === 1 ? " colisión." : " colisiones.");
     }
-    if (res.resultado === "sin-colision") { return "Sin colisión: cada equipo está en su propio dominio."; }
+    if (res.resultado === "sin-colision") {
+      return res.ruta.length > 2 ? "Sin colisión: cada equipo está en su propio dominio."
+        : "Sin colisión: es un enlace punto a punto en full dúplex.";
+    }
     if (res.resultado === "csma-ca") { return "Wi-Fi: las colisiones se evitan (CSMA/CA)."; }
     return "No comparten el medio: sus tramas no se cruzan.";
   }
@@ -4297,6 +4308,32 @@ var UI = (function () {
 
   function puntosDeRuta(ids) {
     return ids.map(buscarDisp).filter(Boolean).map(function (d) { return { x: d.x, y: d.y - 30 }; });
+  }
+
+  // Cada tramo que la animación recorre sigue teniendo sus dos equipos y su cable.
+  function rutasVigentes(res) {
+    var enlaces = (S.topologia && S.topologia.enlaces) || [];
+    function unidos(x, y) {
+      return enlaces.some(function (e) {
+        return (e.a.dispositivo === x && e.b.dispositivo === y) || (e.a.dispositivo === y && e.b.dispositivo === x);
+      });
+    }
+    return (res.eventos || []).every(function (e) {
+      return (e.rutas || []).every(function (r) {
+        var ids = r.ids || r;
+        return ids.every(function (id, i) { return !!buscarDisp(id) && (i === 0 || unidos(ids[i - 1], id)); });
+      });
+    });
+  }
+
+  // Si al editar la red desaparece algo de la última prueba (un equipo o un cable), se la descarta.
+  // Las fallas en vivo no la descartan: no cambian el diseño.
+  function descartarColisionObsoleta() {
+    var u = S.ultimo;
+    if (!u || !u.colision) { return; }
+    if (buscarDisp(u.a) && buscarDisp(u.b) && rutasVigentes(u.res)) { return; }
+    limpiarAnim();
+    S.ultimo = null;
   }
 
   function puntoEnRuta(puntos, avance) {
@@ -4741,9 +4778,10 @@ var UI = (function () {
     if (enTramas) {
       renderTramas(res, lista);
     } else if (!pasos.length) {
-      lista.appendChild(el("p", "", res.diagnostico && res.diagnostico.codigo === "ENTRADA"
-        ? "No se recorrió ningún paso: la dirección de destino no es válida."
-        : "No se recorrió ningún paso."));
+      var sinPasos = "No se recorrió ningún paso.";
+      if (esColision && res.diagnostico) { sinPasos = "La prueba no se hizo: " + escapar(res.diagnostico.titulo) + "."; }
+      else if (res.diagnostico && res.diagnostico.codigo === "ENTRADA") { sinPasos = "No se recorrió ningún paso: la dirección de destino no es válida."; }
+      lista.appendChild(el("p", "", sinPasos));
     } else if (S.verTodos) {
       visibles = pasos;
     } else if (res.exito) {
@@ -6556,6 +6594,9 @@ var UI = (function () {
   }
 
   function cargarTopologia(topologia) {
+    // Otra red: se corta la animación en curso y no queda una prueba que repetir sobre ella.
+    if (S.capaAnim) { S.animToken++; limpiarAnim(); }
+    if (S.ultimo && S.ultimo.colision) { S.ultimo = null; }
     S.topologia = clonar(topologia);
     S.fallasVivas = { enlaces: {}, equipos: {} };
     S.herramientaFalla = null;
