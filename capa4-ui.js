@@ -715,6 +715,7 @@ var UI = (function () {
       ".simbarra.menuabierto>.modos{display:flex;width:100%;flex-wrap:wrap;}" +
       ".simbarra.menuabierto>select,.simbarra.menuabierto>button:not(.menucel){display:block;width:100%;max-width:none;padding:8px;}" +
       ".simbarra.menuabierto>select{flex-basis:100%;}" +
+      ".simbarra.menuabierto>button[hidden]{display:none;}" +
       ".simcuerpo{flex:1;min-height:0;}" +
       ".simpaleta,.simprop,.siminf{display:none;}" +
       ".simacciones{display:flex;}" +

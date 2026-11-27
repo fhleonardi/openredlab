@@ -13,6 +13,7 @@ Los archivos de red llevan el número de su formato (`version`) y la versión de
 ## 1.13.0 — 2026-11-27
 
 - **Acerca de.** El botón **ⓘ** de la barra (en el celular, *Acerca de* dentro del menú) abre una ventana con quién hace OpenRedLab, el enlace al repositorio, la licencia, cómo reportar un problema, qué pasa con tus datos, la bibliografía de la materia y los avisos de terceros. También se abre agregando `#acerca` al final de la dirección.
+- **Menú del celular:** *Exportar para el alumno* aparece sólo en modo Docente. Antes se veía, deshabilitado, en todos los modos.
 
 ## 1.12.0 — 2026-11-27
 
