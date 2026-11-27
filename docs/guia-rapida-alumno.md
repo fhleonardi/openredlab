@@ -116,6 +116,10 @@ En *Cómo viaja el paquete*, hacé clic en una línea (o Enter con el teclado) y
 
 Si la operación **no llega**, el punto avanza hasta donde pudo, se pone **rojo** y marca con una ✗ el último equipo que alcanzó: ahí está el problema. Si tu sistema tiene activada la opción de reducir movimiento, no se anima: se muestra el último punto y no aparecen los botones.
 
+## Guía de configuración
+
+Al agregar un equipo, el panel de la derecha muestra **Guía de configuración**: los pasos que le faltan según su tipo. El que está marcado con una flecha explica para qué sirve; al apretar un paso se abre su campo. Cada uno se marca solo cuando está hecho. La guía no elige las direcciones por vos y no dice si la red funciona: eso lo comprobás con un ping. Se puede ocultar y volver a mostrar. No aparece en laboratorios, desafíos ni en modo Docente.
+
 ## Internet y NAT
 
 La nube **Internet** representa todas las direcciones públicas. Una IP privada (10.x, 172.16–31.x, 192.168.x) no viaja por internet: para salir y para que te encuentren desde afuera hace falta NAT.

@@ -29,7 +29,7 @@ var Escenarios = (function () {
 
   // Versión de la app (semver). Cada PR que toca una capa la sube y suma su
   // entrada en CHANGELOG.md; el ensamblador controla que coincidan.
-  var VERSION_APP = "1.11.0";
+  var VERSION_APP = "1.12.0";
 
   // Versión del formato de archivo que escribe esta capa. Sube sólo si un
   // campo existente cambia o desaparece, y cada subida trae su migración.
@@ -1234,6 +1234,8 @@ var Escenarios = (function () {
       var esc = copia.escenario;
       var sectores = normalizarSectores(esc);
       copia.escenario = { objetivos: esc.objetivos || [] };
+      // Sin objetivos ni sectores, la lista de fallas era lo único que decía que es un ejercicio.
+      if (!sectores.length && !copia.escenario.objetivos.length && (esc.fallas || []).length) { copia.escenario.ejercicio = true; }
       if (sectores.length) {
         copia.escenario.modo = "desafio";
         if (bloqueDe(esc)) { copia.escenario.bloqueBase = bloqueDe(esc); }
@@ -3597,6 +3599,14 @@ var Escenarios = (function () {
         [paraAlumno.escenario.modo, paraAlumno.escenario.bloqueBase, paraAlumno.escenario.requerimientos.length,
           paraAlumno.dispositivos.filter(function (d) { return d.tipo !== "internet" && d.interfaces.some(function (f) { return f.ip; }); }).length],
         ["desafio", "10.45.7.0/24", 5, 0]);
+      // Un laboratorio sólo de fallas, exportado, sigue marcado como ejercicio.
+      var soloFallas = topologiaOficinaDns();
+      soloFallas.escenario = { fallas: [{ tipo: "equipo-apagado", dispositivo: "pc1" }], objetivos: [] };
+      var alumnoFallas = importar(exportarParaAlumno(soloFallas));
+      comparar("exportar un laboratorio sólo de fallas lo marca como ejercicio",
+        [alumnoFallas.ok, !!(alumnoFallas.topologia && alumnoFallas.topologia.escenario.ejercicio),
+          !!(alumnoFallas.topologia && alumnoFallas.topologia.escenario.fallas)], [true, true, false]);
+      comparar("exportar un desafío no agrega la marca", paraAlumno.escenario.ejercicio, undefined);
       var conCalidad = clonar(ofi);
       conCalidad.enlaces[0].jitterMs = 3; conCalidad.enlaces[0].perdidaPct = 5;
       comparar("calidad del enlace válida", validarTopologia(conCalidad).ok, true);
