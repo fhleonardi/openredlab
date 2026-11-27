@@ -2057,7 +2057,112 @@ var Autotest = (function () {
     }
   }
 
-  var CRITERIOS_TECNICOS = [crit01, crit09, crit10, crit11, crit13, crit14, crit15, crit16, crit24, crit25, crit26, crit27, crit28, crit30, crit32, crit33, crit34, crit36, crit38];
+  function crit39() {
+    var nombre = "En los dos temas, los textos de color del lienzo se leen (4,5:1 o más) y sus colores salen del tema";
+    var previo = modoActualDom();
+    var raiz = document.querySelector(".simraiz");
+    var oscuroInicial = !!raiz && raiz.classList.contains("oscuro");
+    var bTema = null;
+    document.querySelectorAll(".simbarra button").forEach(function (b) { if (/^Tema /.test(b.textContent)) { bTema = b; } });
+    function rgb(texto) {
+      var c = document.createElement("canvas").getContext("2d");
+      c.fillStyle = "#000"; c.fillStyle = texto; c.fillRect(0, 0, 1, 1);
+      var d = c.getImageData(0, 0, 1, 1).data;
+      return [d[0], d[1], d[2]];
+    }
+    function luz(v) {
+      var s = v.map(function (x) { x = x / 255; return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4); });
+      return 0.2126 * s[0] + 0.7152 * s[1] + 0.0722 * s[2];
+    }
+    function contraste(a, b) {
+      var x = luz(rgb(a)), y = luz(rgb(b));
+      return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+    }
+    try {
+      var prob = [];
+      var peor = 99;
+      if (!bTema) { return fila(39, nombre, false, "Falla: no está el botón de tema."); }
+      UI.setModo("topologia");
+      var topo = clonar(ejemploPorId("mikrotik").topologia);
+      topo.enlaces[0].estado = "down";
+      for (var vuelta = 0; vuelta < 2; vuelta++) {
+        UI.cargarTopologia(clonar(topo));
+        var tema = raiz.classList.contains("oscuro") ? "oscuro" : "claro";
+        var estilo = getComputedStyle(raiz);
+        var fondo = estilo.getPropertyValue("--sim-fondo").trim();
+        var rotulos = document.querySelectorAll("svg.lienzo g.enlace > text");
+        if (!rotulos.length) { prob.push("no hay nombres de cables en el lienzo"); }
+        rotulos.forEach(function (t) {
+          var c = contraste(getComputedStyle(t).fill, fondo);
+          peor = Math.min(peor, c);
+          if (c < 4.5) { prob.push("en el tema " + tema + " «" + t.textContent + "» tiene contraste " + c.toFixed(1)); }
+        });
+        ["--sim-mal", "--sim-ok", "--sim-an-pedido", "--sim-an-equipob", "--sim-an-cliente", "--sim-an-servidor", "--sim-an-otro"].forEach(function (v) {
+          var c = contraste(estilo.getPropertyValue(v).trim(), fondo);
+          peor = Math.min(peor, c);
+          if (c < 4.5) { prob.push("en el tema " + tema + " " + v + " tiene contraste " + c.toFixed(1)); }
+        });
+        var puerto = document.querySelector("svg.lienzo rect.puerto");
+        if (!puerto || !puerto.style.fill) { prob.push("los puertos no toman el color del tema"); }
+        bTema.click();
+      }
+      if (prob.length === 0) { return fila(39, nombre, true, "Nombres de cables y colores de las animaciones legibles en claro y oscuro (el peor, " + peor.toFixed(1) + ":1)."); }
+      return fila(39, nombre, false, "Falla: " + prob.join("; ") + ".");
+    } catch (e) {
+      return fila(39, nombre, false, "Excepción: " + e.message);
+    } finally {
+      try { if (bTema && raiz.classList.contains("oscuro") !== oscuroInicial) { bTema.click(); } } catch (e0) { /* se sigue igual */ }
+      try { UI.cargarTopologia(clonar(ejemploPorId("complejo").topologia)); } catch (e1) { /* se sigue igual */ }
+      try { UI.setModo(previo); } catch (e2) { /* se sigue igual */ }
+    }
+  }
+
+  function crit40() {
+    var nombre = "La dirección con #ejemplo=… abre ese ejemplo, y elegir uno en «Ejemplos…» la actualiza";
+    var previo = modoActualDom();
+    var direccion = location.href;
+    function seguir(hash) {
+      history.replaceState(null, "", hash);
+      window.dispatchEvent(new Event("hashchange"));
+    }
+    function ids() { return UI.topologiaActual().dispositivos.map(function (d) { return d.id; }).join(","); }
+    function idsDe(id) { return ejemploPorId(id).topologia.dispositivos.map(function (d) { return d.id; }).join(","); }
+    try {
+      var prob = [];
+      UI.setModo("topologia");
+      UI.cargarTopologia(clonar(ejemploPorId("complejo").topologia));
+      seguir("#ejemplo=mikrotik");
+      if (ids() !== idsDe("mikrotik")) { prob.push("#ejemplo=mikrotik no abre el ejemplo"); }
+      // La red que había se recupera con Deshacer, y la dirección deja de nombrar el ejemplo.
+      UI.alternarFalla("enlace", ejemploPorId("mikrotik").topologia.enlaces[0].id);
+      if (document.activeElement && document.activeElement.blur) { document.activeElement.blur(); }
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true }));
+      if (ids() !== idsDe("complejo")) { prob.push("Deshacer no trae la red que había antes del enlace"); }
+      if (location.hash.indexOf("#ejemplo=") === 0) { prob.push("tras Deshacer la dirección sigue nombrando el ejemplo"); }
+      if (UI.fallasEnVivo().enlaces.length) { prob.push("tras Deshacer quedan las fallas en vivo de la otra red"); }
+      seguir("#ejemplo=MikroTik.");
+      if (ids() !== idsDe("mikrotik") || location.hash !== "#ejemplo=mikrotik") { prob.push("el enlace con mayúsculas y punto final no abre el ejemplo"); }
+      seguir("#ejemplo=no-existe");
+      if (ids() !== idsDe("mikrotik")) { prob.push("un ejemplo que no existe cambia la red"); }
+      var sel = document.querySelector(".simbarra select[aria-label='Topologías de ejemplo']");
+      if (!sel) { prob.push("no está «Ejemplos…»"); }
+      else {
+        sel.value = "router-8";
+        sel.dispatchEvent(new Event("change", { bubbles: true }));
+        if (location.hash !== "#ejemplo=router-8") { prob.push("al elegir un ejemplo la dirección quedó en «" + location.hash + "»"); }
+      }
+      if (prob.length === 0) { return fila(40, nombre, true, "El enlace abrió el ejemplo del router MikroTik, Deshacer trajo la red anterior, un nombre desconocido no tocó la red y elegir «router-8» quedó en la dirección."); }
+      return fila(40, nombre, false, "Falla: " + prob.join("; ") + ".");
+    } catch (e) {
+      return fila(40, nombre, false, "Excepción: " + e.message);
+    } finally {
+      try { history.replaceState(null, "", direccion); } catch (e0) { /* se sigue igual */ }
+      try { UI.cargarTopologia(clonar(ejemploPorId("complejo").topologia)); } catch (e1) { /* se sigue igual */ }
+      try { UI.setModo(previo); } catch (e2) { /* se sigue igual */ }
+    }
+  }
+
+  var CRITERIOS_TECNICOS = [crit01, crit09, crit10, crit11, crit13, crit14, crit15, crit16, crit24, crit25, crit26, crit27, crit28, crit30, crit32, crit33, crit34, crit36, crit38, crit39, crit40];
 
   function correr(opciones) {
     var tecnico = !!(opciones && opciones.tecnico);

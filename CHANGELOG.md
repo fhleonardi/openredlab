@@ -10,6 +10,15 @@ Los números siguen la forma MAYOR.MENOR.PARCHE:
 
 Los archivos de red llevan el número de su formato (`version`) y la versión del simulador que los exportó (`generador`). Un archivo de un formato anterior se actualiza solo al abrirlo.
 
+## 1.11.0 — 2026-11-27
+
+- **Enlaces a un ejemplo.** Al elegir un ejemplo, la dirección de la página termina en `#ejemplo=` y su nombre (por ejemplo `#ejemplo=mikrotik`). Copiala y compartila: quien la abra ve ese ejemplo. Si tiene una red guardada de antes, no se pisa: puede recuperarla o abrir el ejemplo.
+- **Abrir otra red se puede deshacer.** Después de elegir un ejemplo, importar un archivo o seguir un enlace, **Deshacer** trae la red que había. Antes el historial quedaba vacío.
+- **El equipo que se arrastra desde la paleta** vuelve a verse con su recuadro.
+- **El tema oscuro se lee mejor.** Los nombres de los cables, los avisos en rojo y los carteles de las animaciones usan colores propios de cada tema. Los puertos libres ya no son cuadrados blancos, y las filas de colores de la captura tienen contraste. En el tema claro, los carteles azules y violetas son un poco más oscuros.
+- **Los botones responden al apretarlos:** se hunden y cambian de brillo.
+- **La página se presenta al compartirla:** tiene descripción, título e icono para la vista previa de un enlace.
+
 ## 1.10.4 — 2026-11-27
 
 - **Un nombre de internet que la simulación no tiene ya no figura como inexistente.** Al hacer ping, Consultar DNS o Conectar a un nombre que no está cargado (mercadolibre.com, por ejemplo), el diagnóstico D25 y el recorrido decían que no existía o que estaba mal escrito. Ahora dicen que la simulación no lo conoce. Los nombres reservados (`.local`, `.home`, `.test`) y los de la zona de un servidor propio se explican como antes.

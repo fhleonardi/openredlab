@@ -52,6 +52,8 @@ var UI = (function () {
     colocando: null,
     vista: { x: 0, y: MARGEN_VISTA, k: 1 },
     deshacer: [],
+    // Número de la red que está en el lienzo: cambia al abrir otra, y viaja con cada paso del historial.
+    redActual: 0, redesAbiertas: 0,
     rehacer: [],
     presentacion: false,
     tema: null, // hasta que se aplica uno, el del sistema
@@ -374,24 +376,27 @@ var UI = (function () {
   };
 
   var CSS = [
-    ".simraiz{font-family:system-ui,'Segoe UI',Roboto,Arial,sans-serif;display:flex;flex-direction:column;width:100%;max-width:100vw;height:100%;min-height:520px;overflow:hidden;background:var(--sim-fondo);color:var(--sim-texto);color-scheme:light;--sim-fondo:#f7f9fb;--sim-texto:#14181f;--sim-tenue:#5a6472;--sim-panel:#ffffff;--sim-borde:#c9d1dc;--sim-acento:#1a5fb4;--sim-ok:#1e7a34;--sim-okfondo:#e7f4ea;--sim-mal:#b3261e;--sim-malfondo:#fbeae8;--sim-aviso:#8a5a00;--sim-cabecera:#13355e;--sim-sobreacento:#ffffff;}",
-    ".simraiz.oscuro{color-scheme:dark;--sim-fondo:#12171e;--sim-texto:#e8eef4;--sim-tenue:#9aa5b4;--sim-panel:#1b232d;--sim-borde:#3a4a5a;--sim-acento:#5aa9e6;--sim-ok:#4cc38a;--sim-okfondo:#15301f;--sim-mal:#f0726a;--sim-malfondo:#3a1a1a;--sim-aviso:#e0a63c;--sim-cabecera:#0e1a2b;--sim-sobreacento:#0e1a2b;}",
+    ".simraiz{font-family:system-ui,'Segoe UI',Roboto,Arial,sans-serif;display:flex;flex-direction:column;width:100%;max-width:100vw;height:100%;min-height:520px;overflow:hidden;background:var(--sim-fondo);color:var(--sim-texto);color-scheme:light;--sim-fondo:#f7f9fb;--sim-texto:#14181f;--sim-tenue:#5a6472;--sim-panel:#ffffff;--sim-borde:#c9d1dc;--sim-acento:#1a5fb4;--sim-ok:#1e7a34;--sim-okfondo:#e7f4ea;--sim-mal:#b3261e;--sim-malfondo:#fbeae8;--sim-aviso:#8a5a00;--sim-cabecera:#13355e;--sim-sobreacento:#ffffff;--sim-cabtexto:#ffffff;--sim-resalte:#f59e0b;--sim-resaltefondo:rgba(245,158,11,.18);--sim-marca:#fde68a;--sim-marcatexto:#111111;--sim-consola:#0d1117;--sim-consolatexto:#d6f0d6;--sim-consolaerror:#ff8a80;--sim-apagado:#999999;--sim-an-pedido:#1f6fc4;--sim-an-respuesta:#0ca30c;--sim-an-apertura:#7c5cff;--sim-an-cierre:#d97706;--sim-an-equipob:#8b30d9;--sim-an-cliente:#0b5fa5;--sim-an-servidor:#7c3aed;--sim-an-otro:#5f6775;--sim-fila-icmp:rgba(252,224,255,.35);--sim-fila-tcp:rgba(231,230,255,.45);--sim-fila-udp:rgba(218,238,255,.45);}",
+    ".simraiz.oscuro{color-scheme:dark;--sim-fondo:#12171e;--sim-texto:#e8eef4;--sim-tenue:#9aa5b4;--sim-panel:#1b232d;--sim-borde:#3a4a5a;--sim-acento:#5aa9e6;--sim-ok:#4cc38a;--sim-okfondo:#15301f;--sim-mal:#f0726a;--sim-malfondo:#3a1a1a;--sim-aviso:#e0a63c;--sim-cabecera:#0e1a2b;--sim-sobreacento:#0e1a2b;--sim-apagado:#6b7787;--sim-an-pedido:#6cb0f5;--sim-an-respuesta:#4cc38a;--sim-an-apertura:#a592ff;--sim-an-cierre:#f0a63c;--sim-an-equipob:#c084fc;--sim-an-cliente:#6cb0f5;--sim-an-servidor:#b79dff;--sim-an-otro:#9aa5b4;--sim-fila-icmp:rgba(252,224,255,.12);--sim-fila-tcp:rgba(231,230,255,.16);--sim-fila-udp:rgba(218,238,255,.14);}",
     ".simraiz button,.simraiz select,.simraiz input{font:inherit;font-size:13px;color:var(--sim-texto);background:var(--sim-panel);border:1px solid var(--sim-borde);border-radius:6px;touch-action:manipulation;}",
     ".simraiz button{padding:4px 10px;cursor:pointer;}",
     ".simraiz button:hover:not(:disabled),.simraiz select:hover{border-color:var(--sim-acento);}",
     ".simraiz button:disabled{opacity:.45;cursor:not-allowed;}",
+    ".simraiz button{transition:border-color .12s,transform .08s,filter .08s;}",
+    ".simraiz button:active:not(:disabled){transform:translateY(1px);filter:brightness(.9);}",
+    ".simraiz.oscuro button:active:not(:disabled),.simraiz .simbarra button:active:not(:disabled){filter:brightness(1.25);}",
     ".simraiz button:focus-visible,.simraiz select:focus-visible,.simraiz input:focus-visible,svg .nodo:focus-visible,svg .puerto:focus-visible,svg .enlace:focus-visible,svg.lienzo:focus-visible{outline:3px solid var(--sim-acento);outline-offset:2px;}",
     ".simraiz button.primario{background:var(--sim-acento);border-color:var(--sim-acento);color:var(--sim-sobreacento);font-weight:600;padding:6px 22px;}",
     ".simraiz button.activo{background:var(--sim-acento);color:var(--sim-sobreacento);border-color:var(--sim-acento);}",
     ".oculto-visual{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0;}",
-    ".simbarra{display:flex;gap:8px;align-items:center;padding:6px 12px;background:var(--sim-cabecera);color:#fff;flex-wrap:wrap;}",
-    ".simbarra h1{font-size:16px;margin:0 8px 0 0;font-weight:700;color:#fff;}",
+    ".simbarra{display:flex;gap:8px;align-items:center;padding:6px 12px;background:var(--sim-cabecera);color:var(--sim-cabtexto);flex-wrap:wrap;}",
+    ".simbarra h1{font-size:16px;margin:0 8px 0 0;font-weight:700;color:var(--sim-cabtexto);}",
     ".simbarra .modos{display:flex;gap:4px;}",
-    ".simbarra button,.simbarra select{background:transparent;color:#fff;border-color:rgba(255,255,255,.28);}",
+    ".simbarra button,.simbarra select{background:transparent;color:var(--sim-cabtexto);border-color:rgba(255,255,255,.28);}",
     ".simbarra button:hover:not(:disabled),.simbarra select:hover{background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.6);}",
-    ".simbarra select option{color:#14181f;background:#fff;}",
+    ".simbarra select option{color:var(--sim-texto);background:var(--sim-panel);}",
     ".simbarra select{max-width:260px;min-width:0;}",
-    ".simbarra button.activo,.simbarra button.activo:hover{background:#fff;color:var(--sim-cabecera);border-color:#fff;}",
+    ".simbarra button.activo,.simbarra button.activo:hover{background:var(--sim-cabtexto);color:var(--sim-cabecera);border-color:var(--sim-cabtexto);}",
     ".saltar{position:absolute;left:8px;top:-48px;z-index:30;background:var(--sim-panel);color:var(--sim-acento);border:2px solid var(--sim-acento);border-radius:6px;padding:6px 12px;font-weight:600;text-decoration:none;}",
     ".saltar:focus{top:8px;}",
     ".simbarra .espacio{flex:1;}",
@@ -550,9 +555,9 @@ var UI = (function () {
     ".tablacap td{padding:1px 6px;white-space:nowrap;}",
     ".tablacap td:nth-child(5){white-space:normal;}",
     ".tablacap tr{cursor:pointer;}",
-    ".tablacap tr.p-icmp{background:rgba(252,224,255,.35);}",
-    ".tablacap tr.p-tcp{background:rgba(231,230,255,.45);}",
-    ".tablacap tr.p-udp{background:rgba(218,238,255,.45);}",
+    ".tablacap tr.p-icmp{background:var(--sim-fila-icmp);}",
+    ".tablacap tr.p-tcp{background:var(--sim-fila-tcp);}",
+    ".tablacap tr.p-udp{background:var(--sim-fila-udp);}",
     ".tablacap tr.sel{background:var(--sim-acento);color:var(--sim-sobreacento);}",
     ".tablacap tr:focus{outline:none;}",
     ".tablacap.ventana tr{height:22px;}",
@@ -581,12 +586,12 @@ var UI = (function () {
     ".recorrido .cab .mal{color:var(--sim-mal);font-weight:400;}",
     ".recorrido .pasos{flex:1;min-height:0;overflow:auto;padding:4px 10px;}",
     ".recorrido .trama{cursor:pointer;}",
-    ".recorrido .trama.actual{background:rgba(245,158,11,.18);outline:1px solid #f59e0b;border-radius:4px;}",
+    ".recorrido .trama.actual{background:var(--sim-resaltefondo);outline:1px solid var(--sim-resalte);border-radius:4px;}",
     ".tabs .dnsreal{display:inline-flex;align-items:center;gap:8px;margin-right:12px;font-size:12px;color:var(--sim-tenue);}",
     ".tabs .dnsreal label{display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--sim-tenue);white-space:nowrap;}",
-    ".tabs .dnsreal-nota{color:var(--sim-aviso,#b45309);font-weight:600;white-space:nowrap;}",
+    ".tabs .dnsreal-nota{color:var(--sim-aviso);font-weight:600;white-space:nowrap;}",
     ".recorrido .linpaso[data-evento]{cursor:pointer;}",
-    ".recorrido .linpaso.actual{background:rgba(245,158,11,.18);outline:1px solid #f59e0b;border-radius:4px;}",
+    ".recorrido .linpaso.actual{background:var(--sim-resaltefondo);outline:1px solid var(--sim-resalte);border-radius:4px;}",
     ".linpaso.choca .marca{color:var(--sim-mal);}",
     ".intentos{border-collapse:collapse;margin-top:6px;font-size:12px;}",
     ".intentos caption{text-align:left;color:var(--sim-tenue);padding-bottom:2px;}",
@@ -597,7 +602,7 @@ var UI = (function () {
     ".ctl-anim .ley{display:inline-flex;align-items:center;gap:3px;font-size:12px;color:var(--sim-tenue);}",
     ".ctl-anim .ley i{width:9px;height:9px;border-radius:50%;display:inline-block;}",
     ".dora .paso[data-msg]{cursor:pointer;}",
-    ".dora .paso.actual{background:rgba(245,158,11,.18);outline:1px solid #f59e0b;border-radius:4px;}",
+    ".dora .paso.actual{background:var(--sim-resaltefondo);outline:1px solid var(--sim-resalte);border-radius:4px;}",
     ".recorrido .pie{display:flex;align-items:center;gap:8px;padding:4px 10px 6px;font-size:12px;color:var(--sim-tenue);font-style:italic;}",
     ".linpaso{font-size:13px;padding:2px 0;}",
     ".capa{display:inline-block;min-width:92px;color:var(--sim-tenue);border:1px solid var(--sim-borde);font-size:11px;border-radius:4px;padding:0 5px;margin-right:6px;text-align:center;vertical-align:1px;cursor:help;}",
@@ -612,7 +617,7 @@ var UI = (function () {
     ".enc{display:inline-block;border:1px solid var(--sim-borde);border-radius:4px;padding:1px 6px;margin:2px 0 2px 64px;font-family:ui-monospace,Consolas,monospace;font-size:11px;}",
     ".enc .enc{margin:0 0 0 6px;}",
     ".enc b{font-family:system-ui,sans-serif;font-weight:600;color:var(--sim-tenue);margin-right:4px;}",
-    ".enc mark{background:#fde68a;color:#111;border-radius:2px;padding:0 2px;}",
+    ".enc mark{background:var(--sim-marca);color:var(--sim-marcatexto);border-radius:2px;padding:0 2px;}",
     ".linpaso .marca{color:var(--sim-ok);margin-right:4px;}",
     ".linpaso.pendiente{color:var(--sim-tenue);}",
     ".pasofallo{border:1px solid var(--sim-mal);background:var(--sim-malfondo);border-radius:6px;padding:6px 8px;margin:4px 0;font-size:13px;}",
@@ -627,8 +632,8 @@ var UI = (function () {
     ".diagnostico .tit{font-weight:700;font-size:15px;color:var(--sim-mal);}",
     ".diagnostico .rev{border-top:1px solid var(--sim-borde);margin-top:6px;padding-top:6px;}",
     ".advertencia{border:1px solid var(--sim-aviso);border-radius:8px;padding:6px;margin:6px 0;font-size:12px;}",
-    ".consola{background:#0d1117;color:#d6f0d6;font-family:ui-monospace,Consolas,monospace;font-size:12px;border-radius:8px;padding:8px;flex:1;min-height:0;overflow:auto;white-space:pre-wrap;margin:0;}",
-    ".consola .error{color:#ff8a80;}",
+    ".consola{background:var(--sim-consola);color:var(--sim-consolatexto);font-family:ui-monospace,Consolas,monospace;font-size:12px;border-radius:8px;padding:8px;flex:1;min-height:0;overflow:auto;white-space:pre-wrap;margin:0;}",
+    ".consola .error{color:var(--sim-consolaerror);}",
     ".lienzovacio{position:absolute;left:50%;top:45%;transform:translate(-50%,-50%);width:min(440px,80%);text-align:center;color:var(--sim-tenue);font-size:14px;line-height:1.45;pointer-events:none;}",
     ".lienzovacio b{display:block;color:var(--sim-texto);font-size:17px;margin-bottom:4px;}",
     ".lienzovacio .recuperar{pointer-events:auto;margin-top:14px;padding:10px 12px;background:var(--sim-panel);border:1px solid var(--sim-borde);border-radius:10px;color:var(--sim-texto);}",
@@ -655,8 +660,8 @@ var UI = (function () {
     ".calc .veredicto{margin-top:3px;font-weight:600;}",
     "svg .nodo,svg .enlace,svg .asa{cursor:pointer;}",
     "svg .asa:focus-visible{outline:3px solid var(--sim-acento);outline-offset:2px;}",
-    "svg .puerto{cursor:pointer;stroke:#333;stroke-width:1;}",
-    "svg .puerto.enbridge{stroke:#16a34a;}",
+    "svg .puerto{cursor:pointer;stroke:var(--sim-tenue);stroke-width:1;}",
+    "svg .puerto.enbridge{stroke:var(--sim-ok);}",
     "svg text{font-family:system-ui,Arial,sans-serif;}",
     "svg .etiqueta text.mono{font-family:ui-monospace,Consolas,monospace;}",
     "svg .fondoetq{fill:var(--sim-fondo);fill-opacity:.9;}",
@@ -713,7 +718,7 @@ var UI = (function () {
     "}",
     ".simraiz h2,.simraiz h3{text-wrap:balance;}",
     "@media (prefers-reduced-motion:reduce){.simraiz *,.simraiz *::before,.simraiz *::after{scroll-behavior:auto;transition:none !important;animation:none !important;}}",
-    ".fantasma{position:fixed;pointer-events:none;opacity:.6;z-index:99;background:var(--sim-panel);border:1px dashed var(--sim-acento);border-radius:8px;padding:4px 8px;font-size:12px;}"
+    ".fantasma{position:fixed;pointer-events:none;opacity:.6;z-index:40;background:var(--sim-panel);border:1px dashed var(--sim-acento);border-radius:8px;padding:4px 8px;font-size:12px;}"
   ].join("\n");
 
   function inyectarCss() {
@@ -986,11 +991,8 @@ var UI = (function () {
     });
     selEjemplo.addEventListener("change", function () {
       if (!selEjemplo.value) { return; }
-      var ej = null;
-      for (var i = 0; i < Escenarios.EJEMPLOS.length; i++) {
-        if (Escenarios.EJEMPLOS[i].id === selEjemplo.value) { ej = Escenarios.EJEMPLOS[i]; }
-      }
-      if (ej) { empujarHistorial(); cargarTopologiaAjustada(clonar(ej.topologia)); registrar("ejemplo", "Se cargó el ejemplo " + ej.nombre); }
+      var ej = ejemploDe(selEjemplo.value);
+      if (ej) { abrirEjemplo(ej); }
       selEjemplo.value = "";
     });
     barra.appendChild(selEjemplo);
@@ -1146,10 +1148,10 @@ var UI = (function () {
     S.cuentaDominios = cuentaDom;
     zona.appendChild(tools);
     zona.appendChild(el("div", "leyenda-lienzo",
-      "<div><svg width='26' height='8' aria-hidden='true'><line x1='1' y1='4' x2='25' y2='4' stroke='#1e7a34' stroke-width='3'/></svg> cobre</div>" +
-      "<div><svg width='26' height='10' aria-hidden='true'><line x1='1' y1='5' x2='25' y2='5' stroke='#1e7a34' stroke-width='7' opacity='.3'/><line x1='1' y1='5' x2='25' y2='5' stroke='#1e7a34' stroke-width='4'/></svg> fibra</div>" +
-      "<div><svg width='26' height='8' aria-hidden='true'><line x1='1' y1='4' x2='25' y2='4' stroke='#1e7a34' stroke-width='3' stroke-dasharray='1 6' stroke-linecap='round'/></svg> wireless</div>" +
-      "<div><svg width='26' height='8' aria-hidden='true'><line x1='1' y1='4' x2='25' y2='4' stroke='#b42318' stroke-width='3' stroke-dasharray='8 5'/></svg> caído</div>" +
+      "<div><svg width='26' height='8' aria-hidden='true'><line x1='1' y1='4' x2='25' y2='4' style='stroke:var(--sim-ok)' stroke-width='3'/></svg> cobre</div>" +
+      "<div><svg width='26' height='10' aria-hidden='true'><line x1='1' y1='5' x2='25' y2='5' style='stroke:var(--sim-ok)' stroke-width='7' opacity='.3'/><line x1='1' y1='5' x2='25' y2='5' style='stroke:var(--sim-ok)' stroke-width='4'/></svg> fibra</div>" +
+      "<div><svg width='26' height='8' aria-hidden='true'><line x1='1' y1='4' x2='25' y2='4' style='stroke:var(--sim-ok)' stroke-width='3' stroke-dasharray='1 6' stroke-linecap='round'/></svg> wireless</div>" +
+      "<div><svg width='26' height='8' aria-hidden='true'><line x1='1' y1='4' x2='25' y2='4' style='stroke:var(--sim-mal)' stroke-width='3' stroke-dasharray='8 5'/></svg> caído</div>" +
       "<div class='tenue'>verde activo · rojo y cortado caído</div>"));
     var pista = el("div", "pista", "Tocá un equipo para configurarlo");
     zona.appendChild(pista);
@@ -1233,6 +1235,8 @@ var UI = (function () {
     autoguardar();
     renderTodo();
     registrar("inicio", "Simulador listo. Pestaña activa: Simulación.");
+    seguirEnlaceAEjemplo();
+    window.addEventListener("hashchange", seguirEnlaceAEjemplo);
   }
 
   function recontarNombres() {
@@ -1325,7 +1329,14 @@ var UI = (function () {
     return { x: disp.x - dp.anchoAbajo / 2 + (j + 0.5) * (dp.anchoAbajo / abajo), y: disp.y + h / 2 };
   }
 
-  function colorEnlace(e) { return enlaceCaido(e) ? "#b42318" : "#1a7f37"; }
+  function colorEnlace(e) { return enlaceCaido(e) ? "var(--sim-mal)" : "var(--sim-ok)"; }
+
+  // Los colores del tema (var(--sim-…)) van como estilo: en un atributo SVG no todos los navegadores
+  // resuelven las variables.
+  function pintarSvg(nodo, nombre, valor) {
+    if ((nombre === "fill" || nombre === "stroke") && String(valor).indexOf("var(") === 0) { nodo.style[nombre] = valor; }
+    else { nodo.setAttribute(nombre, valor); }
+  }
 
   /* Centro del puerto de una interfaz, en coordenadas de mundo: el mismo
    * punto donde se dibuja el rectángulo del puerto sobre cada nodo. Si la
@@ -1410,7 +1421,7 @@ var UI = (function () {
         dib.setAttribute("x1", x1); dib.setAttribute("y1", y1);
         dib.setAttribute("x2", x2); dib.setAttribute("y2", y2);
       }
-      dib.setAttribute("stroke", colorEnlace(e));
+      pintarSvg(dib, "stroke", colorEnlace(e));
       dib.setAttribute("stroke-width", e.tipo === "fibra" ? 5 : 3);
       var brillo = null;
       if (e.tipo === "fibra") {
@@ -1419,7 +1430,7 @@ var UI = (function () {
         brillo = document.createElementNS(svgNS, "line");
         brillo.setAttribute("x1", x1); brillo.setAttribute("y1", y1);
         brillo.setAttribute("x2", x2); brillo.setAttribute("y2", y2);
-        brillo.setAttribute("stroke", colorEnlace(e));
+        pintarSvg(brillo, "stroke", colorEnlace(e));
         brillo.setAttribute("stroke-width", 11);
         brillo.setAttribute("stroke-linecap", "round");
         brillo.setAttribute("opacity", "0.25");
@@ -1438,7 +1449,7 @@ var UI = (function () {
       var mid = document.createElementNS(svgNS, "text");
       mid.setAttribute("x", (x1 + x2) / 2 + 6); mid.setAttribute("y", (y1 + y2) / 2 - 6);
       mid.setAttribute("font-size", S.presentacion ? String(Math.round(15 * escalaRotulos())) : "12");
-      mid.setAttribute("fill", colorEnlace(e));
+      pintarSvg(mid, "fill", colorEnlace(e));
       mid.textContent = e.id + (enlaceEnFalla(e) ? " \u26A1 cortado en vivo" : (e.estado === "down" ? " (caído)" : ""));
       // Al proyectar, los nombres de enlace sólo estorban: quedan los caídos.
       if (!S.presentacion || enlaceCaido(e)) { g.appendChild(mid); }
@@ -1480,7 +1491,7 @@ var UI = (function () {
         halo.setAttribute("width", 68); halo.setAttribute("height", 64);
         halo.setAttribute("rx", 10);
         halo.setAttribute("fill", "none");
-        halo.setAttribute("stroke", "#0b5fa5");
+        pintarSvg(halo, "stroke", "var(--sim-acento)");
         halo.setAttribute("stroke-width", 2);
         halo.setAttribute("stroke-dasharray", "5 3");
         g.appendChild(halo);
@@ -1492,8 +1503,8 @@ var UI = (function () {
       if (equipoEnFalla(d)) {
         var rayo = document.createElementNS(svgNS, "text");
         rayo.setAttribute("x", -26); rayo.setAttribute("y", -12);
-        rayo.setAttribute("font-size", "18"); rayo.setAttribute("fill", "#b42318");
-        rayo.setAttribute("stroke", "#fff"); rayo.setAttribute("stroke-width", "3");
+        rayo.setAttribute("font-size", "18"); pintarSvg(rayo, "fill", "var(--sim-mal)");
+        pintarSvg(rayo, "stroke", "var(--sim-fondo)"); rayo.setAttribute("stroke-width", "3");
         rayo.setAttribute("paint-order", "stroke");
         rayo.textContent = "\u26A1";
         g.appendChild(rayo);
@@ -1512,7 +1523,7 @@ var UI = (function () {
         c.setAttribute("aria-label", d.id + ":" + iface.id + (iface.habilitada ? "" : ", deshabilitada") + (enBridge ? ", en el bridge" : ""));
         var ocupado = !!enlaceEnPuerto(d.id, iface.id);
         var comparte = puertoAdmiteMultiplesEnlaces(d, iface);
-        c.setAttribute("fill", !iface.habilitada ? "#999" : (ocupado ? "#0b5fa5" : "#fff"));
+        pintarSvg(c, "fill", !iface.habilitada ? "var(--sim-apagado)" : (ocupado ? "var(--sim-acento)" : "var(--sim-panel)"));
         var tit = document.createElementNS(svgNS, "title");
         tit.textContent = iface.id + " (" + iface.medio + ")" + (!iface.habilitada ? " deshabilitada" : (ocupado ? (comparte ? " AP activo" : " ocupada") : " libre")) +
           (enBridge ? ", en el bridge" : "");
@@ -1804,7 +1815,7 @@ var UI = (function () {
   function arrastrePaleta(ev, tipo, item) {
     ev.preventDefault();
     var fant = el("div", "fantasma", escapar(tipo));
-    document.body.appendChild(fant);
+    S.raiz.appendChild(fant);
     fant.style.left = ev.clientX + "px"; fant.style.top = ev.clientY + "px";
     var movido = false;
     function mover(e2) {
@@ -1964,9 +1975,9 @@ var UI = (function () {
       S.hojaCuerpo.appendChild(grilla);
       S.hojaCuerpo.appendChild(el("h3", "", "Cable"));
       var grillaCable = el("div", "gridagregar");
-      [["ethernet", "Cobre", "<line x1='-18' y1='0' x2='18' y2='0' stroke='#1e7a34' stroke-width='3'/>"],
-       ["fibra", "Fibra", "<line x1='-18' y1='0' x2='18' y2='0' stroke='#1e7a34' stroke-width='9' opacity='.3'/><line x1='-18' y1='0' x2='18' y2='0' stroke='#1e7a34' stroke-width='5'/>"],
-       ["wireless", "Wireless", "<line x1='-18' y1='0' x2='18' y2='0' stroke='#1e7a34' stroke-width='3' stroke-dasharray='1 6' stroke-linecap='round'/>"]].forEach(function (c) {
+      [["ethernet", "Cobre", "<line x1='-18' y1='0' x2='18' y2='0' style='stroke:var(--sim-ok)' stroke-width='3'/>"],
+       ["fibra", "Fibra", "<line x1='-18' y1='0' x2='18' y2='0' style='stroke:var(--sim-ok)' stroke-width='9' opacity='.3'/><line x1='-18' y1='0' x2='18' y2='0' style='stroke:var(--sim-ok)' stroke-width='5'/>"],
+       ["wireless", "Wireless", "<line x1='-18' y1='0' x2='18' y2='0' style='stroke:var(--sim-ok)' stroke-width='3' stroke-dasharray='1 6' stroke-linecap='round'/>"]].forEach(function (c) {
         var b = boton("");
         b.innerHTML = "<svg viewBox='-24 -20 48 40' aria-hidden='true' focusable='false'>" + c[2] + "</svg><span>" + c[1] + "</span>";
         b.addEventListener("click", function () {
@@ -2289,7 +2300,7 @@ var UI = (function () {
     var hasta = aMundo(ev);
     if (!S.lineaTemporal || !S.lineaTemporal.isConnected) {
       S.lineaTemporal = document.createElementNS("http://www.w3.org/2000/svg", "line");
-      S.lineaTemporal.setAttribute("stroke", "#1a5fb4");
+      pintarSvg(S.lineaTemporal, "stroke", "var(--sim-acento)");
       S.lineaTemporal.setAttribute("stroke-width", 3);
       S.lineaTemporal.setAttribute("stroke-dasharray", "8 6");
       S.lineaTemporal.setAttribute("pointer-events", "none");
@@ -2321,8 +2332,8 @@ var UI = (function () {
       asa.setAttribute("cy", aqui.y + dy / largo * corr);
       asa.setAttribute("r", 8);
       asa.setAttribute("class", "asa");
-      asa.setAttribute("fill", activa ? "#1a5fb4" : "#ffffff");
-      asa.setAttribute("stroke", "#1a5fb4");
+      pintarSvg(asa, "fill", activa ? "var(--sim-acento)" : "var(--sim-panel)");
+      pintarSvg(asa, "stroke", "var(--sim-acento)");
       asa.setAttribute("stroke-width", 3);
       asa.setAttribute("tabindex", "0");
       asa.setAttribute("role", "button");
@@ -2511,23 +2522,37 @@ var UI = (function () {
   /* ---------------- Historial, atajos, modos ---------------- */
 
   function empujarHistorial() {
-    S.deshacer.push(JSON.stringify(S.topologia));
+    S.deshacer.push(pasoActual());
     if (S.deshacer.length > 60) { S.deshacer.shift(); }
     S.rehacer = [];
   }
 
   function deshacer() {
     if (!S.deshacer.length) { return; }
-    S.rehacer.push(JSON.stringify(S.topologia));
-    S.topologia = JSON.parse(S.deshacer.pop());
-    reconstruirEstado(); renderTodo();
+    S.rehacer.push(pasoActual());
+    restaurarDelHistorial(S.deshacer.pop());
   }
 
   function rehacer() {
     if (!S.rehacer.length) { return; }
-    S.deshacer.push(JSON.stringify(S.topologia));
-    S.topologia = JSON.parse(S.rehacer.pop());
-    reconstruirEstado(); renderTodo();
+    S.deshacer.push(pasoActual());
+    restaurarDelHistorial(S.rehacer.pop());
+  }
+
+  function pasoActual() {
+    return { red: S.redActual, texto: JSON.stringify(S.topologia) };
+  }
+
+  // Si el paso es de otra red, se olvida lo que era de la que estaba y la dirección deja de nombrar
+  // el ejemplo.
+  function restaurarDelHistorial(paso) {
+    if (paso.red !== S.redActual) {
+      olvidarRed();
+      anotarEnlaceEjemplo();
+      S.redActual = paso.red;
+    }
+    S.topologia = JSON.parse(paso.texto);
+    reconstruirEstado(); recontarNombres(); renderTodo();
   }
 
   function atajos(ev) {
@@ -4527,7 +4552,7 @@ var UI = (function () {
   // La animación de la prueba: una fase por evento del Motor. Mismo manejo que la del DORA.
   // `dibujada` guarda la fase y el avance del último cuadro, para rehacerlo si se mueven equipos.
   var colAnim = { token: 0, activo: false, pausado: false, res: null, i: 0, t: 0, paso: null, dibujada: null };
-  var COLOR_ESTACION = { a: "#3987e5", b: "#a855f7" };
+  var COLOR_ESTACION = { a: "var(--sim-an-pedido)", b: "var(--sim-an-equipob)" };
 
   function avisarEstadoColision() {
     if (!S.raiz) { return; }
@@ -4605,7 +4630,7 @@ var UI = (function () {
 
   function nodoAnim(etiquetaSvg, atributos, texto) {
     var n = document.createElementNS("http://www.w3.org/2000/svg", etiquetaSvg);
-    Object.keys(atributos).forEach(function (k) { n.setAttribute(k, atributos[k]); });
+    Object.keys(atributos).forEach(function (k) { pintarSvg(n, k, atributos[k]); });
     if (texto !== undefined) { n.textContent = texto; }
     S.capaAnim.appendChild(n);
     return n;
@@ -4613,11 +4638,11 @@ var UI = (function () {
 
   function puntoColision(p, color, dx, dy) {
     if (!p) { return; }
-    nodoAnim("circle", { r: 7, fill: color, stroke: "#fff", "stroke-width": 2, cx: p.x + (dx || 0), cy: p.y + (dy || 0), "class": "paquete-col" });
+    nodoAnim("circle", { r: 7, fill: color, stroke: "var(--sim-fondo)", "stroke-width": 2, cx: p.x + (dx || 0), cy: p.y + (dy || 0), "class": "paquete-col" });
   }
 
   function rotuloColision(x, y, texto, color) {
-    nodoAnim("text", { x: x, y: y, "text-anchor": "middle", "font-size": 14, "font-weight": 700, fill: color, stroke: "#fff",
+    nodoAnim("text", { x: x, y: y, "text-anchor": "middle", "font-size": 14, "font-weight": 700, fill: color, stroke: "var(--sim-fondo)",
       "stroke-width": 3, "paint-order": "stroke", "class": "rotulo-col" }, texto);
   }
 
@@ -4635,12 +4660,12 @@ var UI = (function () {
         puntoColision(puntoEnRuta(puntosDeRuta(r.ids), avance), COLOR_ESTACION[r.quien], 0, corr);
       });
     } else if (e.tipo === "colision") {
-      e.rutas.forEach(function (ids) { puntoColision(puntoEnRuta(puntosDeRuta(ids), avance), "#d97706"); });
+      e.rutas.forEach(function (ids) { puntoColision(puntoEnRuta(puntosDeRuta(ids), avance), "var(--sim-an-cierre)"); });
       var hub = buscarDisp(e.en);
       if (hub) {
-        nodoAnim("text", { x: hub.x, y: hub.y - 22, "text-anchor": "middle", "font-size": 40, fill: "#b42318", stroke: "#fff",
+        nodoAnim("text", { x: hub.x, y: hub.y - 22, "text-anchor": "middle", "font-size": 40, fill: "var(--sim-mal)", stroke: "var(--sim-fondo)",
           "stroke-width": 2, "paint-order": "stroke", "class": "choque-col" }, "\u2737");
-        rotuloColision(hub.x, hub.y - 66, "Colisión " + e.numero + " · jam", "#b42318");
+        rotuloColision(hub.x, hub.y - 66, "Colisión " + e.numero + " · jam", "var(--sim-mal)");
       }
     } else if (e.tipo === "espera") {
       [["a", res.a, e.esperaA], ["b", res.b, e.esperaB]].forEach(function (q) {
@@ -4653,7 +4678,7 @@ var UI = (function () {
     } else if (e.tipo === "entrega") {
       e.rutas.forEach(function (ids) { puntoColision(puntoEnRuta(puntosDeRuta(ids), avance), COLOR_ESTACION[e.quien]); });
       var destino = buscarDisp(e.destino);
-      if (destino && avance >= 1) { rotuloColision(destino.x, destino.y - 52, "\u2713 la recibe", "#1a7f37"); }
+      if (destino && avance >= 1) { rotuloColision(destino.x, destino.y - 52, "\u2713 la recibe", "var(--sim-ok)"); }
     }
     if (!sinMarcar) { marcarPasoColision(i); }
   }
@@ -4890,7 +4915,7 @@ var UI = (function () {
       var l = document.createElementNS(svgNS, "line");
       l.setAttribute("x1", tr.de.x); l.setAttribute("y1", tr.de.y);
       l.setAttribute("x2", tr.a.x); l.setAttribute("y2", tr.a.y);
-      l.setAttribute("stroke", "#f59e0b"); l.setAttribute("stroke-width", "7");
+      pintarSvg(l, "stroke", "var(--sim-resalte)"); l.setAttribute("stroke-width", "7");
       l.setAttribute("stroke-linecap", "round"); l.setAttribute("opacity", "0.75");
       g.appendChild(l);
     });
@@ -6303,11 +6328,11 @@ var UI = (function () {
     if (!puntos) { pingRespaldo = null; return; }
     var fin = puntos[puntos.length - 1];
     if (puntos.length < 2 && !resultado.exito) {
-      nodoPing("circle", { cx: fin.x, cy: fin.y - 30, r: 8, fill: "#b42318" });
+      nodoPing("circle", { cx: fin.x, cy: fin.y - 30, r: 8, fill: "var(--sim-mal)" });
       return;
     }
-    nodoPing("circle", { r: 7, fill: resultado.exito ? "#1a7f37" : "#b42318", stroke: "#fff", "stroke-width": 2, cx: fin.x, cy: fin.y - 30 });
-    if (!resultado.exito) { nodoPing("text", { x: fin.x + 10, y: fin.y - 24, "font-size": 18, fill: "#b42318" }, "\u2717"); }
+    nodoPing("circle", { r: 7, fill: resultado.exito ? "var(--sim-ok)" : "var(--sim-mal)", stroke: "var(--sim-fondo)", "stroke-width": 2, cx: fin.x, cy: fin.y - 30 });
+    if (!resultado.exito) { nodoPing("text", { x: fin.x + 10, y: fin.y - 24, "font-size": 18, fill: "var(--sim-mal)" }, "\u2717"); }
   }
 
   function animarPing(resultado) {
@@ -6322,7 +6347,7 @@ var UI = (function () {
       dibujarFinPing(resultado);
       return;
     }
-    var marca = nodoPing("circle", { r: 7, fill: resultado.exito ? "#1a7f37" : "#b42318", stroke: "#fff", "stroke-width": 2,
+    var marca = nodoPing("circle", { r: 7, fill: resultado.exito ? "var(--sim-ok)" : "var(--sim-mal)", stroke: "var(--sim-fondo)", "stroke-width": 2,
       cx: puntos0[0].x, cy: puntos0[0].y - 30 });
     var tramo = 0;
     var t0 = null;
@@ -6424,16 +6449,16 @@ var UI = (function () {
   }
 
   function colorDhcp(m) {
-    if (m.tipo === "offer" && dhcpAnim.res.exito && dhcpAnim.res.servidor !== m.origen) { return "#6b7280"; }
+    if (m.tipo === "offer" && dhcpAnim.res.exito && dhcpAnim.res.servidor !== m.origen) { return "var(--sim-an-otro)"; }
     // Cliente en azul, servidor en violeta: el verde ya es el de los cables en up.
-    return (m.tipo === "discover" || m.tipo === "request") ? "#0b5fa5" : "#7c3aed";
+    return (m.tipo === "discover" || m.tipo === "request") ? "var(--sim-an-cliente)" : "var(--sim-an-servidor)";
   }
 
   function lineaAnim(p, q, color, ancho, punteada) {
     var l = document.createElementNS("http://www.w3.org/2000/svg", "line");
     l.setAttribute("x1", p.x); l.setAttribute("y1", p.y);
     l.setAttribute("x2", q.x); l.setAttribute("y2", q.y);
-    l.setAttribute("stroke", color); l.setAttribute("stroke-width", ancho);
+    pintarSvg(l, "stroke", color); l.setAttribute("stroke-width", ancho);
     l.setAttribute("stroke-linecap", "round");
     if (punteada) { l.setAttribute("stroke-dasharray", "6 5"); l.setAttribute("opacity", "0.7"); }
     S.capaAnim.appendChild(l);
@@ -6462,7 +6487,7 @@ var UI = (function () {
       var tx = document.createElementNS(svgNS, "text");
       tx.setAttribute("x", o.x + 14); tx.setAttribute("y", o.y - 38);
       tx.setAttribute("font-size", "14"); tx.setAttribute("font-weight", "700");
-      tx.setAttribute("fill", color); tx.setAttribute("stroke", "#fff");
+      pintarSvg(tx, "fill", color); pintarSvg(tx, "stroke", "var(--sim-fondo)");
       tx.setAttribute("stroke-width", "3"); tx.setAttribute("paint-order", "stroke");
       tx.textContent = etiquetaDhcp(m);
       S.capaAnim.appendChild(tx);
@@ -6507,8 +6532,8 @@ var UI = (function () {
           var color = colorDhcp(dhcpAnim.msgs[dhcpAnim.i]);
           dhcpAnim.ondas[onda].forEach(function (tr) {
             var c = document.createElementNS(svgNS, "circle");
-            c.setAttribute("r", 7); c.setAttribute("fill", color);
-            c.setAttribute("stroke", "#fff"); c.setAttribute("stroke-width", 2);
+            c.setAttribute("r", 7); pintarSvg(c, "fill", color);
+            pintarSvg(c, "stroke", "var(--sim-fondo)"); c.setAttribute("stroke-width", 2);
             c.setAttribute("cx", tr.de.x + (tr.a.x - tr.de.x) * avance);
             c.setAttribute("cy", tr.de.y + (tr.a.y - tr.de.y) * avance);
             S.capaAnim.appendChild(c);
@@ -6594,15 +6619,15 @@ var UI = (function () {
   // Qué representa cada trama y con qué color se anima: pedido y respuesta según el sentido;
   // en TCP, además, la apertura (SYN), el cierre (FIN) y el rechazo (RST o un «no existe»).
   var ROTULO_TRAMA = {
-    pedido: ["#3987e5", "pedido"],
-    respuesta: ["#0ca30c", "respuesta"],
-    apertura: ["#7c5cff", "apertura"],
-    cierre: ["#d97706", "cierre"],
-    rechazo: ["#b42318", "rechazo"],
-    equipoA: ["#3987e5", "equipo A"],
-    equipoB: ["#a855f7", "equipo B"],
-    choque: ["#b42318", "colisión"],
-    jam: ["#d97706", "jam"]
+    pedido: ["var(--sim-an-pedido)", "pedido"],
+    respuesta: ["var(--sim-an-respuesta)", "respuesta"],
+    apertura: ["var(--sim-an-apertura)", "apertura"],
+    cierre: ["var(--sim-an-cierre)", "cierre"],
+    rechazo: ["var(--sim-mal)", "rechazo"],
+    equipoA: ["var(--sim-an-pedido)", "equipo A"],
+    equipoB: ["var(--sim-an-equipob)", "equipo B"],
+    choque: ["var(--sim-mal)", "colisión"],
+    jam: ["var(--sim-an-cierre)", "jam"]
   };
 
   function clasificarTrama(t, ctx) {
@@ -6678,7 +6703,7 @@ var UI = (function () {
     if (!this.marca || this.marca.parentNode !== S.capaAnim) {
       this.marca = document.createElementNS(svgNS, "circle");
       this.marca.setAttribute("r", 6);
-      this.marca.setAttribute("stroke", "#fff");
+      pintarSvg(this.marca, "stroke", "var(--sim-fondo)");
       this.marca.setAttribute("stroke-width", 1.5);
       this.marca.setAttribute("class", "paquete-anim");
       S.capaAnim.appendChild(this.marca);
@@ -6689,7 +6714,7 @@ var UI = (function () {
     var i = Math.min(Math.floor(pos), tramos - 1);
     var f = pos - i;
     var a = item.puntos[i], b = item.puntos[i + 1];
-    this.marca.setAttribute("fill", item.color);
+    pintarSvg(this.marca, "fill", item.color);
     this.marca.setAttribute("cx", a.x + (b.x - a.x) * f);
     this.marca.setAttribute("cy", a.y + (b.y - a.y) * f - 30);
   };
@@ -6769,11 +6794,11 @@ var UI = (function () {
     this.timeline.forEach(function (it) { if (it.negativa) { neg = it; } });
     var d = neg ? neg.puntos[0] : ult.puntos[ult.puntos.length - 1];
     var svgNS = "http://www.w3.org/2000/svg";
-    if (this.marca) { this.marca.setAttribute("fill", "#b42318"); }
+    if (this.marca) { pintarSvg(this.marca, "fill", "var(--sim-mal)"); }
     this.quitarCruz();
     var cruz = document.createElementNS(svgNS, "text");
     cruz.setAttribute("x", d.x + 10); cruz.setAttribute("y", d.y - 24);
-    cruz.setAttribute("font-size", "18"); cruz.setAttribute("fill", "#b42318");
+    cruz.setAttribute("font-size", "18"); pintarSvg(cruz, "fill", "var(--sim-mal)");
     cruz.textContent = "\u2717";
     S.capaAnim.appendChild(cruz);
     this.cruz = cruz;
@@ -6820,7 +6845,7 @@ var UI = (function () {
     for (var pos = 0; pos < this.timeline.length; pos++) {
       if (this.timeline[pos].idx !== idxTrama) { continue; }
       this.quitarCruz();
-      if (this.marca) { this.marca.setAttribute("fill", this.timeline[pos].color); }
+      if (this.marca) { pintarSvg(this.marca, "fill", this.timeline[pos].color); }
       this.idxActual = pos;
       this.tActual = this.timeline[pos].tiempoInicio;
       this.dibujarEn(pos, 0);
@@ -6862,6 +6887,51 @@ var UI = (function () {
     if (b) { b.textContent = animador.pausado ? "\u25B6 Reanudar" : "\u23F8 Pausar"; }
   };
 
+  /* ---------------- Ejemplos y enlaces a un ejemplo ---------------- */
+
+  function ejemploDe(id) {
+    for (var i = 0; i < Escenarios.EJEMPLOS.length; i++) {
+      if (Escenarios.EJEMPLOS[i].id === id) { return Escenarios.EJEMPLOS[i]; }
+    }
+    return null;
+  }
+
+  function abrirEjemplo(ej) {
+    S.ejemploPedido = null;
+    cargarTopologiaAjustada(clonar(ej.topologia), ej.id);
+    registrar("ejemplo", "Se cargó el ejemplo " + ej.nombre);
+  }
+
+  // «…#ejemplo=mikrotik»: la dirección nombra el ejemplo abierto, así se puede compartir. Al abrir
+  // cualquier otra red, el nombre se quita. replaceState no agrega entradas al historial ni avisa
+  // con hashchange.
+  function anotarEnlaceEjemplo(id) {
+    if (!id && location.hash.indexOf("#ejemplo=") !== 0) { return; }
+    try { history.replaceState(null, "", id ? "#ejemplo=" + id : location.pathname + location.search); }
+    catch (e) { /* hay navegadores que no lo permiten en un archivo local: se sigue sin cambiar la dirección */ }
+  }
+
+  // Abre el ejemplo que pide la dirección. Si el lienzo está vacío y hay una red guardada, no la pisa:
+  // ofrece las dos cosas y elige el usuario. Si había una red en el lienzo, Deshacer la trae de vuelta.
+  function seguirEnlaceAEjemplo() {
+    if (S.ejemploPedido) { S.ejemploPedido = null; actualizarLienzoVacio(); }
+    var m = /^#ejemplo=(.*)$/.exec(location.hash);
+    if (!m) { return; }
+    // Un enlace pegado en un texto puede llegar con mayúsculas o con el punto final de la oración.
+    var id = m[1].toLowerCase().replace(/[.,;:)]+$/, "");
+    var ej = ejemploDe(id);
+    if (!ej) { avisar("El enlace pide un ejemplo que no existe: «" + m[1] + "». Elegí uno en «Ejemplos…»."); return; }
+    var habia = (S.topologia.dispositivos || []).length > 0;
+    if (!habia && (S.trabajoPrevio || S.guardadoIlegible)) {
+      S.ejemploPedido = ej;
+      actualizarLienzoVacio();
+      anunciar("El enlace abre el ejemplo " + ej.nombre + ". Hay una red guardada: elegí qué hacer.");
+      return;
+    }
+    abrirEjemplo(ej);
+    if (habia) { avisar("Se abrió el ejemplo «" + ej.nombre + "». Con Deshacer volvés a la red anterior."); }
+  }
+
   /* ---------------- Registro, persistencia, importar/exportar ---------------- */
 
   function registrar(codigo, texto) {
@@ -6891,11 +6961,28 @@ var UI = (function () {
   function actualizarLienzoVacio() {
     if (!S.lienzoVacio) { return; }
     var hayEquipos = (S.topologia.dispositivos || []).length > 0;
-    if (hayEquipos) { S.trabajoPrevio = null; }
+    if (hayEquipos) {
+      // El ofrecimiento del enlace se dejó de lado: la dirección ya no nombra la red que hay.
+      if (S.ejemploPedido) { S.ejemploPedido = null; anotarEnlaceEjemplo(); }
+      S.trabajoPrevio = null; S.guardadoIlegible = false;
+    }
     S.lienzoVacio.hidden = hayEquipos;
     if (hayEquipos) { return; }
     S.lienzoVacio.innerHTML = "<b>Lienzo vacío</b>Arrastrá un dispositivo desde la paleta, o abrí una red con " +
       "<i>Ejemplos…</i> o <i>Importar</i>.";
+    if (S.ejemploPedido) {
+      var pedido = S.ejemploPedido;
+      var cajaEnlace = el("div", "recuperar", "El enlace abre el ejemplo «" + escapar(pedido.nombre) + "»." +
+        (S.trabajoPrevio ? " Si lo abrís, reemplaza a la red guardada." : "") +
+        (S.guardadoIlegible ? " Hay una red guardada que esta versión no puede leer: si abrís el ejemplo, se reemplaza." : ""));
+      var filaEnlace = el("div", "");
+      var bAbrir = boton("Abrir el ejemplo", "primario");
+      bAbrir.setAttribute("data-foco", "abrir-enlace");
+      bAbrir.addEventListener("click", function () { abrirEjemplo(pedido); });
+      filaEnlace.appendChild(bAbrir);
+      cajaEnlace.appendChild(filaEnlace);
+      S.lienzoVacio.appendChild(cajaEnlace);
+    }
     if (S.trabajoPrevio) {
       var n = (S.trabajoPrevio.dispositivos || []).length;
       var caja = el("div", "recuperar", "Hay una red guardada de la sesión anterior" +
@@ -6936,13 +7023,15 @@ var UI = (function () {
         }
       }
     }
-    try {
-      var previa = localStorage.getItem("simuladorRedes.topologia");
-      if (previa && (!S.topologia || !(S.topologia.dispositivos || []).length)) {
-        var imp = Escenarios.importar(previa);
-        if (imp.ok && (imp.topologia.dispositivos || []).length) { S.trabajoPrevio = imp.topologia; }
-      }
-    } catch (e) { /* sin guardado previo: se sigue igual */ }
+    var previa = null;
+    try { previa = localStorage.getItem("simuladorRedes.topologia"); }
+    catch (e) { /* sin almacenamiento: se sigue igual */ }
+    if (previa && (!S.topologia || !(S.topologia.dispositivos || []).length)) {
+      var imp = null;
+      try { imp = Escenarios.importar(previa); } catch (e1) { /* se trata como ilegible */ }
+      if (!imp || !imp.ok) { S.guardadoIlegible = true; }
+      else if ((imp.topologia.dispositivos || []).length) { S.trabajoPrevio = imp.topologia; }
+    }
     setInterval(guardar, 30000);
     window.addEventListener("beforeunload", guardar);
   }
@@ -6966,7 +7055,6 @@ var UI = (function () {
         registrar("importar", "El archivo no pasó la validación: " + res.errores.map(function (x) { return x.mensaje; }).join(" | "));
         return;
       }
-      empujarHistorial();
       cargarTopologiaAjustada(res.topologia);
       registrar("importar", "Topología importada: " + (res.topologia.nombre || "sin nombre") + ".");
     };
@@ -7038,21 +7126,32 @@ var UI = (function () {
   // Lo que abre el usuario (un ejemplo, un archivo importado, el trabajo
   // recuperado) aparece entero en la vista. cargarTopologia sola no mueve la
   // vista: la usa el Autotest para devolver la red tal como estaba.
-  function cargarTopologiaAjustada(topologia) {
+  function cargarTopologiaAjustada(topologia, idEjemplo) {
+    anotarEnlaceEjemplo(idEjemplo);
+    // Abrir otra red se puede deshacer: la que había queda en el historial.
+    var historial = S.deshacer;
+    if ((S.topologia.dispositivos || []).length) { historial = historial.concat([pasoActual()]).slice(-60); }
     cargarTopologia(topologia);
+    S.deshacer = historial;
     ajustarVista();
   }
 
-  function cargarTopologia(topologia) {
-    // Otra red: se corta la animación en curso y no queda una prueba que repetir sobre ella.
+  // Cambia la red del lienzo: se corta la animación en curso, no queda una prueba que repetir sobre
+  // ella y se descartan las fallas en vivo, el DNS real y la selección.
+  function olvidarRed() {
     if (S.capaAnim) { S.animToken++; limpiarAnim(); }
     if (S.ultimo && S.ultimo.colision) { S.ultimo = null; }
     if (S.ultimo) { S.ultimo.otraRed = true; }
-    S.topologia = clonar(topologia);
     S.fallasVivas = { enlaces: {}, equipos: {} };
     S.herramientaFalla = null;
     S.dnsRealActivo = false; S.dnsReal = {}; S.dnsRealOcupado = false; S.dnsRealGeneracion += 1;
     S.seleccionado = null; S.enlaceSel = null;
+  }
+
+  function cargarTopologia(topologia) {
+    olvidarRed();
+    S.redesAbiertas += 1; S.redActual = S.redesAbiertas;
+    S.topologia = clonar(topologia);
     S.deshacer = []; S.rehacer = [];
     reconstruirEstado();
     recontarNombres();
