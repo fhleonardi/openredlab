@@ -10,6 +10,13 @@ Los números siguen la forma MAYOR.MENOR.PARCHE:
 
 Los archivos de red llevan el número de su formato (`version`) y la versión del simulador que los exportó (`generador`). Un archivo de un formato anterior se actualiza solo al abrirlo.
 
+## 1.10.4 — 2026-11-27
+
+- **Un nombre de internet que la simulación no tiene ya no figura como inexistente.** Al hacer ping, Consultar DNS o Conectar a un nombre que no está cargado (mercadolibre.com, por ejemplo), el diagnóstico D25 y el recorrido decían que no existía o que estaba mal escrito. Ahora dicen que la simulación no lo conoce. Los nombres reservados (`.local`, `.home`, `.test`) y los de la zona de un servidor propio se explican como antes.
+- **Nombre cargado sin ese tipo de registro** (CNAME de google.com, por ejemplo): dice que la simulación no tiene ese registro.
+- **Nombre de la zona de un servidor de la red**, preguntado a otro DNS: el diagnóstico nombra al servidor que atiende la zona, y ese nombre no se consulta afuera.
+- **Botón «Consultar en el DNS real» en el diagnóstico.** Prende «Resolver nombres reales» y repite la prueba. El interruptor sigue apagado al abrir, y nada sale a la red sin apretarlo.
+
 ## 1.10.3 — 2026-11-27
 
 - **La animación sigue a los equipos.** Al mover un equipo (arrastrándolo, con las flechas o con Deshacer y Rehacer), el recorrido del DORA, la prueba de colisión, el paquete que quedó en el lienzo y el cable resaltado de una trama se vuelven a dibujar en el lugar nuevo. Antes quedaban donde estaban los equipos al hacer la prueba. Si se borra un equipo por donde pasó el paquete, la animación se descarta.

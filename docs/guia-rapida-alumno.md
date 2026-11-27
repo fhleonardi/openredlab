@@ -68,7 +68,7 @@ Cada paso lleva su **capa** (por ejemplo «Capa 2 · Enlace»): pasá el mouse p
 | **D22** | La ruta apunta a un router que no está al alcance | Pestaña Rutas del router: el siguiente salto de esa ruta |
 | **D23** | El paquete quedó dando vueltas entre routers | La ruta hacia ese destino en cada router del recorrido |
 | **D24** | El equipo no tiene servidor DNS | Panel derecho, Configuración: el campo DNS |
-| **D25** | El nombre no existe | Cómo está escrito, y si el servidor DNS que preguntás conoce esa zona |
+| **D25** | El nombre no existe, o la simulación no lo conoce | Cómo está escrito, y si el servidor DNS que preguntás conoce esa zona. Un nombre de internet se puede consultar en el DNS real |
 | **D26** | El servidor DNS no responde | Que la PC llegue a la IP de su servidor DNS (es un ping como cualquier otro) |
 | **D27** | Una regla de filtrado bloqueó el paquete | Pestaña Filtrado del router o firewall: el orden de las reglas |
 | **D28** | Falta NAT: la respuesta no puede volver de internet | Casilla NAT del puerto del router que va a internet |
@@ -155,7 +155,7 @@ Un servidor se agrega desde la paleta (**Servidor**); en su pestaña **DNS** se 
 
 ### Nombres reales de internet (a pedido)
 
-La simulación sólo conoce unos pocos nombres de internet (google.com, wikipedia.org, dns.google y one.one.one.one). Si querés probar con otros, por ejemplo `example.com`, prendé **«Resolver nombres reales (requiere internet)»** en la franja de Simulación. Ese nombre se consulta de verdad a **Cloudflare** (por DNS sobre HTTPS) y el ping, la consulta DNS y Conectar usan la IP real; el recorrido te dice qué respuesta es real.
+La simulación sólo conoce unos pocos nombres de internet (google.com, wikipedia.org, dns.google y one.one.one.one). Si querés probar con otros, por ejemplo `example.com`, prendé **«Resolver nombres reales (requiere internet)»** en la franja de Simulación, o apretá **«Consultar en el DNS real»** en el diagnóstico. Ese nombre se consulta de verdad a **Cloudflare** (por DNS sobre HTTPS) y el ping, la consulta DNS y Conectar usan la IP real; el recorrido te dice qué respuesta es real.
 
 Tené en cuenta:
 
