@@ -44,7 +44,7 @@ No hace falta instalar nada: es un único archivo HTML, sin dependencias y sin c
 
 ## Escenarios
 
-En el selector **Ejemplos…** vienen redes listas: una básica, dos subredes, un complejo turístico completo, el mismo complejo con fallas, un desafío VLSM, un router de 8 puertos, un MikroTik de fábrica (con bridge), una oficina con DNS propio y cuatro topologías: estrella, bus (con un hub), malla entre routers y dos LAN unidas por una WAN, y dos proveedores de internet unidos por peering, con un proveedor de tránsito.
+En el selector **Ejemplos…** vienen redes listas: una básica, dos subredes, un complejo turístico completo, el mismo complejo con fallas, un desafío VLSM, un router de 8 puertos, un MikroTik de fábrica (con bridge), una oficina con DNS propio y cuatro topologías: estrella, bus (con un hub), malla entre routers y dos LAN unidas por una WAN, y dos proveedores de internet unidos por peering, con un proveedor de tránsito. La dirección de la página nombra el ejemplo abierto (por ejemplo [`#ejemplo=mikrotik`](https://fhleonardi.github.io/openredlab/#ejemplo=mikrotik)), así se puede compartir como enlace.
 
 En [`escenarios/`](escenarios/) hay archivos para abrir con **Importar** o arrastrándolos al lienzo:
 

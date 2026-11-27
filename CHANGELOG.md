@@ -10,6 +10,13 @@ Los números siguen la forma MAYOR.MENOR.PARCHE:
 
 Los archivos de red llevan el número de su formato (`version`) y la versión del simulador que los exportó (`generador`). Un archivo de un formato anterior se actualiza solo al abrirlo.
 
+## 1.11.0 — 2026-11-27
+
+- **Enlaces a un ejemplo.** Al elegir un ejemplo, la dirección de la página termina en `#ejemplo=` y su nombre (por ejemplo `#ejemplo=mikrotik`). Copiala y compartila: quien la abra ve ese ejemplo. Si tiene una red guardada de antes, no se pisa: puede recuperarla o abrir el ejemplo.
+- **El tema oscuro se lee mejor.** Los nombres de los cables, los avisos en rojo y los carteles de las animaciones usan colores propios de cada tema. Los puertos libres ya no son cuadrados blancos, y las filas de colores de la captura tienen contraste. En el tema claro, los carteles azules y violetas son un poco más oscuros.
+- **Los botones responden al apretarlos:** se hunden y cambian de brillo.
+- **La página se presenta al compartirla:** tiene descripción, título e icono para la vista previa de un enlace.
+
 ## 1.10.3 — 2026-11-27
 
 - **La animación sigue a los equipos.** Al mover un equipo (arrastrándolo, con las flechas o con Deshacer y Rehacer), el recorrido del DORA, la prueba de colisión, el paquete que quedó en el lienzo y el cable resaltado de una trama se vuelven a dibujar en el lugar nuevo. Antes quedaban donde estaban los equipos al hacer la prueba. Si se borra un equipo por donde pasó el paquete, la animación se descarta.
