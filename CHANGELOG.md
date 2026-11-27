@@ -16,6 +16,7 @@ Los archivos de red llevan el número de su formato (`version`) y la versión de
 - **Cómo lo usa la simulación.** Dos equipos en puertos distintos del bridge están en la misma red: la trama pasa sin enrutar y sin bajar el TTL, y el recorrido dice que el bridge la reenvía como un switch. Hacia un puerto ruteado, el paquete pasa por el router y sale de la IP del bridge. El bridge reparte direcciones por DHCP, aprende las MAC (se ven en la pestaña Estado) y es un solo dominio de broadcast. En el lienzo, sus puertos tienen borde verde.
 - **Ejemplo nuevo: «MikroTik de fábrica».** ether1 va a internet con NAT, el bridge agrupa ether2 a ether5 y el Wi-Fi con 192.168.88.1/24 y DHCP, y ether6 queda afuera, ruteado, con un servidor.
 - **Validación.** Un puerto del bridge con IP propia, un bridge sin puertos o puertos marcados sin bridge se avisan al importar. Al meter un puerto con IP en el bridge, la IP pasa al bridge si el bridge no tenía una.
+- **Cambiar el modelo de un router ya no rompe sus reglas.** Al pasar, por ejemplo, de un router estándar a uno de 8 puertos, los puertos se renombran (g0/1 pasa a ser ether2). Las reglas de filtrado que decían por qué puerto entra el paquete seguían con el nombre viejo, y la red quedaba inválida. Ahora siguen al puerto renombrado, y lo mismo pasa al meter o sacar un puerto del bridge.
 
 ## 1.9.0 — 2026-11-27
 

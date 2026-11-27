@@ -159,6 +159,10 @@ var UI = (function () {
       var a = disp.interfaces[i];
       if (a.habilitada && a.ip && Red.esIpValida(String(a.ip))) { return a; }
     }
+    // Un router cuya única IP es la del bridge se presenta con ella.
+    if (disp.tipo === "router" && disp.bridge && disp.bridge.ip && Red.esIpValida(String(disp.bridge.ip))) {
+      return { id: "bridge", nombre: "bridge", medio: "bridge", habilitada: true, ip: disp.bridge.ip, prefijo: disp.bridge.prefijo, mac: null };
+    }
     for (i = 0; i < disp.interfaces.length; i++) {
       var b = disp.interfaces[i];
       if (b.ip && Red.esIpValida(String(b.ip))) { return b; }
@@ -644,7 +648,7 @@ var UI = (function () {
     "svg .nodo,svg .enlace,svg .asa{cursor:pointer;}",
     "svg .asa:focus-visible{outline:3px solid var(--sim-acento);outline-offset:2px;}",
     "svg .puerto{cursor:pointer;stroke:#333;stroke-width:1;}",
-    "svg .puerto.enbridge{stroke:#16a34a;stroke-width:2.5;}",
+    "svg .puerto.enbridge{stroke:#16a34a;}",
     "svg text{font-family:system-ui,Arial,sans-serif;}",
     "svg .etiqueta text.mono{font-family:ui-monospace,Consolas,monospace;}",
     "svg .fondoetq{fill:var(--sim-fondo);fill-opacity:.9;}",
@@ -1493,7 +1497,7 @@ var UI = (function () {
         c.setAttribute("tabindex", "0");
         c.setAttribute("role", "button");
         var enBridge = enElBridge(d, iface);
-        if (enBridge) { c.setAttribute("class", "puerto enbridge"); }
+        if (enBridge) { c.setAttribute("class", "puerto enbridge"); c.style.strokeWidth = "2.5"; }
         c.setAttribute("aria-label", d.id + ":" + iface.id + (iface.habilitada ? "" : ", deshabilitada") + (enBridge ? ", en el bridge" : ""));
         var ocupado = !!enlaceEnPuerto(d.id, iface.id);
         var comparte = puertoAdmiteMultiplesEnlaces(d, iface);
@@ -1506,11 +1510,13 @@ var UI = (function () {
           var comp = !S.cableOrigen || (iface.medio === S.cableTipo && (!ocupado || comparte) && iface.id !== undefined);
           c.setAttribute("opacity", comp ? "1" : "0.3");
           c.setAttribute("stroke-width", comp ? "2" : "1");
+          c.style.strokeWidth = "";
         } else if (S.moviendoExtremo) {
           var em = buscarEnlace(S.moviendoExtremo.enlace);
           var sirve = !!em && !motivoPuertoInvalido(em, S.moviendoExtremo.lado, d, iface);
           c.setAttribute("opacity", sirve ? "1" : "0.3");
           c.setAttribute("stroke-width", sirve ? "2" : "1");
+          c.style.strokeWidth = "";
         }
         c.addEventListener("pointerenter", function (ev) {
           mostrarTipPuerto(ev, d, iface);
@@ -2876,6 +2882,7 @@ var UI = (function () {
       if (d.bridge && !d.interfaces.some(function (x) { return x.enBridge; })) {
         delete d.bridge;
         texto += " El bridge quedó sin puertos y se quitó.";
+        Escenarios.renombrarReferencias(S.topologia, d.id, { bridge: null });
         avisar(texto);
       }
       reconstruirEstado(); renderTodo();
@@ -2939,12 +2946,22 @@ var UI = (function () {
       } else {
         texto = f.id + " entró al bridge de " + (d.nombre || d.id) + "." + (nuevo ? " Cargá la IP del bridge." : "");
       }
+      if (f.nat) {
+        delete f.nat;
+        texto += " Se le quitó el NAT: el tráfico sale por el bridge.";
+      }
+      // Lo que entraba por este puerto ahora entra por el bridge.
+      var cambio = {};
+      cambio[f.id] = "bridge";
+      Escenarios.renombrarReferencias(S.topologia, d.id, cambio);
     } else {
       delete f.enBridge;
       texto = f.id + " salió del bridge de " + (d.nombre || d.id) + ": ahora es un puerto ruteado y necesita su propia IP.";
       if (!(d.interfaces || []).some(function (x) { return x.enBridge; })) {
         delete d.bridge;
         texto += " El bridge quedó sin puertos y se quitó.";
+        // Lo que entraba por el bridge ahora entra por el puerto que quedó.
+        Escenarios.renombrarReferencias(S.topologia, d.id, { bridge: f.id });
       }
     }
     reconstruirEstado(); renderTodo();
@@ -2990,8 +3007,9 @@ var UI = (function () {
       fila.appendChild(labH);
       if (d.tipo === "router") {
         // NAT de salida: lo que sale por este puerto con IP privada se va
-        // con la IP de este puerto.
+        // con la IP de este puerto. En un puerto del bridge no se aplica.
         var labN = el("label", "enlinea");
+        if (enElBridge(d, f)) { labN.style.display = "none"; }
         var cbNat = document.createElement("input");
         cbNat.type = "checkbox"; cbNat.checked = !!f.nat;
         cbNat.addEventListener("change", function () {

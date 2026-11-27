@@ -341,8 +341,21 @@ var Escenarios = (function () {
         if (e[lado].dispositivo === d.id && cambios[e[lado].interfaz]) { e[lado].interfaz = cambios[e[lado].interfaz]; }
       });
     });
-    renombrarEnEscenario(topologia.escenario, d.id, cambios);
+    renombrarReferencias(topologia, d.id, cambios);
     return { ok: true, cambios: cambios };
+  }
+
+  // Lo que nombra puertos de un equipo (el escenario y la entrada de sus reglas) sigue a los puertos
+  // renombrados. Un cambio a null borra la entrada de la regla (vale para cualquier puerto).
+  function renombrarReferencias(topologia, idDispositivo, cambios) {
+    var conNombre = {};
+    Object.keys(cambios).forEach(function (k) { if (cambios[k]) { conNombre[k] = cambios[k]; } });
+    renombrarEnEscenario(topologia.escenario, idDispositivo, conNombre);
+    var d = buscarDispositivo(topologia, idDispositivo);
+    ((d && Array.isArray(d.reglas)) ? d.reglas : []).forEach(function (r) {
+      if (!r || !r.entrada || !Object.prototype.hasOwnProperty.call(cambios, r.entrada)) { return; }
+      if (cambios[r.entrada]) { r.entrada = cambios[r.entrada]; } else { delete r.entrada; }
+    });
   }
 
   // Las referencias "equipo:puerto" del escenario siguen al puerto renombrado.
@@ -444,8 +457,6 @@ var Escenarios = (function () {
     return null;
   }
 
-  // Primera interfaz con IP válida: primero entre las habilitadas, si no
-  // entre todas. Sirve para saber con qué dirección se presenta un equipo.
   // El bridge de un router visto como una interfaz más (la que crea el Motor), o null.
   function interfazBridge(dispositivo) {
     if (!dispositivo || dispositivo.tipo !== "router" || !dispositivo.bridge || typeof dispositivo.bridge !== "object") { return null; }
@@ -459,6 +470,8 @@ var Escenarios = (function () {
     return b ? lista.concat([b]) : lista;
   }
 
+  // Primera interfaz con IP válida: primero entre las habilitadas, si no
+  // entre todas. Sirve para saber con qué dirección se presenta un equipo.
   function primeraIpDe(dispositivo) {
     if (!dispositivo || !dispositivo.interfaces) {
       return null;
@@ -522,6 +535,10 @@ var Escenarios = (function () {
       anotar(etiqueta + ".interfaces.bridge", "El router " + nombre + " tiene un puerto llamado bridge, que es el nombre reservado de su bridge.");
     }
     miembros.forEach(function (f) {
+      if (f.nat === true) {
+        anotar(etiqueta + ".interfaces." + f.id + ".nat", "El puerto " + f.id + " del router " + nombre + " está en el bridge y tiene NAT: " +
+          "el tráfico sale por el bridge, así que el NAT de ese puerto no se aplica. El NAT va en el puerto que da a internet.");
+      }
       if (f.ip !== undefined && f.ip !== null && String(f.ip).trim() !== "") {
         anotar(etiqueta + ".interfaces." + f.id + ".ip", "El puerto " + f.id + " del router " + nombre + " está en el bridge y tiene la IP " + f.ip +
           ": la IP va en el bridge, no en sus puertos.");
@@ -3405,6 +3422,19 @@ var Escenarios = (function () {
       comparar("bridge: una regla puede entrar por el bridge",
         errores(function (r) { r.reglas = [{ accion: "bloquear", origen: "0.0.0.0/0", destino: "10.0.6.0/24", entrada: "bridge" }]; }), []);
       var desafio = vaciarDireccionamiento(clonar(ejemploPorId("mikrotik").topologia));
+      comparar("bridge: NAT en un puerto del bridge es un error",
+        errores(function (r) { r.interfaces[1].nat = true; }), ["dispositivos.r1.interfaces.ether2.nat"]);
+      var conReglas = clonar(ejemploPorId("mikrotik").topologia);
+      conReglas.dispositivos[0].reglas = [{ accion: "bloquear", origen: "0.0.0.0/0", destino: "0.0.0.0/0", entrada: "ether6" },
+        { accion: "bloquear", origen: "0.0.0.0/0", destino: "0.0.0.0/0", entrada: "bridge" }];
+      renombrarReferencias(conReglas, "r1", { ether6: "bridge", bridge: null });
+      comparar("referencias: las reglas siguen al puerto y una entrada sin puerto se borra",
+        conReglas.dispositivos[0].reglas.map(function (r) { return r.entrada || null; }), ["bridge", null]);
+      var estandar = clonar(ejemploPorId("oficina-dns").topologia);
+      estandar.dispositivos.forEach(function (d) { if (d.id === "r1") { d.reglas = [{ accion: "permitir", origen: "0.0.0.0/0", destino: "0.0.0.0/0", entrada: "g0/1" }]; } });
+      cambiarModelo(estandar, "r1", "8-puertos");
+      comparar("cambiar de modelo renombra la entrada de las reglas",
+        [estandar.dispositivos.filter(function (d) { return d.id === "r1"; })[0].reglas[0].entrada, validarTopologia(estandar).ok], ["ether2", true]);
       comparar("bridge: un desafío borra la IP del bridge y sigue validando", [desafio.dispositivos[0].bridge.ip, validarTopologia(desafio).ok], [null, true]);
     })();
 
@@ -3781,6 +3811,7 @@ var Escenarios = (function () {
     verificarDesafio: verificarDesafio,
     nombrePuertoLibre: nombrePuertoLibre,
     cambiarModelo: cambiarModelo,
+    renombrarReferencias: renombrarReferencias,
     PUERTOS_ROUTER_MAX: PUERTOS_ROUTER_MAX,
     detectarSectores: detectarSectores,
     TIPOS_FALLA: TIPOS_FALLA,

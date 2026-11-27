@@ -64,11 +64,17 @@ var Motor = (function () {
       titulo: "No hay conexión física",
       explicacion: function (ctx) {
         ctx = ctx || {};
+        if (ctx.interfaz === "bridge") {
+          return "Ningún puerto del bridge de " + valor(ctx.origen, "el equipo") + " tiene un cable activo: sin conexión física no sale ningún paquete.";
+        }
         return "El puerto " + valor(ctx.interfaz, "?") + " de " + valor(ctx.origen, "el equipo") +
           " no tiene un cable conectado, o el cable está marcado como caído. Sin conexión física no sale ningún paquete.";
       },
       sugerencia: function (ctx) {
         ctx = ctx || {};
+        if (ctx.interfaz === "bridge") {
+          return "Conectá un cable a uno de los puertos del bridge o, si ya hay uno, seleccionalo y ponelo en estado activo.";
+        }
         return "Conectá un cable a " + valor(ctx.interfaz, "ese puerto") +
           " o, si ya hay uno, seleccionalo y ponelo en estado activo.";
       }
@@ -2105,7 +2111,7 @@ var Motor = (function () {
     }
     agregarPaso("Revisar la conexión física",
       esInterfazBridge(srcIface)
-        ? "El bridge de " + nom(origen.id) + " tiene un puerto con un enlace activo hacia " + nom(otraPunta(enlaceUsable, origen.id)) + "."
+        ? "El bridge de " + nom(origen.id) + " tiene puertos con enlaces activos: la trama sale por el que lleva al destino."
         : "El puerto " + srcIface.id + " tiene " +
       (srcIface.medio === "wireless"
         ? "un enlace inalámbrico activo (modo " + modoRadioDe(origen, srcIface) + ")"
@@ -2668,9 +2674,16 @@ var Motor = (function () {
           .filter(function (id) { return esHub(buscarDispositivo(estado, id)); });
         var bridgesCruzados = tramoL2(estado, actualId, actualIface.id, destPar.dispositivo.id, destPar.interfaz.id).atraviesa
           .filter(function (id) { return tieneBridge(buscarDispositivo(estado, id)); });
-        var textoSwitch = nom(actualId) + " averigua la MAC de " + destinoIp + " (ARP) y " + (bridgesCruzados.length
+        var textoBridge = bridgesCruzados.length
           ? "el bridge de " + bridgesCruzados.map(nom).join(" y el de ") + " reenvía la trama por el puerto donde está " + nombreDestinoFinal +
             ", como un switch: no la enruta ni le baja el TTL, porque los dos equipos están en la misma red."
+          : esInterfazBridge(actualIface)
+          ? "el bridge de " + nom(actualId) + " manda la trama por el puerto donde está " + nombreDestinoFinal + ", como un switch."
+          : esInterfazBridge(destPar.interfaz)
+          ? "la trama entra a " + nombreDestinoFinal + " por su bridge, cuyos puertos conmutan como un switch."
+          : null;
+        var textoSwitch = nom(actualId) + " averigua la MAC de " + destinoIp + " (ARP) y " + (textoBridge
+          ? textoBridge
           : (conmutadores.length > 0 || hayAp)
           ? (hubsCruzados.length
             ? "el hub " + hubsCruzados.map(nom).join(" y el hub ") + " repite la trama por todos sus puertos: la reciben todos los equipos " +
@@ -6164,6 +6177,13 @@ var Motor = (function () {
       var routerSolo = ping(oficina(function (t) { t.enlaces = t.enlaces.filter(function (e) { return e.id === "l3"; }); }), "r1", "192.168.88.11");
       comparar("bridge: el router sin cables en el bridge lo dice así",
         /Ningún puerto del bridge de r1/.test(routerSolo.pasos[routerSolo.pasos.length - 1].detalle), true);
+      function entrega(r) { return r.pasos.filter(function (p) { return /Entregar/.test(p.titulo); })[0].detalle; }
+      comparar("bridge: con el router en una punta, la entrega habla del bridge y no de un punto de acceso",
+        [/bridge de r1 manda la trama/.test(entrega(ping(est, "r1", "192.168.88.12"))), /entra a r1 por su bridge/.test(entrega(ping(est, "p1", "192.168.88.1"))),
+          /punto de acceso/.test(entrega(ping(est, "p3", "192.168.88.12")))], [true, true, false]);
+      var sinBridge = ping(oficina(function (t) { t.enlaces = t.enlaces.filter(function (e) { return e.id === "l3"; }); }), "p3", "192.168.88.11");
+      comparar("bridge: D02 sin cables en el bridge no pide conectar un cable a «bridge»",
+        [sinBridge.diagnostico.codigo, /Ningún puerto del bridge/.test(sinBridge.diagnostico.explicacion), /a bridge/.test(sinBridge.diagnostico.sugerencia)], ["D02", true, false]);
       comparar("bridge: la topología que vuelve al diseño no trae la interfaz virtual",
         topologiaDe(est).dispositivos[0].interfaces.map(function (f) { return f.id; }).indexOf("bridge"), -1);
       comparar("bridge: transmitir a la vez nombra al bridge",
