@@ -11837,6 +11837,8 @@ var UI = (function () {
     ".simraiz h2,.simraiz h3{text-wrap:balance;}",
     ".simraiz dialog.acerca{width:min(620px,calc(100vw - 24px));max-width:none;max-height:calc(100vh - 24px);max-height:calc(100dvh - 24px);padding:0;border:1px solid var(--sim-borde);border-radius:12px;background:var(--sim-panel);color:var(--sim-texto);overflow:hidden;box-shadow:0 12px 40px rgba(0,0,0,.35);}",
     ".simraiz dialog.acerca[open]{display:flex;flex-direction:column;}",
+    ".simraiz dialog.acerca:not([open]){display:none;}",
+    ".simraiz dialog.acerca.sinmodal{position:fixed;left:0;right:0;top:12px;margin:0 auto;z-index:50;}",
     ".simraiz dialog.acerca::backdrop{background:rgba(0,0,0,.55);}",
     ".acerca .cabacerca{display:flex;align-items:center;gap:12px;padding:12px 16px;background:var(--sim-cabecera);color:var(--sim-cabtexto);flex:0 0 auto;}",
     ".acerca .cabacerca .logo{width:40px;height:40px;}",
@@ -13808,8 +13810,12 @@ var UI = (function () {
   }
 
   function atajos(ev) {
-    // Con «Acerca de» abierta, las teclas son de la ventana (Esc la cierra el navegador).
-    if (S.acerca && S.acerca.open) { return; }
+    // Con «Acerca de» abierta, las teclas son de la ventana. Esc la cierra el navegador; si no tiene
+    // <dialog>, se cierra acá.
+    if (acercaAbierta()) {
+      if (ev.key === "Escape" && S.acerca.classList.contains("sinmodal")) { cerrarAcerca(); }
+      return;
+    }
     var mod = ev.ctrlKey || ev.metaKey;
     var foco = document.activeElement;
     var escribiendo = !!foco && (foco.tagName === "INPUT" || foco.tagName === "TEXTAREA");
@@ -18212,39 +18218,42 @@ var UI = (function () {
     var empezoAfuera = false;
     d.addEventListener("pointerdown", function (ev) { empezoAfuera = ev.target === d; });
     d.addEventListener("click", function (ev) { if (ev.target === d && empezoAfuera) { cerrarAcerca(); } });
-    // Esc lo cierra el navegador: la dirección se limpia igual.
-    d.addEventListener("close", function () { if (!d.open) { quitarEnlaceAcerca(); } });
     return d;
   }
 
+  // Se mira el atributo: un navegador sin <dialog> no tiene la propiedad «open».
+  function acercaAbierta() { return !!S.acerca && S.acerca.hasAttribute("open"); }
+
   function abrirAcerca() {
     var d = S.acerca;
-    if (!d || d.open) { return; }
+    if (!d || acercaAbierta()) { return; }
     ocultarTip();
-    if (typeof d.showModal === "function") { d.showModal(); } else { d.setAttribute("open", ""); }
+    if (typeof d.showModal === "function") { d.showModal(); }
+    else { d.classList.add("sinmodal"); d.setAttribute("open", ""); }
     d.querySelector(".cuerpoacerca").scrollTop = 0;
   }
 
   function cerrarAcerca() {
-    var d = S.acerca;
-    if (!d || !d.open) { return; }
-    if (typeof d.close === "function") { d.close(); } else { d.removeAttribute("open"); }
-    quitarEnlaceAcerca();
+    if (!acercaAbierta()) { return; }
+    if (typeof S.acerca.close === "function") { S.acerca.close(); } else { S.acerca.removeAttribute("open"); }
   }
 
-  function pideAcerca() { return /^#acerca[.,;:)]*$/i.test(location.hash); }
-
-  function quitarEnlaceAcerca() {
-    if (!pideAcerca()) { return; }
-    try { history.replaceState(null, "", location.pathname + location.search); }
-    catch (e) { /* sin permiso para cambiar la dirección: queda como estaba */ }
-  }
+  function esEnlaceAcerca(hash) { return /^#acerca[.,;:)]*$/i.test(hash); }
 
   // La dirección puede pedir la ventana «Acerca de» o un ejemplo.
-  function seguirEnlace() {
-    if (pideAcerca()) { abrirAcerca(); return; }
-    cerrarAcerca();
-    seguirEnlaceAEjemplo();
+  function seguirEnlace(ev) {
+    if (!esEnlaceAcerca(location.hash)) {
+      cerrarAcerca();
+      seguirEnlaceAEjemplo();
+      return;
+    }
+    // «#acerca» no queda en la dirección: vuelve a ser la de antes. Así sigue nombrando el ejemplo
+    // abierto y «Atrás» del navegador no lo vuelve a cargar encima del trabajo.
+    var antes = ev && ev.oldURL && ev.oldURL.indexOf("#") >= 0 ? ev.oldURL.slice(ev.oldURL.indexOf("#")) : "";
+    if (esEnlaceAcerca(antes)) { antes = ""; }
+    try { history.replaceState(null, "", antes || location.pathname + location.search); }
+    catch (e) { /* sin permiso para cambiar la dirección: queda como estaba */ }
+    abrirAcerca();
   }
 
   /* ---------------- Ejemplos y enlaces a un ejemplo ---------------- */
@@ -20892,7 +20901,13 @@ var Autotest = (function () {
       window.dispatchEvent(new Event("hashchange"));
       if (!d.open) { prob.push("#acerca no la abre"); }
       d.querySelector("button.cerraracerca").click();
-      if (location.hash === "#acerca") { prob.push("al cerrarla la dirección sigue en #acerca"); }
+      if (location.hash === "#acerca") { prob.push("la dirección sigue en #acerca"); }
+      // Con un ejemplo en la dirección, «#acerca» no lo reemplaza ni lo vuelve a cargar.
+      var base = location.href.split("#")[0];
+      history.replaceState(null, "", "#acerca");
+      window.dispatchEvent(new HashChangeEvent("hashchange", { oldURL: base + "#ejemplo=mikrotik", newURL: base + "#acerca" }));
+      if (!d.open || location.hash !== "#ejemplo=mikrotik") { prob.push("con #acerca la dirección deja de nombrar el ejemplo abierto"); }
+      d.querySelector("button.cerraracerca").click();
       if (UI.topologiaActual().dispositivos.length !== equipos) { prob.push("abrirla cambió la red"); }
       if (prob.length === 0) { return fila(43, nombre, true, "Abre con el botón y con #acerca, trae autoría, repositorio, datos, bibliografía y licencias, entra en la pantalla y Supr no toca la red."); }
       return fila(43, nombre, false, "Falla: " + prob.join("; ") + ".");
@@ -20921,6 +20936,11 @@ var Autotest = (function () {
       }
       return { total: 0, pasadas: 0, resultados: [], detalleCapas: "capas faltantes", fallos: 0 };
     }
+    // Con «Acerca de» abierta las teclas son de la ventana y los criterios de teclado fallarían.
+    try {
+      var abierta = document.querySelector("dialog.acerca[open] button.cerraracerca");
+      if (abierta) { abierta.click(); }
+    } catch (e) { /* se sigue igual */ }
     var respaldoTopo = null;
     var respaldoModo = "topologia";
     var teniaUI = true;

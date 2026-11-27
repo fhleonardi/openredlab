@@ -2315,7 +2315,13 @@ var Autotest = (function () {
       window.dispatchEvent(new Event("hashchange"));
       if (!d.open) { prob.push("#acerca no la abre"); }
       d.querySelector("button.cerraracerca").click();
-      if (location.hash === "#acerca") { prob.push("al cerrarla la dirección sigue en #acerca"); }
+      if (location.hash === "#acerca") { prob.push("la dirección sigue en #acerca"); }
+      // Con un ejemplo en la dirección, «#acerca» no lo reemplaza ni lo vuelve a cargar.
+      var base = location.href.split("#")[0];
+      history.replaceState(null, "", "#acerca");
+      window.dispatchEvent(new HashChangeEvent("hashchange", { oldURL: base + "#ejemplo=mikrotik", newURL: base + "#acerca" }));
+      if (!d.open || location.hash !== "#ejemplo=mikrotik") { prob.push("con #acerca la dirección deja de nombrar el ejemplo abierto"); }
+      d.querySelector("button.cerraracerca").click();
       if (UI.topologiaActual().dispositivos.length !== equipos) { prob.push("abrirla cambió la red"); }
       if (prob.length === 0) { return fila(43, nombre, true, "Abre con el botón y con #acerca, trae autoría, repositorio, datos, bibliografía y licencias, entra en la pantalla y Supr no toca la red."); }
       return fila(43, nombre, false, "Falla: " + prob.join("; ") + ".");
@@ -2344,6 +2350,11 @@ var Autotest = (function () {
       }
       return { total: 0, pasadas: 0, resultados: [], detalleCapas: "capas faltantes", fallos: 0 };
     }
+    // Con «Acerca de» abierta las teclas son de la ventana y los criterios de teclado fallarían.
+    try {
+      var abierta = document.querySelector("dialog.acerca[open] button.cerraracerca");
+      if (abierta) { abierta.click(); }
+    } catch (e) { /* se sigue igual */ }
     var respaldoTopo = null;
     var respaldoModo = "topologia";
     var teniaUI = true;
