@@ -1760,6 +1760,254 @@ var Motor = (function () {
     return { colision: colision, broadcast: grupos() };
   }
 
+  /* ---------------- Transmitir a la vez: CSMA/CD ----------------
+   * Dos equipos mandan una trama en el mismo instante. Si comparten el medio a través de un hub,
+   * las señales chocan y cada uno espera un número al azar de ranuras antes de reintentar (espera
+   * exponencial binaria truncada). Un switch separa los dominios de colisión: no hay choque.
+   * No toca las tablas ARP ni MAC. */
+  var MAX_INTENTOS_CSMA = 16;
+  var TOPE_EXPONENTE_CSMA = 10;
+
+  // Los puertos del equipo por los que hoy puede pasar una trama.
+  function puertosConEnlace(estado, dev) {
+    return (dev.interfaces || []).filter(function (f) {
+      return enlacesDe(estado, dev.id, f.id).some(function (e) { return tramaPasa(estado, e); });
+    });
+  }
+
+  // El camino de capa 2 entre dos equipos, probando sus puertos; el cableado antes que el aire.
+  function caminoEntreEquipos(estado, a, b) {
+    var mejor = null;
+    puertosConEnlace(estado, a).forEach(function (fa) {
+      puertosConEnlace(estado, b).forEach(function (fb) {
+        var t = tramoL2(estado, a.id, fa.id, b.id, fb.id);
+        if (!t.enlaces.length) { return; }
+        if (!mejor || (mejor.medio === "wireless" && t.medio !== "wireless")) {
+          mejor = { ifA: fa.id, ifB: fb.id, atraviesa: t.atraviesa, medio: t.medio, enlaces: t.enlaces };
+        }
+      });
+    });
+    return mejor;
+  }
+
+  function diagnosticoDeEntrada(titulo, explicacion, sugerencia) {
+    return { codigo: "ENTRADA", titulo: titulo, explicacion: explicacion, sugerencia: sugerencia };
+  }
+
+  function transmitirALaVez(estado, idA, idB, opciones) {
+    opciones = opciones || {};
+    var azar = typeof opciones.azar === "function" ? opciones.azar : generador(opciones.semilla || 1);
+    var pasos = [], intentos = [], eventos = [], colisiones = 0;
+    // Cada paso puede apuntar a un momento de la animación (evento).
+    function agregar(titulo, detalle, capa, evento) {
+      var p = { n: pasos.length + 1, titulo: titulo, detalle: detalle, ok: true, capa: capa };
+      if (evento) { p.evento = eventos.length; eventos.push(evento); }
+      pasos.push(p);
+      return p;
+    }
+    function terminar(resultado, extra) {
+      var res = { exito: true, resultado: resultado, pasos: pasos, intentos: intentos, eventos: eventos,
+        colisiones: colisiones, diagnostico: null, a: idA, b: idB };
+      Object.keys(extra || {}).forEach(function (k) { res[k] = extra[k]; });
+      return res;
+    }
+    // `equipo` es el que hay que revisar cuando la prueba no se pudo hacer por culpa de uno.
+    function fallar(diagnostico, equipo) {
+      return { exito: false, resultado: null, pasos: pasos, intentos: intentos, eventos: eventos,
+        colisiones: colisiones, diagnostico: diagnostico, a: idA, b: idB, equipo: equipo || null };
+    }
+
+    var a = buscarDispositivo(estado, idA);
+    var b = buscarDispositivo(estado, idB);
+    if (!a || !b || a === b) {
+      return fallar(diagnosticoDeEntrada("Elegí dos equipos distintos",
+        "La prueba necesita dos equipos que transmitan en el mismo instante.", "Elegí un equipo A y un equipo B."));
+    }
+    if (esConmutador(a) || esConmutador(b)) {
+      return fallar(diagnosticoDeEntrada("Ese equipo no envía tramas propias",
+        "Los switches, los hubs y los puntos de acceso reenvían las tramas de los demás.",
+        "Elegí una PC, un servidor, un router u otro equipo final."));
+    }
+    var nombreA = nombreDe(estado, a.id), nombreB = nombreDe(estado, b.id);
+    var apagado = !a.encendido ? a : (!b.encendido ? b : null);
+    if (apagado) { return fallar(diagnosticoDe("D01", { origen: nombreDe(estado, apagado.id), interfaz: "?" }), apagado.id); }
+    var sinCable = !puertosConEnlace(estado, a).length ? a : (!puertosConEnlace(estado, b).length ? b : null);
+    if (sinCable) {
+      // El cable puede estar bien y ser el de la otra punta el apagado: se lo nombra.
+      var vecinoApagado = (estado.topologia.enlaces || []).filter(function (e) {
+        return e.estado === "up" && (e.a.dispositivo === sinCable.id || e.b.dispositivo === sinCable.id);
+      }).map(function (e) { return buscarDispositivo(estado, otraPunta(e, sinCable.id)); })
+        .filter(function (d) { return d && !d.encendido; })[0];
+      if (vecinoApagado) {
+        var quien = nombreDe(estado, vecinoApagado.id);
+        return fallar({
+          codigo: "D02", titulo: CATALOGO.D02.titulo,
+          explicacion: nombreDe(estado, sinCable.id) + " está conectado a " + quien + ", pero " + quien + " está apagado: por ese cable no pasa nada.",
+          sugerencia: "Encendé " + quien + "."
+        }, vecinoApagado.id);
+      }
+      var puerto = (sinCable.interfaces[0] || {}).id;
+      return fallar(diagnosticoDe("D02", { origen: nombreDe(estado, sinCable.id), interfaz: puerto }), sinCable.id);
+    }
+
+    var camino = caminoEntreEquipos(estado, a, b);
+    if (!camino) {
+      agregar("Comprobar si comparten el medio",
+        "No: entre " + nombreA + " y " + nombreB + " no hay un camino de capa 2 (los separa un router, o hay un cable cortado o un equipo " +
+        "apagado en el medio). " +
+        "Sus tramas nunca se cruzan, así que no pueden chocar.", 1);
+      return terminar("separados", { ruta: [] });
+    }
+    var ruta = [a.id].concat(camino.atraviesa, [b.id]);
+    var lista = dominios(estado).colision;
+    function dominioDe(idEnlace) {
+      return lista.filter(function (d) { return d.enlaces.indexOf(idEnlace) >= 0; })[0] || null;
+    }
+    var dominio = dominioDe(camino.enlaces[0]);
+    var mismo = dominio === dominioDe(camino.enlaces[camino.enlaces.length - 1]);
+    var intermedios = camino.atraviesa.map(function (id) { return buscarDispositivo(estado, id); });
+    var hubs = intermedios.filter(esHub);
+    var enAire = camino.enlaces.some(function (id) {
+      return (estado.topologia.enlaces || []).some(function (e) { return e.id === id && e.tipo === "wireless"; });
+    });
+    function nombres(devs) { return devs.map(function (d) { return nombreDe(estado, d.id); }).join(" y "); }
+
+    if (mismo && enAire) {
+      agregar("Comprobar si comparten el medio",
+        "Sí: " + nombreA + " y " + nombreB + " están en la misma celda Wi-Fi. El aire es un medio compartido.", 1);
+      agregar("Evitar la colisión (CSMA/CA)",
+        "En Wi-Fi no se puede detectar una colisión mientras se transmite, así que se la evita: cada uno escucha, espera un tiempo fijo " +
+        "(DIFS) más un número al azar de ranuras y el que termina primero envía; el otro detiene su cuenta. El receptor confirma con un " +
+        "ACK; si no llega, se reintenta con una espera mayor.", 2);
+      agregar("Alcance de esta prueba",
+        "La prueba simula las colisiones de Ethernet con hub (CSMA/CD). El Wi-Fi queda explicado, sin simular.", 2);
+      return terminar("csma-ca", { ruta: ruta });
+    }
+
+    var simultaneo = { tipo: "duplex", rutas: [{ quien: "a", ids: ruta }, { quien: "b", ids: ruta.slice().reverse() }] };
+    if (!mismo || !hubs.length) {
+      if (!camino.atraviesa.length) {
+        agregar("Comprobar si comparten el medio",
+          nombreA + " y " + nombreB + " están unidos por un solo cable punto a punto: no hay nadie más en ese medio.", 1);
+        agregar("Transmitir a la vez (full dúplex)",
+          "Los dos envían en el mismo instante. El cable tiene un par de hilos para cada sentido: se envía y se recibe a la vez, " +
+          "no hay colisión y CSMA/CD queda desactivado.", 2, simultaneo);
+        return terminar("sin-colision", { ruta: ruta });
+      }
+      var separadores = intermedios.filter(function (d) { return !esHub(d); });
+      var conSwitch = separadores.length ? nombres(separadores) : "un conmutador";
+      var hayHub = hubs.length > 0;
+      agregar("Comprobar si comparten el medio",
+        "No: entre " + nombreA + " y " + nombreB + " está " + conSwitch + ". Cada puerto de un switch o punto de acceso es el límite " +
+        "de un dominio de colisión: " + nombreA + " está en uno y " + nombreB + " en otro." +
+        (hayHub ? " Del lado de " + nombres(hubs) + " el medio sigue compartido, pero sólo entre los equipos de ese lado." : ""), 1);
+      agregar("Transmitir a la vez",
+        "Los dos envían en el mismo instante y las señales no se mezclan: no hay colisión entre ellos." +
+        (hayHub ? " En el lado del hub, el puerto del switch escucha el medio antes de transmitir; una colisión de ese lado no cruza al otro."
+          : " En full dúplex se envía y se recibe a la vez: CSMA/CD queda desactivado."), 2, simultaneo);
+      agregar(conSwitch + " almacena y reenvía",
+        "Recibe cada trama completa, mira la MAC de destino y la reenvía por el puerto que corresponde. Si dos tramas van al mismo " +
+        "puerto, esperan en fila.", 2);
+      return terminar("sin-colision", { ruta: ruta });
+    }
+
+    // Medio compartido por un hub: CSMA/CD.
+    var hubCentral = hubs[Math.floor((hubs.length - 1) / 2)];
+    var corte = ruta.indexOf(hubCentral.id);
+    var extremos = [];
+    dominio.enlaces.forEach(function (idEnlace) {
+      (estado.topologia.enlaces || []).forEach(function (e) {
+        if (e.id !== idEnlace || !tramaPasa(estado, e)) { return; }
+        [e.a, e.b].forEach(function (p) {
+          if (!esHub(buscarDispositivo(estado, p.dispositivo))) { extremos.push(p); }
+        });
+      });
+    });
+    // Camino de cada equipo (A o B) a todos los demás del dominio: lo que el hub repite.
+    function rutasDesde(dev, idPuerto) {
+      var salida = [];
+      extremos.forEach(function (p) {
+        if (p.dispositivo === dev.id) { return; }
+        var t = tramoL2(estado, dev.id, idPuerto, p.dispositivo, p.interfaz);
+        if (t.enlaces.length) { salida.push([dev.id].concat(t.atraviesa, [p.dispositivo])); }
+      });
+      return salida;
+    }
+    // La señal de atasco sale del hub hacia todos los extremos.
+    var haciaHub = ruta.slice(0, corte + 1);
+    var jam = [haciaHub.slice().reverse()];
+    rutasDesde(a, camino.ifA).forEach(function (r) {
+      var k = 0;
+      while (k + 1 < r.length && k + 1 < haciaHub.length && r[k + 1] === haciaHub[k + 1]) { k++; }
+      jam.push(haciaHub.slice(k).reverse().concat(r.slice(k + 1)));
+    });
+    function envio() {
+      return { tipo: "envio", rutas: [{ quien: "a", ids: ruta.slice(0, corte + 1) }, { quien: "b", ids: ruta.slice(corte).reverse() }] };
+    }
+    var nombreHub = nombreDe(estado, hubCentral.id);
+
+    agregar("Comprobar si comparten el medio",
+      "Sí: " + nombreA + " y " + nombreB + " cuelgan de " + nombres(hubs) + ". Es un solo dominio de colisión (medio compartido, " +
+      "half dúplex): el hub repite por todos sus puertos lo que recibe, y si dos envían a la vez las señales se mezclan.", 1);
+    agregar("Escuchar el medio y transmitir",
+      "Antes de transmitir cada uno escucha el medio (detección de portadora). Está libre para los dos, así que envían en el mismo instante.",
+      2, envio());
+
+    var primero, segundo, esperaPrimero, esperaSegundo;
+    for (;;) {
+      colisiones += 1;
+      agregar("Colisión " + colisiones + " y señal de atasco (jam)",
+        "Las señales se superponen en " + nombreHub + ". " + nombreA + " y " + nombreB + " lo detectan porque reciben mientras transmiten: " +
+        "cortan la trama y envían la señal de atasco (jam, 32 bits) para que todos descarten lo recibido." +
+        (colisiones === 1 ? " Por eso la trama mínima es de 64 bytes: quien envía sigue transmitiendo cuando le llega la colisión." : ""),
+        1, { tipo: "colision", en: hubCentral.id, numero: colisiones, rutas: jam });
+      if (colisiones >= MAX_INTENTOS_CSMA) {
+        agregar("Abandonar la trama", "Fueron " + MAX_INTENTOS_CSMA + " intentos con colisión: la estación descarta la trama y avisa a la capa de arriba.", 2);
+        return fallar({
+          codigo: "", titulo: "Demasiadas colisiones: se abandona la trama",
+          explicacion: "Después de " + MAX_INTENTOS_CSMA + " intentos seguidos con colisión, Ethernet descarta la trama.",
+          sugerencia: "En una red real indica un medio saturado: separá los equipos con un switch."
+        });
+      }
+      var rango = Math.pow(2, Math.min(colisiones, TOPE_EXPONENTE_CSMA));
+      var kA = Math.min(rango - 1, Math.floor(azar() * rango));
+      var kB = Math.min(rango - 1, Math.floor(azar() * rango));
+      intentos.push({ n: colisiones, rango: rango - 1, esperaA: kA, esperaB: kB, colision: kA === kB });
+      agregar("Espera aleatoria tras la colisión " + colisiones,
+        "Cada uno elige al azar entre 0 y " + (rango - 1) + " ranuras (una ranura son 512 tiempos de bit: 51,2 µs a 10 Mbps): " +
+        nombreA + " elige " + kA + " y " + nombreB + " elige " + kB + ". " +
+        (kA === kB ? "Eligieron lo mismo: vuelven a transmitir a la vez." : (kA < kB ? nombreA : nombreB) + " espera menos y transmite primero."),
+        2, { tipo: "espera", esperaA: kA, esperaB: kB });
+      if (kA !== kB) {
+        primero = kA < kB ? "a" : "b";
+        segundo = primero === "a" ? "b" : "a";
+        esperaPrimero = Math.min(kA, kB);
+        esperaSegundo = Math.max(kA, kB);
+        break;
+      }
+      eventos.push(envio());
+    }
+
+    var quien = {
+      a: { dev: a, puerto: camino.ifA, nombre: nombreA },
+      b: { dev: b, puerto: camino.ifB, nombre: nombreB }
+    };
+    function ranuras(k) { return k + (k === 1 ? " ranura" : " ranuras"); }
+    function entrega(de, para) {
+      return { tipo: "entrega", quien: de, destino: quien[para].dev.id, rutas: rutasDesde(quien[de].dev, quien[de].puerto) };
+    }
+    agregar(quien[primero].nombre + " transmite primero",
+      "Espera " + ranuras(esperaPrimero) + ", escucha el medio libre y envía. El hub repite la trama por todos sus puertos: la acepta " +
+      quien[segundo].nombre + " y los demás la descartan.", 2, entrega(primero, segundo));
+    agregar(quien[segundo].nombre + " transmite después",
+      "Termina su espera de " + ranuras(esperaSegundo) + " y escucha el medio: si todavía está ocupado por la trama de " +
+      quien[primero].nombre + ", aguarda a que se libere. Recién entonces envía, sin chocar.", 2, entrega(segundo, primero));
+    agregar("Resultado",
+      "Las dos tramas se entregaron después de " + colisiones + (colisiones === 1 ? " colisión." : " colisiones.") +
+      " Con un switch en lugar del hub no habría ninguna.", 2);
+    return terminar("colision", { ruta: ruta, hub: hubCentral.id, primero: primero });
+  }
+
   /* ---------------- Estado ---------------- */
 
   function crearEstado(topologia) {
@@ -6130,6 +6378,73 @@ var Motor = (function () {
       comparar("QoS: con 100 % de pérdida, D32", [todo.estadisticas.recibidos, todo.diagnostico && todo.diagnostico.codigo], [0, "D32"]);
     })();
 
+    // Transmitir a la vez (CSMA/CD).
+    (function () {
+      function hubCon(modeloB) {
+        var h = fabSwitch("hub1"); h.modelo = "hub";
+        return h;
+      }
+      function red(extra) {
+        extra = extra || {};
+        var topo = fabTopo(
+          [fabPc("pc1", "192.168.1.1", 24, null), fabPc("pc2", "192.168.1.2", 24, null), fabPc("pc3", "192.168.1.3", 24, null), hubCon()],
+          [fabEnlace("l1", "pc1", "eth0", "hub1", "fa0/1"), fabEnlace("l2", "pc2", "eth0", "hub1", "fa0/2"), fabEnlace("l3", "pc3", "eth0", "hub1", "fa0/3")]);
+        if (extra.antes) { extra.antes(topo); }
+        return crearEstado(topo);
+      }
+      function secuencia(valores) { var i = 0; return function () { return valores[Math.min(i++, valores.length - 1)]; }; }
+      var est = red();
+      var antes = JSON.stringify([est.arp, est.mac]);
+      var r = transmitirALaVez(est, "pc1", "pc2", { semilla: 5 });
+      var ultimo = r.intentos[r.intentos.length - 1];
+      comparar("CSMA/CD: con un hub hay colisión y termina entregando", [r.exito, r.resultado, r.colisiones >= 1, ultimo.colision], [true, "colision", true, false]);
+      comparar("CSMA/CD: cada espera cae en 0..2^n-1",
+        r.intentos.every(function (i) { return i.rango === Math.pow(2, i.n) - 1 && i.esperaA >= 0 && i.esperaA <= i.rango && i.esperaB >= 0 && i.esperaB <= i.rango; }), true);
+      comparar("CSMA/CD: los eventos tienen envío, colisión, espera y dos entregas",
+        ["envio", "colision", "espera", "entrega"].map(function (t) { return r.eventos.filter(function (e) { return e.tipo === t; }).length >= (t === "entrega" ? 2 : 1); }), [true, true, true, true]);
+      comparar("CSMA/CD: la misma semilla da lo mismo", JSON.stringify(transmitirALaVez(red(), "pc1", "pc2", { semilla: 5 })) === JSON.stringify(r), true);
+      comparar("CSMA/CD: no toca ARP ni MAC", JSON.stringify([est.arp, est.mac]), antes);
+      var directo = transmitirALaVez(red(), "pc1", "pc2", { azar: secuencia([0, 0.99]) });
+      comparar("CSMA/CD: la menor espera transmite primero", [directo.colisiones, directo.primero, directo.intentos[0].esperaA, directo.intentos[0].esperaB], [1, "a", 0, 1]);
+      var repite = transmitirALaVez(red(), "pc1", "pc2", { azar: secuencia([0, 0, 0.99, 0]) });
+      comparar("CSMA/CD: con esperas iguales chocan otra vez", [repite.colisiones, repite.intentos[0].colision, repite.intentos[1].rango, repite.primero], [2, true, 3, "b"]);
+      var abandona = transmitirALaVez(red(), "pc1", "pc2", { azar: function () { return 0; } });
+      comparar("CSMA/CD: a los 16 intentos abandona",
+        [abandona.exito, abandona.colisiones, abandona.intentos.length, abandona.intentos[14].rango, /Demasiadas colisiones/.test(abandona.diagnostico.titulo)],
+        [false, 16, 15, 1023, true]);
+      var jam = r.eventos.filter(function (e) { return e.tipo === "colision"; })[0];
+      comparar("CSMA/CD: el jam sale del hub hacia los tres equipos",
+        jam.rutas.map(function (x) { return x[0] + ">" + x[x.length - 1]; }).sort(), ["hub1>pc1", "hub1>pc2", "hub1>pc3"]);
+      comparar("CSMA/CD: la entrega llega a los otros dos", r.eventos.filter(function (e) { return e.tipo === "entrega"; })[0].rutas.length, 2);
+
+      var conSwitch = transmitirALaVez(red({ antes: function (t) { t.dispositivos[3].modelo = null; } }), "pc1", "pc2", {});
+      comparar("transmitir a la vez: con un switch no hay colisión",
+        [conSwitch.resultado, conSwitch.colisiones, conSwitch.intentos.length, /está hub1/.test(conSwitch.pasos[0].detalle)], ["sin-colision", 0, 0, true]);
+      var cruzado = crearEstado(fabTopo([fabPc("pc1", "192.168.1.1", 24, null), fabPc("pc2", "192.168.1.2", 24, null)], [fabEnlace("l1", "pc1", "eth0", "pc2", "eth0")]));
+      var rCruzado = transmitirALaVez(cruzado, "pc1", "pc2", {});
+      comparar("transmitir a la vez: un cable solo es full dúplex", [rCruzado.resultado, /full dúplex/.test(rCruzado.pasos[1].titulo)], ["sin-colision", true]);
+      var hubDetras = crearEstado(fabTopo(
+        [fabPc("pc1", "192.168.1.1", 24, null), fabPc("pc2", "192.168.1.2", 24, null), hubCon(), fabSwitch("sw1")],
+        [fabEnlace("l1", "pc1", "eth0", "hub1", "fa0/1"), fabEnlace("l2", "hub1", "fa0/2", "sw1", "fa0/1"), fabEnlace("l3", "pc2", "eth0", "sw1", "fa0/2")]));
+      var rDetras = transmitirALaVez(hubDetras, "pc1", "pc2", {});
+      comparar("transmitir a la vez: hub de un lado de un switch, sin colisión entre ellos",
+        [rDetras.resultado, /está sw1/.test(rDetras.pasos[0].detalle), /Del lado de hub1/.test(rDetras.pasos[0].detalle)], ["sin-colision", true, true]);
+      var separados = crearEstado(fabTopo(
+        [fabPc("pc1", "192.168.1.10", 24, null), fabPc("pc2", "192.168.2.10", 24, null),
+          fabRouter("r1", [{ id: "g0/0", ip: "192.168.1.1", prefijo: 24 }, { id: "g0/1", ip: "192.168.2.1", prefijo: 24 }], [])],
+        [fabEnlace("l1", "pc1", "eth0", "r1", "g0/0"), fabEnlace("l2", "pc2", "eth0", "r1", "g0/1")]));
+      comparar("transmitir a la vez: un router separa", transmitirALaVez(separados, "pc1", "pc2", {}).resultado, "separados");
+      var apagado = transmitirALaVez(red({ antes: function (t) { t.dispositivos[1].encendido = false; } }), "pc1", "pc2", {});
+      comparar("transmitir a la vez: equipo apagado, D01", [apagado.diagnostico.codigo, apagado.equipo], ["D01", "pc2"]);
+      var cortado = transmitirALaVez(red({ antes: function (t) { t.enlaces[0].estado = "down"; } }), "pc1", "pc2", {});
+      comparar("transmitir a la vez: cable caído, D02", cortado.diagnostico.codigo, "D02");
+      var hubApagado = transmitirALaVez(red({ antes: function (t) { t.dispositivos[3].encendido = false; } }), "pc1", "pc2", {});
+      comparar("transmitir a la vez: con el hub apagado lo nombra a él",
+        [hubApagado.diagnostico.codigo, hubApagado.equipo, /hub1 está apagado/.test(hubApagado.diagnostico.explicacion)], ["D02", "hub1", true]);
+      comparar("transmitir a la vez: el mismo equipo o un hub no valen",
+        [transmitirALaVez(red(), "pc1", "pc1", {}).diagnostico.codigo, transmitirALaVez(red(), "pc1", "hub1", {}).diagnostico.codigo], ["ENTRADA", "ENTRADA"]);
+    })();
+
     // 36. Un destino mal escrito no es un diagnóstico de red.
     (function () {
       var topo = fabTopo([fabPc("pc-admin", "10.45.7.66", 27, "10.45.7.65")], []);
@@ -6157,6 +6472,8 @@ var Motor = (function () {
     conectar: conectar,
     dominios: dominios,
     esHub: esHub,
+    esConmutador: esConmutador,
+    transmitirALaVez: transmitirALaVez,
     TIPOS_REGISTRO: TIPOS_REGISTRO,
     JERARQUIA_DNS: JERARQUIA,
     consultarDns: consultarDns,
@@ -6206,7 +6523,7 @@ var Escenarios = (function () {
 
   // Versión de la app (semver). Cada PR que toca una capa la sube y suma su
   // entrada en CHANGELOG.md; el ensamblador controla que coincidan.
-  var VERSION_APP = "1.8.0";
+  var VERSION_APP = "1.9.0";
 
   // Versión del formato de archivo que escribe esta capa. Sube sólo si un
   // campo existente cambia o desaparece, y cada subida trae su migración.
@@ -10369,6 +10686,13 @@ var UI = (function () {
     ".tabs .dnsreal{display:inline-flex;align-items:center;gap:8px;margin-right:12px;font-size:12px;color:var(--sim-tenue);}",
     ".tabs .dnsreal label{display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--sim-tenue);white-space:nowrap;}",
     ".tabs .dnsreal-nota{color:var(--sim-aviso,#b45309);font-weight:600;white-space:nowrap;}",
+    ".recorrido .linpaso[data-evento]{cursor:pointer;}",
+    ".recorrido .linpaso.actual{background:rgba(245,158,11,.18);outline:1px solid #f59e0b;border-radius:4px;}",
+    ".linpaso.choca .marca{color:var(--sim-mal);}",
+    ".intentos{border-collapse:collapse;margin-top:6px;font-size:12px;}",
+    ".intentos caption{text-align:left;color:var(--sim-tenue);padding-bottom:2px;}",
+    ".intentos th,.intentos td{border:1px solid var(--sim-borde);padding:2px 8px;text-align:center;}",
+    ".intentos tr.choca td{color:var(--sim-mal);font-weight:700;}",
     ".ctl-anim{display:inline-flex;align-items:center;gap:6px;font-style:normal;flex-wrap:wrap;}",
     ".ctl-anim select,.ctl-anim button{font-size:12px;padding:2px 6px;}",
     ".ctl-anim .ley{display:inline-flex;align-items:center;gap:3px;font-size:12px;color:var(--sim-tenue);}",
@@ -13286,7 +13610,13 @@ var UI = (function () {
   function resumenUltimoPing() {
     var u = S.ultimo;
     if (!u) { return "Todavía no se hizo ningún ping."; }
-    var base = "Último ping: " + nombreDe(u.origen) + " → " + u.destino + " · ";
+    if (u.colision) {
+      return "Transmitir a la vez: " + nombreDe(u.a) + " y " + nombreDe(u.b) + " · " +
+        (u.res.exito ? resumenColision(u.res) : u.res.diagnostico.titulo);
+    }
+    var que = u.dns ? "Última consulta DNS: " : (u.conexion ? "Última conexión: " : "Último ping: ");
+    var base = que + nombreDe(u.origen) + " → " + u.destino + " · ";
+    if (u.res.exito && (u.dns || u.conexion)) { return base + "éxito"; }
     if (u.res.exito) {
       var r = u.res.respuestas[0] || { ms: 1 };
       return base + "éxito en " + r.ms + " ms · " + cantidadSaltos(u.res) + " saltos";
@@ -13525,7 +13855,7 @@ var UI = (function () {
     var modos = el("div", "modosim");
     modos.setAttribute("role", "group");
     modos.setAttribute("aria-label", "Herramienta");
-    [["ping", "Ping"], ["dns", "Consultar DNS"], ["conectar", "Conectar"]].forEach(function (m) {
+    [["ping", "Ping"], ["dns", "Consultar DNS"], ["conectar", "Conectar"], ["colision", "Transmitir a la vez"]].forEach(function (m) {
       var b = boton(m[1], (S.modoSim || "ping") === m[0] ? "activo" : "");
       b.setAttribute("aria-pressed", String((S.modoSim || "ping") === m[0]));
       b.addEventListener("click", function () {
@@ -13546,6 +13876,26 @@ var UI = (function () {
     selTipoDns.value = S.tipoDns || "A";
     selTipoDns.addEventListener("change", function () { S.tipoDns = selTipoDns.value; });
     var enConectar = S.modoSim === "conectar";
+    var enColision = S.modoSim === "colision";
+    // Transmitir a la vez: dos equipos que envían tramas, no los que las reenvían.
+    var selB = document.createElement("select");
+    if (enColision) {
+      if (!S.estado) { reconstruirEstado(); }
+      var emisores = equiposQueTransmiten();
+      var idA = equipoInicialColision(emisores);
+      var idB = S.colisionB && S.colisionB !== idA && emisores.some(function (d) { return d.id === S.colisionB; })
+        ? S.colisionB : companeroDeColision(idA, emisores);
+      [[selO, idA], [selB, idB]].forEach(function (par) {
+        par[0].innerHTML = "";
+        emisores.forEach(function (d) {
+          var op = document.createElement("option"); op.value = d.id; op.textContent = d.nombre || d.id; par[0].appendChild(op);
+        });
+        if (par[1]) { par[0].value = par[1]; }
+      });
+      selO.setAttribute("data-foco", "equipo-a");
+      selO.addEventListener("change", function () { renderInferior(); });
+      selB.addEventListener("change", function () { S.colisionB = selB.value; });
+    }
     if (enConectar) {
       selD.placeholder = "IP o nombre, p. ej. www.google.com…";
       selD.value = S.ultimoConectar || "";
@@ -13571,10 +13921,16 @@ var UI = (function () {
     selServ.addEventListener("change", function () { S.servicioConectar = selServ.value; renderInferior(); });
     selProt.addEventListener("change", function () { S.protConectar = selProt.value; });
     inPuerto.addEventListener("change", function () { S.puertoConectar = inPuerto.value; });
-    var bPing = enDns ? boton("Consultar", "primario") : (enConectar ? boton("Conectar", "primario conectar") : boton("Ping", "primario"));
-    ctrl.appendChild(etiqueta("Origen", selO)); ctrl.appendChild(selO);
-    ctrl.appendChild(el("span", "flecha", "→")).setAttribute("aria-hidden", "true");
-    ctrl.appendChild(etiqueta(enDns ? "Nombre" : "Destino", selD)); ctrl.appendChild(selD);
+    var bPing = enDns ? boton("Consultar", "primario") : (enConectar ? boton("Conectar", "primario conectar")
+      : (enColision ? boton("Transmitir", "primario") : boton("Ping", "primario")));
+    if (enColision) {
+      ctrl.appendChild(etiqueta("Equipo A", selO)); ctrl.appendChild(selO);
+      ctrl.appendChild(etiqueta("Equipo B", selB)); ctrl.appendChild(selB);
+    } else {
+      ctrl.appendChild(etiqueta("Origen", selO)); ctrl.appendChild(selO);
+      ctrl.appendChild(el("span", "flecha", "→")).setAttribute("aria-hidden", "true");
+      ctrl.appendChild(etiqueta(enDns ? "Nombre" : "Destino", selD)); ctrl.appendChild(selD);
+    }
     if (enDns) { ctrl.appendChild(etiqueta("Tipo", selTipoDns)); ctrl.appendChild(selTipoDns); }
     // Cuántos paquetes manda el ping: como el ping real, 4 por defecto.
     var selCant = document.createElement("select");
@@ -13583,7 +13939,7 @@ var UI = (function () {
     });
     selCant.value = String(S.cantPing || 4);
     selCant.addEventListener("change", function () { S.cantPing = Number(selCant.value); });
-    if (!enDns && !enConectar) { ctrl.appendChild(etiqueta("Paquetes", selCant)); ctrl.appendChild(selCant); }
+    if (!enDns && !enConectar && !enColision) { ctrl.appendChild(etiqueta("Paquetes", selCant)); ctrl.appendChild(selCant); }
     if (enConectar) {
       ctrl.appendChild(etiqueta("Servicio", selServ)); ctrl.appendChild(selServ);
       if (selServ.value === "otro") {
@@ -13695,6 +14051,7 @@ var UI = (function () {
     function hacerPing() {
       if (S.modoSim === "dns") { hacerConsulta(); return; }
       if (S.modoSim === "conectar") { hacerConexion(); return; }
+      if (S.modoSim === "colision") { hacerColision(); return; }
       if (ocupadoPorDnsReal()) { return; }
       S.ultimoDestino = selD.value;
       S.origenElegido = selO.value;
@@ -13704,6 +14061,39 @@ var UI = (function () {
       conDnsReal(function () { return Motor.pingRepetido(S.estado, origen, destino, { cantidad: cantidad, semilla: semilla }); },
         "El ping falló por un error interno: ",
         function (qos) { mostrarPing(qos, origen, destino); });
+    }
+
+    function hacerColision() {
+      if (ocupadoPorDnsReal()) { return; }
+      if (!S.estado) { reconstruirEstado(); }
+      if (!S.estado) { avisar("La topología tiene errores: no se puede simular."); return; }
+      var a = selO.value, b = selB.value;
+      S.origenElegido = a;
+      // Cada prueba usa una semilla nueva: las esperas cambian de una a otra, como en la red real.
+      S.semillaColision = (S.semillaColision || 0) + 1;
+      var res;
+      try { res = Motor.transmitirALaVez(S.estado, a, b, { semilla: S.semillaColision }); }
+      catch (e) { registrar("error", "La prueba falló por un error interno: " + e.message); return; }
+      mostrarColision(res, a, b);
+    }
+
+    function mostrarColision(res, a, b) {
+      S.ultimo = { origen: res.equipo || a, destino: nombreDe(b), res: res, colision: true, a: a, b: b };
+      S.panelRes = "ping";
+      S.verTodos = true;
+      S.verTramas = false;
+      consolaAgregar("Transmitir a la vez: " + nombreDe(a) + " y " + nombreDe(b));
+      (res.intentos || []).forEach(function (i) {
+        consolaAgregar("Colisión " + i.n + ": " + nombreDe(a) + " espera " + i.esperaA + ", " + nombreDe(b) + " espera " + i.esperaB +
+          " (0 a " + i.rango + ")" + (i.colision ? " → chocan otra vez" : ""), i.colision);
+      });
+      if (res.diagnostico) { consolaAgregar(res.diagnostico.titulo, true); }
+      else { consolaAgregar(resumenColision(res)); }
+      registrar("colision", nombreDe(a) + " y " + nombreDe(b) + " transmiten a la vez: " +
+        (res.diagnostico ? res.diagnostico.titulo : resumenColision(res)));
+      renderInferior();
+      try { animarColision(res); }
+      catch (e2) { registrar("animacion", "Error en animación: " + e2.message); }
     }
 
     function mostrarPing(qos, origen, destino) {
@@ -13926,6 +14316,262 @@ var UI = (function () {
 
   /* ---------------- Resultado: reposo, ping, verificación ---------------- */
 
+  /* ---------------- Transmitir a la vez (CSMA/CD) ---------------- */
+
+  // Los equipos que envían tramas propias: ni conmutadores ni la nube.
+  function equiposQueTransmiten() {
+    return (S.topologia.dispositivos || []).filter(function (d) { return !Motor.esConmutador(d) && d.tipo !== "internet"; });
+  }
+
+  function dominiosDeColision() {
+    try { return S.estado ? Motor.dominios(S.estado).colision : []; } catch (e) { return []; }
+  }
+
+  function cuelgaDeHub(dominio) {
+    return dominio.dispositivos.some(function (id) { var d = buscarDisp(id); return d && Motor.esHub(d); });
+  }
+
+  function equipoInicialColision(emisores) {
+    function vale(id) { return emisores.some(function (d) { return d.id === id; }); }
+    if (S.origenElegido && vale(S.origenElegido)) { return S.origenElegido; }
+    if (S.seleccionado && vale(S.seleccionado)) { return S.seleccionado; }
+    var enHub = null;
+    dominiosDeColision().filter(cuelgaDeHub).forEach(function (dom) {
+      dom.dispositivos.forEach(function (id) { if (!enHub && vale(id)) { enHub = id; } });
+    });
+    return enHub || (emisores[0] ? emisores[0].id : "");
+  }
+
+  // Un equipo que comparta el dominio de colisión de A (primero, el de un hub): ahí la prueba muestra algo.
+  function companeroDeColision(idA, emisores) {
+    var doms = dominiosDeColision().filter(function (d) { return d.dispositivos.indexOf(idA) >= 0; });
+    doms.sort(function (x, y) { return (cuelgaDeHub(y) ? 1 : 0) - (cuelgaDeHub(x) ? 1 : 0); });
+    var candidatos = emisores.filter(function (d) { return d.id !== idA; });
+    for (var i = 0; i < doms.length; i++) {
+      for (var j = 0; j < candidatos.length; j++) {
+        if (doms[i].dispositivos.indexOf(candidatos[j].id) >= 0) { return candidatos[j].id; }
+      }
+    }
+    return candidatos[0] ? candidatos[0].id : "";
+  }
+
+  function resumenColision(res) {
+    if (res.resultado === "colision") {
+      return "Las dos tramas llegaron después de " + res.colisiones + (res.colisiones === 1 ? " colisión." : " colisiones.");
+    }
+    if (res.resultado === "sin-colision") { return "Sin colisión: cada equipo está en su propio dominio."; }
+    if (res.resultado === "csma-ca") { return "Wi-Fi: las colisiones se evitan (CSMA/CA)."; }
+    return "No comparten el medio: sus tramas no se cruzan.";
+  }
+
+  function tarjetaColision(res) {
+    var a = nombreDe(S.ultimo.a), b = nombreDe(S.ultimo.b);
+    var html = "<b>" + (res.resultado === "colision" || res.resultado === "sin-colision" ? "✓ " : "") + escapar(resumenColision(res)) + "</b>";
+    if (res.intentos.length) {
+      html += "<table class='intentos'><caption>Espera elegida tras cada colisión, en ranuras</caption><tr><th>Colisión</th><th>Entre</th><th>" +
+        escapar(a) + "</th><th>" + escapar(b) + "</th></tr>" +
+        res.intentos.map(function (i) {
+          return "<tr" + (i.colision ? " class='choca'" : "") + "><td>" + i.n + "</td><td>0 y " + i.rango + "</td><td>" + i.esperaA +
+            "</td><td>" + i.esperaB + "</td></tr>";
+        }).join("") + "</table>";
+    }
+    return el("div", res.resultado === "colision" ? "banda-ok conperdida" : "banda-ok", html);
+  }
+
+  // La animación de la prueba: una fase por evento del Motor. Mismo manejo que la del DORA.
+  var colAnim = { token: 0, activo: false, pausado: false, res: null, i: 0, t: 0, paso: null };
+  var COLOR_ESTACION = { a: "#3987e5", b: "#a855f7" };
+
+  function avisarEstadoColision() {
+    if (!S.raiz) { return; }
+    var b = S.raiz.querySelector('[data-foco="pausa-col"]');
+    if (b) { b.textContent = colAnim.pausado ? "\u25B6 Reanudar" : "\u23F8 Pausar"; }
+  }
+
+  // Resalta el paso de la fase en curso: el último que apunta a ella o a una anterior.
+  function marcarPasoColision(i) {
+    if (!S.raiz) { return; }
+    var filas = S.raiz.querySelectorAll(".recorrido [data-evento]");
+    var actual = null;
+    Array.prototype.forEach.call(filas, function (f) {
+      f.classList.remove("actual");
+      if (i >= 0 && Number(f.getAttribute("data-evento")) <= i) { actual = f; }
+    });
+    if (!actual) { colAnim.paso = null; return; }
+    actual.classList.add("actual");
+    // Al cambiar de paso, la lista lo trae a la vista (sin mover la página); después se puede recorrer a mano.
+    if (colAnim.paso === actual) { return; }
+    colAnim.paso = actual;
+    var lista = actual.parentNode;
+    var fila = actual.getBoundingClientRect(), caja = lista.getBoundingClientRect();
+    if (fila.top < caja.top || fila.bottom > caja.bottom) { lista.scrollTop += fila.top - caja.top - 4; }
+  }
+
+  function detenerColision() {
+    if (!colAnim) { return; }
+    colAnim.token++;
+    colAnim.activo = false;
+    colAnim.pausado = false;
+    marcarPasoColision(-1);
+    avisarEstadoColision();
+  }
+
+  function puntosDeRuta(ids) {
+    return ids.map(buscarDisp).filter(Boolean).map(function (d) { return { x: d.x, y: d.y - 30 }; });
+  }
+
+  function puntoEnRuta(puntos, avance) {
+    if (puntos.length < 2) { return puntos[0]; }
+    var tramos = puntos.length - 1;
+    var pos = Math.max(0, Math.min(avance, 1)) * tramos;
+    var i = Math.min(Math.floor(pos), tramos - 1);
+    var f = pos - i;
+    return { x: puntos[i].x + (puntos[i + 1].x - puntos[i].x) * f, y: puntos[i].y + (puntos[i + 1].y - puntos[i].y) * f };
+  }
+
+  function nodoAnim(etiquetaSvg, atributos, texto) {
+    var n = document.createElementNS("http://www.w3.org/2000/svg", etiquetaSvg);
+    Object.keys(atributos).forEach(function (k) { n.setAttribute(k, atributos[k]); });
+    if (texto !== undefined) { n.textContent = texto; }
+    S.capaAnim.appendChild(n);
+    return n;
+  }
+
+  function puntoColision(p, color, dx, dy) {
+    if (!p) { return; }
+    nodoAnim("circle", { r: 7, fill: color, stroke: "#fff", "stroke-width": 2, cx: p.x + (dx || 0), cy: p.y + (dy || 0), "class": "paquete-col" });
+  }
+
+  function rotuloColision(x, y, texto, color) {
+    nodoAnim("text", { x: x, y: y, "text-anchor": "middle", "font-size": 14, "font-weight": 700, fill: color, stroke: "#fff",
+      "stroke-width": 3, "paint-order": "stroke", "class": "rotulo-col" }, texto);
+  }
+
+  function dibujarFaseColision(i, avance) {
+    var res = colAnim.res;
+    var e = res && res.eventos[i];
+    if (!e || !S.capaAnim) { return; }
+    vaciarCapaAnim();
+    if (e.tipo === "envio" || e.tipo === "duplex") {
+      e.rutas.forEach(function (r) {
+        // En full dúplex las dos señales se cruzan: van apenas separadas para que se vean las dos.
+        var corr = e.tipo === "duplex" ? (r.quien === "a" ? -7 : 7) : 0;
+        puntoColision(puntoEnRuta(puntosDeRuta(r.ids), avance), COLOR_ESTACION[r.quien], 0, corr);
+      });
+    } else if (e.tipo === "colision") {
+      e.rutas.forEach(function (ids) { puntoColision(puntoEnRuta(puntosDeRuta(ids), avance), "#d97706"); });
+      var hub = buscarDisp(e.en);
+      if (hub) {
+        nodoAnim("text", { x: hub.x, y: hub.y - 22, "text-anchor": "middle", "font-size": 40, fill: "#b42318", stroke: "#fff",
+          "stroke-width": 2, "paint-order": "stroke", "class": "choque-col" }, "\u2737");
+        rotuloColision(hub.x, hub.y - 66, "Colisión " + e.numero + " · jam", "#b42318");
+      }
+    } else if (e.tipo === "espera") {
+      [["a", res.a, e.esperaA], ["b", res.b, e.esperaB]].forEach(function (q) {
+        var d = buscarDisp(q[1]);
+        if (!d) { return; }
+        // La cuenta baja con el tiempo de la fase, a la par en las dos estaciones.
+        var quedan = Math.max(0, q[2] - Math.floor(avance * Math.max(e.esperaA, e.esperaB, 1)));
+        rotuloColision(d.x, d.y - 40, "espera " + q[2] + (avance > 0 && avance < 1 && q[2] ? " (" + (quedan === 1 ? "queda " : "quedan ") + quedan + ")" : ""), COLOR_ESTACION[q[0]]);
+      });
+    } else if (e.tipo === "entrega") {
+      e.rutas.forEach(function (ids) { puntoColision(puntoEnRuta(puntosDeRuta(ids), avance), COLOR_ESTACION[e.quien]); });
+      var destino = buscarDisp(e.destino);
+      if (destino && avance >= 1) { rotuloColision(destino.x, destino.y - 52, "\u2713 la recibe", "#1a7f37"); }
+    }
+    marcarPasoColision(i);
+  }
+
+  // Cuánto dura cada fase, en pasos de la velocidad elegida.
+  function duracionFase(e) {
+    var tramos = 1;
+    (e.rutas || []).forEach(function (r) { tramos = Math.max(tramos, (r.ids || r).length - 1); });
+    if (e.tipo === "espera") { return 2 + Math.min(Math.max(e.esperaA, e.esperaB), 8) * 0.3; }
+    return tramos + 0.6;
+  }
+
+  function arrancarColision() {
+    var miToken = ++colAnim.token;
+    colAnim.activo = true;
+    var ultimo = null;
+    function cuadro(t) {
+      if (miToken !== colAnim.token || !colAnim.activo) { return; }
+      try {
+        if (ultimo === null) { ultimo = t; }
+        if (!colAnim.pausado) { colAnim.t += Math.min(t - ultimo, 100) * animador.velocidad; }
+        ultimo = t;
+        var e = colAnim.res.eventos[colAnim.i];
+        var total = duracionFase(e) * msVelocidad();
+        // Los últimos 0,6 pasos de cada fase quedan quietos, para poder leerla.
+        var movimiento = total - 0.6 * msVelocidad();
+        dibujarFaseColision(colAnim.i, Math.min(colAnim.t / movimiento, 1));
+        if (colAnim.t >= total) {
+          if (colAnim.i + 1 >= colAnim.res.eventos.length) { colAnim.activo = false; return; }
+          colAnim.i += 1;
+          colAnim.t = 0;
+        }
+      } catch (err) {
+        detenerColision();
+        registrar("animacion", "Error en animación: " + err.message);
+        return;
+      }
+      requestAnimationFrame(cuadro);
+    }
+    requestAnimationFrame(cuadro);
+  }
+
+  // Prepara la capa del lienzo para la prueba, cancelando cualquier otra animación.
+  function tomarLienzo(res) {
+    detenerColision();
+    detenerDhcp();
+    animador.detener();
+    S.animToken++;
+    vaciarCapaAnim();
+    colAnim.res = res;
+    colAnim.i = 0;
+    colAnim.t = 0;
+  }
+
+  function animarColision(res) {
+    tomarLienzo(res);
+    if (!res || !res.eventos || !res.eventos.length) { return; }
+    if (movimientoReducido()) {
+      // Sin animación: queda a la vista la primera colisión (o el envío, si no la hay).
+      var i = 0;
+      res.eventos.some(function (e, k) { if (e.tipo === "colision") { i = k; return true; } return false; });
+      colAnim.i = i;
+      dibujarFaseColision(i, res.eventos[i].tipo === "duplex" ? 0.5 : 1);
+      return;
+    }
+    arrancarColision();
+  }
+
+  // Clic en un paso: la animación sigue desde su fase.
+  function irAFaseColision(res, i) {
+    if (!res || i < 0 || i >= res.eventos.length) { return; }
+    tomarLienzo(res);
+    colAnim.i = i;
+    if (movimientoReducido()) { dibujarFaseColision(i, res.eventos[i].tipo === "duplex" ? 0.5 : 1); return; }
+    dibujarFaseColision(i, 0);
+    arrancarColision();
+    avisarEstadoColision();
+  }
+
+  function controlesColision(res) {
+    var ctl = {
+      get pausado() { return colAnim.pausado; },
+      get velocidad() { return animador.velocidad; },
+      alternarPausa: function () {
+        if (colAnim.activo) { colAnim.pausado = !colAnim.pausado; }
+        avisarEstadoColision();
+      },
+      repetir: function () { animarColision(res); },
+      establecerVelocidad: function (f) { animador.establecerVelocidad(f); }
+    };
+    var hayChoque = res.eventos.some(function (e) { return e.tipo === "colision"; });
+    return controlesAnimacion(ctl, "pausa-col", hayChoque ? ["equipoA", "equipoB", "choque", "jam"] : ["equipoA", "equipoB"]);
+  }
+
   function renderResultado() {
     var cont = el("div", "simres");
     if (S.panelRes === "verificacion" && S.ultimaVerif) { return renderVerificacion(cont); }
@@ -13943,7 +14589,10 @@ var UI = (function () {
     // Con el resultado a la vista, la consola va en su propia columna, sea un
     // éxito o un diagnóstico: debajo de la tarjeta quedaba fuera de la vista.
     var conConsola = false;
-    if (S.ultimo.conexion) {
+    if (S.ultimo.colision) {
+      lado.appendChild(res.exito ? tarjetaColision(res) : renderDiagnostico(res.diagnostico));
+      conConsola = true;
+    } else if (S.ultimo.conexion) {
       // El socket y los segmentos, uno por línea: → del cliente, ← del servidor.
       var lineas = (res.segmentos || []).map(function (x) {
         var flecha = x.de === "cliente" ? "→" : "←";
@@ -14173,6 +14822,17 @@ var UI = (function () {
     return caja;
   }
 
+  function pasoDeAnimacion(linea, res, i) {
+    linea.setAttribute("data-evento", String(i));
+    linea.setAttribute("role", "button");
+    linea.tabIndex = 0;
+    linea.title = "Clic para ver este momento en la animación";
+    linea.addEventListener("click", function () { irAFaseColision(res, i); });
+    linea.addEventListener("keydown", function (ev) {
+      if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); irAFaseColision(res, i); }
+    });
+  }
+
   function renderRecorrido(res) {
     var caja = el("div", "recorrido");
     var pasos = res.pasos || [];
@@ -14180,9 +14840,17 @@ var UI = (function () {
     pasos.forEach(function (p, i) { if (!p.ok && fallo < 0) { fallo = i; } });
     var tramas = res.tramas || [];
     var enTramas = S.verTramas && tramas.length > 0;
+    // «Transmitir a la vez» trae eventos: sus pasos se animan y no son verificaciones.
+    var esColision = !!res.eventos;
     var cab = el("div", "cab", "<span>" + (enTramas ? "Cómo viaja el paquete" : "Recorrido paso a paso") + "</span>");
     if (enTramas) {
       cab.appendChild(el("span", "", tramas.length + (tramas.length === 1 ? " trama" : " tramas")));
+    } else if (esColision) {
+      if (res.exito) {
+        cab.appendChild(el("span", res.colisiones ? "mal" : "ok", res.colisiones
+          ? res.colisiones + (res.colisiones === 1 ? " colisión" : " colisiones")
+          : { "csma-ca": "CSMA/CA", "separados": "no comparten el medio" }[res.resultado] || "sin colisión"));
+      }
     } else if (res.exito) {
       cab.appendChild(el("span", "ok", pasos.length + " de " + pasos.length + " verificaciones correctas"));
     } else if (fallo >= 0) {
@@ -14207,9 +14875,13 @@ var UI = (function () {
     visibles.forEach(function (p) {
       if (p.ok) {
         var resumen = resumenPaso(p);
-        lista.appendChild(el("div", "linpaso",
-          "<span class='marca' aria-hidden='true'>✓</span>" + etiquetaCapa(p.capa) + "<b>" + p.n + ".</b> " + escapar(p.titulo) +
-          (resumen ? " — " + escapar(resumen) : "")));
+        var evento = esColision && p.evento !== undefined ? res.eventos[p.evento] : null;
+        var choca = !!evento && evento.tipo === "colision";
+        var linea = el("div", choca ? "linpaso choca" : "linpaso",
+          "<span class='marca' aria-hidden='true'>" + (choca ? "\u2737" : (esColision ? "•" : "✓")) + "</span>" + etiquetaCapa(p.capa) +
+          "<b>" + p.n + ".</b> " + escapar(p.titulo) + (resumen ? " — " + escapar(resumen) : ""));
+        if (evento) { pasoDeAnimacion(linea, res, p.evento); }
+        lista.appendChild(linea);
       } else {
         var f = el("div", "pasofallo",
           "<span class='marca' aria-hidden='true'>✗</span>" + etiquetaCapa(p.capa) + "<b>" + p.n + ". " + escapar(p.titulo) + "</b>");
@@ -14224,6 +14896,7 @@ var UI = (function () {
     });
     caja.appendChild(lista);
     var pie = el("div", "pie");
+    if (esColision && res.eventos.length && !movimientoReducido()) { pie.appendChild(controlesColision(res)); }
     if (!res.exito && fallo >= 0 && !S.verTodos && !enTramas) {
       pie.appendChild(el("span", "", "los pasos siguientes no se llegaron a verificar"));
     }
@@ -14241,7 +14914,7 @@ var UI = (function () {
       bEnc.addEventListener("click", function () { S.verEncabezados = !S.verEncabezados; renderInferior(); });
       pie.appendChild(bEnc);
     }
-    if (!enTramas && (pasos.length > visibles.length || S.verTodos)) {
+    if (!enTramas && !esColision && (pasos.length > visibles.length || S.verTodos)) {
       var bTodos = boton(S.verTodos ? "Ver resumen" : "Ver los " + pasos.length + " pasos");
       bTodos.setAttribute("data-foco", "todos");
       bTodos.addEventListener("click", function () { S.verTodos = !S.verTodos; renderInferior(); });
@@ -15257,6 +15930,7 @@ var UI = (function () {
   }
 
   function limpiarAnim() {
+    detenerColision();
     detenerDhcp();
     if (animador) { animador.detener(); }
     vaciarCapaAnim();
@@ -15506,6 +16180,7 @@ var UI = (function () {
   }
 
   function animarDhcp(resultado) {
+    detenerColision();
     detenerDhcp();
     animador.detener();
     S.animToken++;
@@ -15533,6 +16208,7 @@ var UI = (function () {
   function irAMensajeDhcp(res, k) {
     var msgs = (res && res.mensajes) || [];
     if (k < 0 || k >= msgs.length) { return; }
+    detenerColision();
     animador.detener();
     S.animToken++;
     dhcpAnim.res = res;
@@ -15576,7 +16252,11 @@ var UI = (function () {
     respuesta: ["#0ca30c", "respuesta"],
     apertura: ["#7c5cff", "apertura"],
     cierre: ["#d97706", "cierre"],
-    rechazo: ["#b42318", "rechazo"]
+    rechazo: ["#b42318", "rechazo"],
+    equipoA: ["#3987e5", "equipo A"],
+    equipoB: ["#a855f7", "equipo B"],
+    choque: ["#b42318", "colisión"],
+    jam: ["#d97706", "jam"]
   };
 
   function clasificarTrama(t, ctx) {
@@ -16225,6 +16905,13 @@ var Autotest = (function () {
         "entre R-Oficina y su nube.",
       esperado: "Con todo conectado, el paquete sale por el NAT de R-Casa, cruza de Internet (casa) a Internet (oficina), que son la misma internet, " +
         "y R-Oficina se lo entrega al servidor: la conexión se abre. Con el cable caído, internet no llega hasta el servidor: D34, y falla también el ping."
+    },
+    35: {
+      conError: false,
+      situacion: "En «Bus (medio compartido con un hub)», PC-1 y PC-2 transmiten a la vez. Después se hace lo mismo en «Topología en estrella», " +
+        "donde el equipo central es un switch.",
+      esperado: "Con el hub las señales chocan: se ve la colisión, la señal de atasco y la espera al azar, y las dos tramas llegan en un reintento. " +
+        "Con el switch cada equipo está en su propio dominio de colisión: no hay choque."
     },
     31: {
       conError: true,
@@ -17255,7 +17942,24 @@ var Autotest = (function () {
     }
   }
 
-  var CRITERIOS_DIDACTICOS = [crit02, crit17, crit03, crit04, crit05, crit06, crit20, crit18, crit19, crit21, crit22, crit23, crit29, crit31, crit07, crit08, crit12];
+  function crit35() {
+    var nombre = "Colisiones: con un hub dos equipos que transmiten a la vez chocan y reintentan; con un switch no hay colisión";
+    try {
+      var bus = Motor.transmitirALaVez(Motor.crearEstado(clonar(ejemploPorId("bus-hub").topologia)), "pc1", "pc2", { semilla: 1 });
+      var estrella = Motor.transmitirALaVez(Motor.crearEstado(clonar(ejemploPorId("estrella").topologia)), "pc1", "pc2", { semilla: 1 });
+      var ultimo = bus.intentos[bus.intentos.length - 1];
+      var pasa = bus.resultado === "colision" && bus.colisiones >= 1 && !!ultimo && !ultimo.colision &&
+        estrella.resultado === "sin-colision" && estrella.colisiones === 0;
+      var cuenta = function (r) { return r.colisiones + (r.colisiones === 1 ? " colisión" : " colisiones"); };
+      return fila(35, nombre, pasa, pasa
+        ? "Con el hub: " + cuenta(bus) + " y las dos tramas entregadas. Con el switch: ninguna colisión."
+        : "Falla: con el hub el resultado fue «" + bus.resultado + "» (" + cuenta(bus) + ") y con el switch «" + estrella.resultado + "» (" + cuenta(estrella) + ").");
+    } catch (e) {
+      return fila(35, nombre, false, "Excepción: " + e.message);
+    }
+  }
+
+  var CRITERIOS_DIDACTICOS = [crit02, crit17, crit03, crit04, crit05, crit06, crit20, crit18, crit19, crit21, crit22, crit23, crit29, crit31, crit35, crit07, crit08, crit12];
   // La pestaña Laboratorio: sólo en modo Docente, con sus cuatro secciones
   // y sin scroll de página. correr() restaura la red del usuario.
   function crit24() {
@@ -17919,7 +18623,61 @@ var Autotest = (function () {
     }
   }
 
-  var CRITERIOS_TECNICOS = [crit01, crit09, crit10, crit11, crit13, crit14, crit15, crit16, crit24, crit25, crit26, crit27, crit28, crit30, crit32, crit33, crit34];
+  // La herramienta «Transmitir a la vez» en la interfaz.
+  function crit36() {
+    var nombre = "La herramienta «Transmitir a la vez» propone un par del mismo dominio, muestra pasos, tabla, consola y animación, y con un switch no hay colisión";
+    var previo = modoActualDom();
+    try {
+      var prob = [];
+      function inf() { return document.querySelector(".siminf"); }
+      function campo(rotulo) {
+        var r = null;
+        inf().querySelectorAll("label").forEach(function (l) { if (l.textContent === rotulo) { r = document.getElementById(l.htmlFor); } });
+        return r;
+      }
+      function herramienta(texto) {
+        var botones = inf().querySelectorAll(".modosim button");
+        for (var i = 0; i < botones.length; i++) { if (botones[i].textContent === texto) { botones[i].click(); return true; } }
+        return false;
+      }
+      function transmitir(ejemplo) {
+        UI.cargarTopologia(clonar(ejemploPorId(ejemplo).topologia));
+        document.getElementById("sim-tab-inf-simulacion").click();
+        if (!herramienta("Transmitir a la vez")) { return false; }
+        var b = inf().querySelector(".simctrl button.primario");
+        if (!campo("Equipo A") || !campo("Equipo B") || !b) { return false; }
+        b.click();
+        return true;
+      }
+      UI.setModo("topologia");
+      if (!transmitir("bus-hub")) { prob.push("no está la herramienta o sus campos"); }
+      else {
+        var a = campo("Equipo A"), bb = campo("Equipo B");
+        if (a.value === bb.value) { prob.push("propone el mismo equipo dos veces"); }
+        for (var i = 0; i < a.options.length; i++) { if (a.options[i].value === "hub") { prob.push("ofrece el hub como equipo"); } }
+        var res = inf().querySelector(".simres");
+        var texto = res ? res.textContent : "";
+        if (texto.indexOf("señal de atasco") < 0 || texto.indexOf("Espera aleatoria") < 0) { prob.push("el recorrido no explica colisión, jam y espera"); }
+        if (!res || !res.querySelector("table.intentos") || res.children.length !== 3) { prob.push("falta la tabla de esperas o la consola"); }
+        if (!res || !res.querySelector("[data-evento]")) { prob.push("los pasos no llevan a la animación"); }
+        else {
+          res.querySelector("[data-evento]").click();
+          if (!document.querySelector("circle.paquete-col")) { prob.push("un clic en un paso no dibuja la animación"); }
+        }
+      }
+      if (!transmitir("estrella")) { prob.push("no se pudo probar con el switch"); }
+      else if (inf().querySelector(".simres").textContent.indexOf("Sin colisión") < 0) { prob.push("con el switch no dice «Sin colisión»"); }
+      if (prob.length === 0) { return fila(36, nombre, true, "Con el hub muestra la colisión, el jam, la espera y la tabla; con el switch, sin colisión."); }
+      return fila(36, nombre, false, "Falla: " + prob.join("; ") + ".");
+    } catch (e) {
+      return fila(36, nombre, false, "Excepción: " + e.message);
+    } finally {
+      try { UI.cargarTopologia(clonar(ejemploPorId("complejo").topologia)); } catch (e1) { /* se sigue igual */ }
+      try { UI.setModo(previo); } catch (e2) { /* se sigue igual */ }
+    }
+  }
+
+  var CRITERIOS_TECNICOS = [crit01, crit09, crit10, crit11, crit13, crit14, crit15, crit16, crit24, crit25, crit26, crit27, crit28, crit30, crit32, crit33, crit34, crit36];
 
   function correr(opciones) {
     var tecnico = !!(opciones && opciones.tecnico);

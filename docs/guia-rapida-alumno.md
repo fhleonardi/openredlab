@@ -176,6 +176,16 @@ Un **hub** (en la Configuración del switch, modelo *Hub de 8 puertos*) repite c
 
 El selector **Dominios** de la barra del lienzo pinta y cuenta los **dominios de colisión** (los equipos que comparten el medio: todo lo que cuelga de un hub, o una celda inalámbrica; cada puerto de switch es uno) y los **dominios de broadcast** (hasta dónde llega un broadcast: los corta el router).
 
+### Transmitir a la vez: ¿qué pasa si dos hablan juntos?
+
+En la franja de Simulación elegí **Transmitir a la vez**, un **Equipo A** y un **Equipo B**, y apretá **Transmitir**. Los dos mandan una trama en el mismo instante. Probalo primero con el ejemplo *Bus (medio compartido con un hub)* y después con *Topología en estrella*.
+
+- **Con un hub** (medio compartido, *half dúplex*) las señales **chocan**. Cada equipo lo detecta porque recibe mientras transmite, manda la **señal de atasco** (jam) y **espera un número al azar de ranuras** antes de reintentar: entre 0 y 1 después de la primera colisión, entre 0 y 3 después de la segunda, entre 0 y 7 después de la tercera, y así (*espera exponencial binaria*). Si los dos eligen lo mismo, chocan otra vez. A los 16 intentos la trama se descarta. Es **CSMA/CD**.
+- **Con un switch** no hay colisión: cada puerto es un dominio de colisión propio y en *full dúplex* se envía y se recibe a la vez.
+- **En Wi-Fi** no se puede detectar la colisión mientras se transmite, así que se la evita (**CSMA/CA**): el simulador lo explica, sin animarlo.
+
+Fijate en la tabla de esperas: repetí la prueba varias veces y anotá cuántas colisiones hubo. ¿Por qué cada vez es menos probable que vuelvan a chocar? En la animación, las dos tramas salen exactamente al mismo tiempo (el peor caso); en la red real basta con que empiecen antes de enterarse una de la otra.
+
 ## Wi-Fi: router inalámbrico y punto de acceso
 
 Cada interfaz inalámbrica tiene un modo de radio, que elegís en la pestaña Interfaces del panel derecho. En modo **ap** sostiene la red Wi-Fi (la celda) y admite varios clientes; en modo **cliente** se asocia a un ap; en modo **bridge** une dos puntos a distancia. Dos clientes no se conectan entre sí: siempre hace falta un ap.

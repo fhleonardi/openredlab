@@ -1200,6 +1200,254 @@ var Motor = (function () {
     return { colision: colision, broadcast: grupos() };
   }
 
+  /* ---------------- Transmitir a la vez: CSMA/CD ----------------
+   * Dos equipos mandan una trama en el mismo instante. Si comparten el medio a través de un hub,
+   * las señales chocan y cada uno espera un número al azar de ranuras antes de reintentar (espera
+   * exponencial binaria truncada). Un switch separa los dominios de colisión: no hay choque.
+   * No toca las tablas ARP ni MAC. */
+  var MAX_INTENTOS_CSMA = 16;
+  var TOPE_EXPONENTE_CSMA = 10;
+
+  // Los puertos del equipo por los que hoy puede pasar una trama.
+  function puertosConEnlace(estado, dev) {
+    return (dev.interfaces || []).filter(function (f) {
+      return enlacesDe(estado, dev.id, f.id).some(function (e) { return tramaPasa(estado, e); });
+    });
+  }
+
+  // El camino de capa 2 entre dos equipos, probando sus puertos; el cableado antes que el aire.
+  function caminoEntreEquipos(estado, a, b) {
+    var mejor = null;
+    puertosConEnlace(estado, a).forEach(function (fa) {
+      puertosConEnlace(estado, b).forEach(function (fb) {
+        var t = tramoL2(estado, a.id, fa.id, b.id, fb.id);
+        if (!t.enlaces.length) { return; }
+        if (!mejor || (mejor.medio === "wireless" && t.medio !== "wireless")) {
+          mejor = { ifA: fa.id, ifB: fb.id, atraviesa: t.atraviesa, medio: t.medio, enlaces: t.enlaces };
+        }
+      });
+    });
+    return mejor;
+  }
+
+  function diagnosticoDeEntrada(titulo, explicacion, sugerencia) {
+    return { codigo: "ENTRADA", titulo: titulo, explicacion: explicacion, sugerencia: sugerencia };
+  }
+
+  function transmitirALaVez(estado, idA, idB, opciones) {
+    opciones = opciones || {};
+    var azar = typeof opciones.azar === "function" ? opciones.azar : generador(opciones.semilla || 1);
+    var pasos = [], intentos = [], eventos = [], colisiones = 0;
+    // Cada paso puede apuntar a un momento de la animación (evento).
+    function agregar(titulo, detalle, capa, evento) {
+      var p = { n: pasos.length + 1, titulo: titulo, detalle: detalle, ok: true, capa: capa };
+      if (evento) { p.evento = eventos.length; eventos.push(evento); }
+      pasos.push(p);
+      return p;
+    }
+    function terminar(resultado, extra) {
+      var res = { exito: true, resultado: resultado, pasos: pasos, intentos: intentos, eventos: eventos,
+        colisiones: colisiones, diagnostico: null, a: idA, b: idB };
+      Object.keys(extra || {}).forEach(function (k) { res[k] = extra[k]; });
+      return res;
+    }
+    // `equipo` es el que hay que revisar cuando la prueba no se pudo hacer por culpa de uno.
+    function fallar(diagnostico, equipo) {
+      return { exito: false, resultado: null, pasos: pasos, intentos: intentos, eventos: eventos,
+        colisiones: colisiones, diagnostico: diagnostico, a: idA, b: idB, equipo: equipo || null };
+    }
+
+    var a = buscarDispositivo(estado, idA);
+    var b = buscarDispositivo(estado, idB);
+    if (!a || !b || a === b) {
+      return fallar(diagnosticoDeEntrada("Elegí dos equipos distintos",
+        "La prueba necesita dos equipos que transmitan en el mismo instante.", "Elegí un equipo A y un equipo B."));
+    }
+    if (esConmutador(a) || esConmutador(b)) {
+      return fallar(diagnosticoDeEntrada("Ese equipo no envía tramas propias",
+        "Los switches, los hubs y los puntos de acceso reenvían las tramas de los demás.",
+        "Elegí una PC, un servidor, un router u otro equipo final."));
+    }
+    var nombreA = nombreDe(estado, a.id), nombreB = nombreDe(estado, b.id);
+    var apagado = !a.encendido ? a : (!b.encendido ? b : null);
+    if (apagado) { return fallar(diagnosticoDe("D01", { origen: nombreDe(estado, apagado.id), interfaz: "?" }), apagado.id); }
+    var sinCable = !puertosConEnlace(estado, a).length ? a : (!puertosConEnlace(estado, b).length ? b : null);
+    if (sinCable) {
+      // El cable puede estar bien y ser el de la otra punta el apagado: se lo nombra.
+      var vecinoApagado = (estado.topologia.enlaces || []).filter(function (e) {
+        return e.estado === "up" && (e.a.dispositivo === sinCable.id || e.b.dispositivo === sinCable.id);
+      }).map(function (e) { return buscarDispositivo(estado, otraPunta(e, sinCable.id)); })
+        .filter(function (d) { return d && !d.encendido; })[0];
+      if (vecinoApagado) {
+        var quien = nombreDe(estado, vecinoApagado.id);
+        return fallar({
+          codigo: "D02", titulo: CATALOGO.D02.titulo,
+          explicacion: nombreDe(estado, sinCable.id) + " está conectado a " + quien + ", pero " + quien + " está apagado: por ese cable no pasa nada.",
+          sugerencia: "Encendé " + quien + "."
+        }, vecinoApagado.id);
+      }
+      var puerto = (sinCable.interfaces[0] || {}).id;
+      return fallar(diagnosticoDe("D02", { origen: nombreDe(estado, sinCable.id), interfaz: puerto }), sinCable.id);
+    }
+
+    var camino = caminoEntreEquipos(estado, a, b);
+    if (!camino) {
+      agregar("Comprobar si comparten el medio",
+        "No: entre " + nombreA + " y " + nombreB + " no hay un camino de capa 2 (los separa un router, o hay un cable cortado o un equipo " +
+        "apagado en el medio). " +
+        "Sus tramas nunca se cruzan, así que no pueden chocar.", 1);
+      return terminar("separados", { ruta: [] });
+    }
+    var ruta = [a.id].concat(camino.atraviesa, [b.id]);
+    var lista = dominios(estado).colision;
+    function dominioDe(idEnlace) {
+      return lista.filter(function (d) { return d.enlaces.indexOf(idEnlace) >= 0; })[0] || null;
+    }
+    var dominio = dominioDe(camino.enlaces[0]);
+    var mismo = dominio === dominioDe(camino.enlaces[camino.enlaces.length - 1]);
+    var intermedios = camino.atraviesa.map(function (id) { return buscarDispositivo(estado, id); });
+    var hubs = intermedios.filter(esHub);
+    var enAire = camino.enlaces.some(function (id) {
+      return (estado.topologia.enlaces || []).some(function (e) { return e.id === id && e.tipo === "wireless"; });
+    });
+    function nombres(devs) { return devs.map(function (d) { return nombreDe(estado, d.id); }).join(" y "); }
+
+    if (mismo && enAire) {
+      agregar("Comprobar si comparten el medio",
+        "Sí: " + nombreA + " y " + nombreB + " están en la misma celda Wi-Fi. El aire es un medio compartido.", 1);
+      agregar("Evitar la colisión (CSMA/CA)",
+        "En Wi-Fi no se puede detectar una colisión mientras se transmite, así que se la evita: cada uno escucha, espera un tiempo fijo " +
+        "(DIFS) más un número al azar de ranuras y el que termina primero envía; el otro detiene su cuenta. El receptor confirma con un " +
+        "ACK; si no llega, se reintenta con una espera mayor.", 2);
+      agregar("Alcance de esta prueba",
+        "La prueba simula las colisiones de Ethernet con hub (CSMA/CD). El Wi-Fi queda explicado, sin simular.", 2);
+      return terminar("csma-ca", { ruta: ruta });
+    }
+
+    var simultaneo = { tipo: "duplex", rutas: [{ quien: "a", ids: ruta }, { quien: "b", ids: ruta.slice().reverse() }] };
+    if (!mismo || !hubs.length) {
+      if (!camino.atraviesa.length) {
+        agregar("Comprobar si comparten el medio",
+          nombreA + " y " + nombreB + " están unidos por un solo cable punto a punto: no hay nadie más en ese medio.", 1);
+        agregar("Transmitir a la vez (full dúplex)",
+          "Los dos envían en el mismo instante. El cable tiene un par de hilos para cada sentido: se envía y se recibe a la vez, " +
+          "no hay colisión y CSMA/CD queda desactivado.", 2, simultaneo);
+        return terminar("sin-colision", { ruta: ruta });
+      }
+      var separadores = intermedios.filter(function (d) { return !esHub(d); });
+      var conSwitch = separadores.length ? nombres(separadores) : "un conmutador";
+      var hayHub = hubs.length > 0;
+      agregar("Comprobar si comparten el medio",
+        "No: entre " + nombreA + " y " + nombreB + " está " + conSwitch + ". Cada puerto de un switch o punto de acceso es el límite " +
+        "de un dominio de colisión: " + nombreA + " está en uno y " + nombreB + " en otro." +
+        (hayHub ? " Del lado de " + nombres(hubs) + " el medio sigue compartido, pero sólo entre los equipos de ese lado." : ""), 1);
+      agregar("Transmitir a la vez",
+        "Los dos envían en el mismo instante y las señales no se mezclan: no hay colisión entre ellos." +
+        (hayHub ? " En el lado del hub, el puerto del switch escucha el medio antes de transmitir; una colisión de ese lado no cruza al otro."
+          : " En full dúplex se envía y se recibe a la vez: CSMA/CD queda desactivado."), 2, simultaneo);
+      agregar(conSwitch + " almacena y reenvía",
+        "Recibe cada trama completa, mira la MAC de destino y la reenvía por el puerto que corresponde. Si dos tramas van al mismo " +
+        "puerto, esperan en fila.", 2);
+      return terminar("sin-colision", { ruta: ruta });
+    }
+
+    // Medio compartido por un hub: CSMA/CD.
+    var hubCentral = hubs[Math.floor((hubs.length - 1) / 2)];
+    var corte = ruta.indexOf(hubCentral.id);
+    var extremos = [];
+    dominio.enlaces.forEach(function (idEnlace) {
+      (estado.topologia.enlaces || []).forEach(function (e) {
+        if (e.id !== idEnlace || !tramaPasa(estado, e)) { return; }
+        [e.a, e.b].forEach(function (p) {
+          if (!esHub(buscarDispositivo(estado, p.dispositivo))) { extremos.push(p); }
+        });
+      });
+    });
+    // Camino de cada equipo (A o B) a todos los demás del dominio: lo que el hub repite.
+    function rutasDesde(dev, idPuerto) {
+      var salida = [];
+      extremos.forEach(function (p) {
+        if (p.dispositivo === dev.id) { return; }
+        var t = tramoL2(estado, dev.id, idPuerto, p.dispositivo, p.interfaz);
+        if (t.enlaces.length) { salida.push([dev.id].concat(t.atraviesa, [p.dispositivo])); }
+      });
+      return salida;
+    }
+    // La señal de atasco sale del hub hacia todos los extremos.
+    var haciaHub = ruta.slice(0, corte + 1);
+    var jam = [haciaHub.slice().reverse()];
+    rutasDesde(a, camino.ifA).forEach(function (r) {
+      var k = 0;
+      while (k + 1 < r.length && k + 1 < haciaHub.length && r[k + 1] === haciaHub[k + 1]) { k++; }
+      jam.push(haciaHub.slice(k).reverse().concat(r.slice(k + 1)));
+    });
+    function envio() {
+      return { tipo: "envio", rutas: [{ quien: "a", ids: ruta.slice(0, corte + 1) }, { quien: "b", ids: ruta.slice(corte).reverse() }] };
+    }
+    var nombreHub = nombreDe(estado, hubCentral.id);
+
+    agregar("Comprobar si comparten el medio",
+      "Sí: " + nombreA + " y " + nombreB + " cuelgan de " + nombres(hubs) + ". Es un solo dominio de colisión (medio compartido, " +
+      "half dúplex): el hub repite por todos sus puertos lo que recibe, y si dos envían a la vez las señales se mezclan.", 1);
+    agregar("Escuchar el medio y transmitir",
+      "Antes de transmitir cada uno escucha el medio (detección de portadora). Está libre para los dos, así que envían en el mismo instante.",
+      2, envio());
+
+    var primero, segundo, esperaPrimero, esperaSegundo;
+    for (;;) {
+      colisiones += 1;
+      agregar("Colisión " + colisiones + " y señal de atasco (jam)",
+        "Las señales se superponen en " + nombreHub + ". " + nombreA + " y " + nombreB + " lo detectan porque reciben mientras transmiten: " +
+        "cortan la trama y envían la señal de atasco (jam, 32 bits) para que todos descarten lo recibido." +
+        (colisiones === 1 ? " Por eso la trama mínima es de 64 bytes: quien envía sigue transmitiendo cuando le llega la colisión." : ""),
+        1, { tipo: "colision", en: hubCentral.id, numero: colisiones, rutas: jam });
+      if (colisiones >= MAX_INTENTOS_CSMA) {
+        agregar("Abandonar la trama", "Fueron " + MAX_INTENTOS_CSMA + " intentos con colisión: la estación descarta la trama y avisa a la capa de arriba.", 2);
+        return fallar({
+          codigo: "", titulo: "Demasiadas colisiones: se abandona la trama",
+          explicacion: "Después de " + MAX_INTENTOS_CSMA + " intentos seguidos con colisión, Ethernet descarta la trama.",
+          sugerencia: "En una red real indica un medio saturado: separá los equipos con un switch."
+        });
+      }
+      var rango = Math.pow(2, Math.min(colisiones, TOPE_EXPONENTE_CSMA));
+      var kA = Math.min(rango - 1, Math.floor(azar() * rango));
+      var kB = Math.min(rango - 1, Math.floor(azar() * rango));
+      intentos.push({ n: colisiones, rango: rango - 1, esperaA: kA, esperaB: kB, colision: kA === kB });
+      agregar("Espera aleatoria tras la colisión " + colisiones,
+        "Cada uno elige al azar entre 0 y " + (rango - 1) + " ranuras (una ranura son 512 tiempos de bit: 51,2 µs a 10 Mbps): " +
+        nombreA + " elige " + kA + " y " + nombreB + " elige " + kB + ". " +
+        (kA === kB ? "Eligieron lo mismo: vuelven a transmitir a la vez." : (kA < kB ? nombreA : nombreB) + " espera menos y transmite primero."),
+        2, { tipo: "espera", esperaA: kA, esperaB: kB });
+      if (kA !== kB) {
+        primero = kA < kB ? "a" : "b";
+        segundo = primero === "a" ? "b" : "a";
+        esperaPrimero = Math.min(kA, kB);
+        esperaSegundo = Math.max(kA, kB);
+        break;
+      }
+      eventos.push(envio());
+    }
+
+    var quien = {
+      a: { dev: a, puerto: camino.ifA, nombre: nombreA },
+      b: { dev: b, puerto: camino.ifB, nombre: nombreB }
+    };
+    function ranuras(k) { return k + (k === 1 ? " ranura" : " ranuras"); }
+    function entrega(de, para) {
+      return { tipo: "entrega", quien: de, destino: quien[para].dev.id, rutas: rutasDesde(quien[de].dev, quien[de].puerto) };
+    }
+    agregar(quien[primero].nombre + " transmite primero",
+      "Espera " + ranuras(esperaPrimero) + ", escucha el medio libre y envía. El hub repite la trama por todos sus puertos: la acepta " +
+      quien[segundo].nombre + " y los demás la descartan.", 2, entrega(primero, segundo));
+    agregar(quien[segundo].nombre + " transmite después",
+      "Termina su espera de " + ranuras(esperaSegundo) + " y escucha el medio: si todavía está ocupado por la trama de " +
+      quien[primero].nombre + ", aguarda a que se libere. Recién entonces envía, sin chocar.", 2, entrega(segundo, primero));
+    agregar("Resultado",
+      "Las dos tramas se entregaron después de " + colisiones + (colisiones === 1 ? " colisión." : " colisiones.") +
+      " Con un switch en lugar del hub no habría ninguna.", 2);
+    return terminar("colision", { ruta: ruta, hub: hubCentral.id, primero: primero });
+  }
+
   /* ---------------- Estado ---------------- */
 
   function crearEstado(topologia) {
@@ -5570,6 +5818,73 @@ var Motor = (function () {
       comparar("QoS: con 100 % de pérdida, D32", [todo.estadisticas.recibidos, todo.diagnostico && todo.diagnostico.codigo], [0, "D32"]);
     })();
 
+    // Transmitir a la vez (CSMA/CD).
+    (function () {
+      function hubCon(modeloB) {
+        var h = fabSwitch("hub1"); h.modelo = "hub";
+        return h;
+      }
+      function red(extra) {
+        extra = extra || {};
+        var topo = fabTopo(
+          [fabPc("pc1", "192.168.1.1", 24, null), fabPc("pc2", "192.168.1.2", 24, null), fabPc("pc3", "192.168.1.3", 24, null), hubCon()],
+          [fabEnlace("l1", "pc1", "eth0", "hub1", "fa0/1"), fabEnlace("l2", "pc2", "eth0", "hub1", "fa0/2"), fabEnlace("l3", "pc3", "eth0", "hub1", "fa0/3")]);
+        if (extra.antes) { extra.antes(topo); }
+        return crearEstado(topo);
+      }
+      function secuencia(valores) { var i = 0; return function () { return valores[Math.min(i++, valores.length - 1)]; }; }
+      var est = red();
+      var antes = JSON.stringify([est.arp, est.mac]);
+      var r = transmitirALaVez(est, "pc1", "pc2", { semilla: 5 });
+      var ultimo = r.intentos[r.intentos.length - 1];
+      comparar("CSMA/CD: con un hub hay colisión y termina entregando", [r.exito, r.resultado, r.colisiones >= 1, ultimo.colision], [true, "colision", true, false]);
+      comparar("CSMA/CD: cada espera cae en 0..2^n-1",
+        r.intentos.every(function (i) { return i.rango === Math.pow(2, i.n) - 1 && i.esperaA >= 0 && i.esperaA <= i.rango && i.esperaB >= 0 && i.esperaB <= i.rango; }), true);
+      comparar("CSMA/CD: los eventos tienen envío, colisión, espera y dos entregas",
+        ["envio", "colision", "espera", "entrega"].map(function (t) { return r.eventos.filter(function (e) { return e.tipo === t; }).length >= (t === "entrega" ? 2 : 1); }), [true, true, true, true]);
+      comparar("CSMA/CD: la misma semilla da lo mismo", JSON.stringify(transmitirALaVez(red(), "pc1", "pc2", { semilla: 5 })) === JSON.stringify(r), true);
+      comparar("CSMA/CD: no toca ARP ni MAC", JSON.stringify([est.arp, est.mac]), antes);
+      var directo = transmitirALaVez(red(), "pc1", "pc2", { azar: secuencia([0, 0.99]) });
+      comparar("CSMA/CD: la menor espera transmite primero", [directo.colisiones, directo.primero, directo.intentos[0].esperaA, directo.intentos[0].esperaB], [1, "a", 0, 1]);
+      var repite = transmitirALaVez(red(), "pc1", "pc2", { azar: secuencia([0, 0, 0.99, 0]) });
+      comparar("CSMA/CD: con esperas iguales chocan otra vez", [repite.colisiones, repite.intentos[0].colision, repite.intentos[1].rango, repite.primero], [2, true, 3, "b"]);
+      var abandona = transmitirALaVez(red(), "pc1", "pc2", { azar: function () { return 0; } });
+      comparar("CSMA/CD: a los 16 intentos abandona",
+        [abandona.exito, abandona.colisiones, abandona.intentos.length, abandona.intentos[14].rango, /Demasiadas colisiones/.test(abandona.diagnostico.titulo)],
+        [false, 16, 15, 1023, true]);
+      var jam = r.eventos.filter(function (e) { return e.tipo === "colision"; })[0];
+      comparar("CSMA/CD: el jam sale del hub hacia los tres equipos",
+        jam.rutas.map(function (x) { return x[0] + ">" + x[x.length - 1]; }).sort(), ["hub1>pc1", "hub1>pc2", "hub1>pc3"]);
+      comparar("CSMA/CD: la entrega llega a los otros dos", r.eventos.filter(function (e) { return e.tipo === "entrega"; })[0].rutas.length, 2);
+
+      var conSwitch = transmitirALaVez(red({ antes: function (t) { t.dispositivos[3].modelo = null; } }), "pc1", "pc2", {});
+      comparar("transmitir a la vez: con un switch no hay colisión",
+        [conSwitch.resultado, conSwitch.colisiones, conSwitch.intentos.length, /está hub1/.test(conSwitch.pasos[0].detalle)], ["sin-colision", 0, 0, true]);
+      var cruzado = crearEstado(fabTopo([fabPc("pc1", "192.168.1.1", 24, null), fabPc("pc2", "192.168.1.2", 24, null)], [fabEnlace("l1", "pc1", "eth0", "pc2", "eth0")]));
+      var rCruzado = transmitirALaVez(cruzado, "pc1", "pc2", {});
+      comparar("transmitir a la vez: un cable solo es full dúplex", [rCruzado.resultado, /full dúplex/.test(rCruzado.pasos[1].titulo)], ["sin-colision", true]);
+      var hubDetras = crearEstado(fabTopo(
+        [fabPc("pc1", "192.168.1.1", 24, null), fabPc("pc2", "192.168.1.2", 24, null), hubCon(), fabSwitch("sw1")],
+        [fabEnlace("l1", "pc1", "eth0", "hub1", "fa0/1"), fabEnlace("l2", "hub1", "fa0/2", "sw1", "fa0/1"), fabEnlace("l3", "pc2", "eth0", "sw1", "fa0/2")]));
+      var rDetras = transmitirALaVez(hubDetras, "pc1", "pc2", {});
+      comparar("transmitir a la vez: hub de un lado de un switch, sin colisión entre ellos",
+        [rDetras.resultado, /está sw1/.test(rDetras.pasos[0].detalle), /Del lado de hub1/.test(rDetras.pasos[0].detalle)], ["sin-colision", true, true]);
+      var separados = crearEstado(fabTopo(
+        [fabPc("pc1", "192.168.1.10", 24, null), fabPc("pc2", "192.168.2.10", 24, null),
+          fabRouter("r1", [{ id: "g0/0", ip: "192.168.1.1", prefijo: 24 }, { id: "g0/1", ip: "192.168.2.1", prefijo: 24 }], [])],
+        [fabEnlace("l1", "pc1", "eth0", "r1", "g0/0"), fabEnlace("l2", "pc2", "eth0", "r1", "g0/1")]));
+      comparar("transmitir a la vez: un router separa", transmitirALaVez(separados, "pc1", "pc2", {}).resultado, "separados");
+      var apagado = transmitirALaVez(red({ antes: function (t) { t.dispositivos[1].encendido = false; } }), "pc1", "pc2", {});
+      comparar("transmitir a la vez: equipo apagado, D01", [apagado.diagnostico.codigo, apagado.equipo], ["D01", "pc2"]);
+      var cortado = transmitirALaVez(red({ antes: function (t) { t.enlaces[0].estado = "down"; } }), "pc1", "pc2", {});
+      comparar("transmitir a la vez: cable caído, D02", cortado.diagnostico.codigo, "D02");
+      var hubApagado = transmitirALaVez(red({ antes: function (t) { t.dispositivos[3].encendido = false; } }), "pc1", "pc2", {});
+      comparar("transmitir a la vez: con el hub apagado lo nombra a él",
+        [hubApagado.diagnostico.codigo, hubApagado.equipo, /hub1 está apagado/.test(hubApagado.diagnostico.explicacion)], ["D02", "hub1", true]);
+      comparar("transmitir a la vez: el mismo equipo o un hub no valen",
+        [transmitirALaVez(red(), "pc1", "pc1", {}).diagnostico.codigo, transmitirALaVez(red(), "pc1", "hub1", {}).diagnostico.codigo], ["ENTRADA", "ENTRADA"]);
+    })();
+
     // 36. Un destino mal escrito no es un diagnóstico de red.
     (function () {
       var topo = fabTopo([fabPc("pc-admin", "10.45.7.66", 27, "10.45.7.65")], []);
@@ -5597,6 +5912,8 @@ var Motor = (function () {
     conectar: conectar,
     dominios: dominios,
     esHub: esHub,
+    esConmutador: esConmutador,
+    transmitirALaVez: transmitirALaVez,
     TIPOS_REGISTRO: TIPOS_REGISTRO,
     JERARQUIA_DNS: JERARQUIA,
     consultarDns: consultarDns,
