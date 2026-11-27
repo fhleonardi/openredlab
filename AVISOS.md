@@ -6,6 +6,8 @@ OpenRedLab incluye, copiados dentro de `capa4-ui.js` (y por lo tanto de `index.h
 
 Los símbolos de router, switch y hub, y el recuadro redondeado de todos los iconos, son propios.
 
+Este aviso y el texto de la licencia también se ven en el simulador, en **Acerca de**, para que acompañen a quien descargue sólo `index.html`.
+
 ## Tabler Icons: licencia
 
 MIT License
