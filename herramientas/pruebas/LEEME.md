@@ -22,4 +22,4 @@ La línea base depende de qué escenarios hay en disco: si falta `escenarios-doc
 
 ## Autotest en el navegador
 
-Abrir `index.html` y ejecutar `Autotest.correr({tecnico:true})` en la consola. Da 504/504: 472 pruebas internas de las capas 1 a 3 más 32 criterios.
+Abrir `index.html` y ejecutar `Autotest.correr({tecnico:true})` en la consola. Da 620/620: 580 pruebas internas de las capas 1 a 3 más 40 criterios (con la 1.11.0).

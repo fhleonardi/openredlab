@@ -2106,6 +2106,13 @@ var Autotest = (function () {
       UI.cargarTopologia(clonar(ejemploPorId("complejo").topologia));
       seguir("#ejemplo=mikrotik");
       if (ids() !== idsDe("mikrotik")) { prob.push("#ejemplo=mikrotik no abre el ejemplo"); }
+      // La red que había se recupera con Deshacer, y la dirección deja de nombrar el ejemplo.
+      if (document.activeElement && document.activeElement.blur) { document.activeElement.blur(); }
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true }));
+      if (ids() !== idsDe("complejo")) { prob.push("Deshacer no trae la red que había antes del enlace"); }
+      if (location.hash.indexOf("#ejemplo=") === 0) { prob.push("tras Deshacer la dirección sigue nombrando el ejemplo"); }
+      seguir("#ejemplo=MikroTik.");
+      if (ids() !== idsDe("mikrotik") || location.hash !== "#ejemplo=mikrotik") { prob.push("el enlace con mayúsculas y punto final no abre el ejemplo"); }
       seguir("#ejemplo=no-existe");
       if (ids() !== idsDe("mikrotik")) { prob.push("un ejemplo que no existe cambia la red"); }
       var sel = document.querySelector(".simbarra select[aria-label='Topologías de ejemplo']");
@@ -2115,7 +2122,7 @@ var Autotest = (function () {
         sel.dispatchEvent(new Event("change", { bubbles: true }));
         if (location.hash !== "#ejemplo=router-8") { prob.push("al elegir un ejemplo la dirección quedó en «" + location.hash + "»"); }
       }
-      if (prob.length === 0) { return fila(40, nombre, true, "El enlace abrió el ejemplo del router MikroTik, un nombre desconocido no tocó la red y elegir «router-8» quedó en la dirección."); }
+      if (prob.length === 0) { return fila(40, nombre, true, "El enlace abrió el ejemplo del router MikroTik, Deshacer trajo la red anterior, un nombre desconocido no tocó la red y elegir «router-8» quedó en la dirección."); }
       return fila(40, nombre, false, "Falla: " + prob.join("; ") + ".");
     } catch (e) {
       return fila(40, nombre, false, "Excepción: " + e.message);

@@ -13,6 +13,8 @@ Los archivos de red llevan el número de su formato (`version`) y la versión de
 ## 1.11.0 — 2026-11-27
 
 - **Enlaces a un ejemplo.** Al elegir un ejemplo, la dirección de la página termina en `#ejemplo=` y su nombre (por ejemplo `#ejemplo=mikrotik`). Copiala y compartila: quien la abra ve ese ejemplo. Si tiene una red guardada de antes, no se pisa: puede recuperarla o abrir el ejemplo.
+- **Abrir otra red se puede deshacer.** Después de elegir un ejemplo, importar un archivo o seguir un enlace, **Deshacer** trae la red que había. Antes el historial quedaba vacío.
+- **El equipo que se arrastra desde la paleta** vuelve a verse con su recuadro.
 - **El tema oscuro se lee mejor.** Los nombres de los cables, los avisos en rojo y los carteles de las animaciones usan colores propios de cada tema. Los puertos libres ya no son cuadrados blancos, y las filas de colores de la captura tienen contraste. En el tema claro, los carteles azules y violetas son un poco más oscuros.
 - **Los botones responden al apretarlos:** se hunden y cambian de brillo.
 - **La página se presenta al compartirla:** tiene descripción, título e icono para la vista previa de un enlace.

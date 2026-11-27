@@ -1813,7 +1813,7 @@ var UI = (function () {
   function arrastrePaleta(ev, tipo, item) {
     ev.preventDefault();
     var fant = el("div", "fantasma", escapar(tipo));
-    document.body.appendChild(fant);
+    S.raiz.appendChild(fant);
     fant.style.left = ev.clientX + "px"; fant.style.top = ev.clientY + "px";
     var movido = false;
     function mover(e2) {
@@ -2528,15 +2528,20 @@ var UI = (function () {
   function deshacer() {
     if (!S.deshacer.length) { return; }
     S.rehacer.push(JSON.stringify(S.topologia));
-    S.topologia = JSON.parse(S.deshacer.pop());
-    reconstruirEstado(); renderTodo();
+    restaurarDelHistorial(S.deshacer.pop());
   }
 
   function rehacer() {
     if (!S.rehacer.length) { return; }
     S.deshacer.push(JSON.stringify(S.topologia));
-    S.topologia = JSON.parse(S.rehacer.pop());
-    reconstruirEstado(); renderTodo();
+    restaurarDelHistorial(S.rehacer.pop());
+  }
+
+  function restaurarDelHistorial(texto) {
+    var nombre = S.topologia.nombre;
+    S.topologia = JSON.parse(texto);
+    if (S.topologia.nombre !== nombre) { anotarEnlaceEjemplo(); }
+    reconstruirEstado(); recontarNombres(); renderTodo();
   }
 
   function atajos(ev) {
@@ -6844,7 +6849,6 @@ var UI = (function () {
 
   function abrirEjemplo(ej) {
     S.ejemploPedido = null;
-    empujarHistorial();
     cargarTopologiaAjustada(clonar(ej.topologia), ej.id);
     registrar("ejemplo", "Se cargó el ejemplo " + ej.nombre);
   }
@@ -6859,19 +6863,24 @@ var UI = (function () {
   }
 
   // Abre el ejemplo que pide la dirección. Si el lienzo está vacío y hay una red guardada, no la pisa:
-  // ofrece las dos cosas y elige el usuario.
+  // ofrece las dos cosas y elige el usuario. Si había una red en el lienzo, Deshacer la trae de vuelta.
   function seguirEnlaceAEjemplo() {
-    var m = /^#ejemplo=([a-z0-9-]+)$/.exec(location.hash);
+    if (S.ejemploPedido) { S.ejemploPedido = null; actualizarLienzoVacio(); }
+    var m = /^#ejemplo=(.*)$/.exec(location.hash);
     if (!m) { return; }
-    var ej = ejemploDe(m[1]);
+    // Un enlace pegado en un texto puede llegar con mayúsculas o con el punto final de la oración.
+    var id = m[1].toLowerCase().replace(/[.,;:)]+$/, "");
+    var ej = ejemploDe(id);
     if (!ej) { avisar("El enlace pide un ejemplo que no existe: «" + m[1] + "». Elegí uno en «Ejemplos…»."); return; }
-    if (S.trabajoPrevio) {
+    var habia = (S.topologia.dispositivos || []).length > 0;
+    if (!habia && (S.trabajoPrevio || S.guardadoIlegible)) {
       S.ejemploPedido = ej;
       actualizarLienzoVacio();
-      anunciar("El enlace abre el ejemplo " + ej.nombre + ". Hay una red guardada: elegí cuál abrir.");
+      anunciar("El enlace abre el ejemplo " + ej.nombre + ". Hay una red guardada: elegí qué hacer.");
       return;
     }
     abrirEjemplo(ej);
+    if (habia) { avisar("Se abrió el ejemplo «" + ej.nombre + "». Con Deshacer volvés a la red anterior."); }
   }
 
   /* ---------------- Registro, persistencia, importar/exportar ---------------- */
@@ -6903,7 +6912,11 @@ var UI = (function () {
   function actualizarLienzoVacio() {
     if (!S.lienzoVacio) { return; }
     var hayEquipos = (S.topologia.dispositivos || []).length > 0;
-    if (hayEquipos) { S.trabajoPrevio = null; S.ejemploPedido = null; }
+    if (hayEquipos) {
+      // El ofrecimiento del enlace se dejó de lado: la dirección ya no nombra la red que hay.
+      if (S.ejemploPedido) { S.ejemploPedido = null; anotarEnlaceEjemplo(); }
+      S.trabajoPrevio = null; S.guardadoIlegible = false;
+    }
     S.lienzoVacio.hidden = hayEquipos;
     if (hayEquipos) { return; }
     S.lienzoVacio.innerHTML = "<b>Lienzo vacío</b>Arrastrá un dispositivo desde la paleta, o abrí una red con " +
@@ -6911,7 +6924,8 @@ var UI = (function () {
     if (S.ejemploPedido) {
       var pedido = S.ejemploPedido;
       var cajaEnlace = el("div", "recuperar", "El enlace abre el ejemplo «" + escapar(pedido.nombre) + "»." +
-        (S.trabajoPrevio ? " Si lo abrís, reemplaza a la red guardada." : ""));
+        (S.trabajoPrevio ? " Si lo abrís, reemplaza a la red guardada." : "") +
+        (S.guardadoIlegible ? " Hay una red guardada que esta versión no puede leer: si abrís el ejemplo, se reemplaza." : ""));
       var filaEnlace = el("div", "");
       var bAbrir = boton("Abrir el ejemplo", "primario");
       bAbrir.setAttribute("data-foco", "abrir-enlace");
@@ -6960,13 +6974,15 @@ var UI = (function () {
         }
       }
     }
-    try {
-      var previa = localStorage.getItem("simuladorRedes.topologia");
-      if (previa && (!S.topologia || !(S.topologia.dispositivos || []).length)) {
-        var imp = Escenarios.importar(previa);
-        if (imp.ok && (imp.topologia.dispositivos || []).length) { S.trabajoPrevio = imp.topologia; }
-      }
-    } catch (e) { /* sin guardado previo: se sigue igual */ }
+    var previa = null;
+    try { previa = localStorage.getItem("simuladorRedes.topologia"); }
+    catch (e) { /* sin almacenamiento: se sigue igual */ }
+    if (previa && (!S.topologia || !(S.topologia.dispositivos || []).length)) {
+      var imp = null;
+      try { imp = Escenarios.importar(previa); } catch (e1) { /* se trata como ilegible */ }
+      if (!imp || !imp.ok) { S.guardadoIlegible = true; }
+      else if ((imp.topologia.dispositivos || []).length) { S.trabajoPrevio = imp.topologia; }
+    }
     setInterval(guardar, 30000);
     window.addEventListener("beforeunload", guardar);
   }
@@ -6990,7 +7006,6 @@ var UI = (function () {
         registrar("importar", "El archivo no pasó la validación: " + res.errores.map(function (x) { return x.mensaje; }).join(" | "));
         return;
       }
-      empujarHistorial();
       cargarTopologiaAjustada(res.topologia);
       registrar("importar", "Topología importada: " + (res.topologia.nombre || "sin nombre") + ".");
     };
@@ -7064,7 +7079,11 @@ var UI = (function () {
   // vista: la usa el Autotest para devolver la red tal como estaba.
   function cargarTopologiaAjustada(topologia, idEjemplo) {
     anotarEnlaceEjemplo(idEjemplo);
+    // Abrir otra red se puede deshacer: la que había queda en el historial.
+    var historial = S.deshacer;
+    if ((S.topologia.dispositivos || []).length) { historial = historial.concat([JSON.stringify(S.topologia)]).slice(-60); }
     cargarTopologia(topologia);
+    S.deshacer = historial;
     ajustarVista();
   }
 
